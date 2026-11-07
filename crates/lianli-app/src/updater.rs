@@ -199,6 +199,12 @@ impl Updater {
         }
     }
 
+    pub fn failed(&self, message: &str) {
+        let mut state = self.state.lock();
+        state.installing = false;
+        state.error = Some(message.to_string());
+    }
+
     /// Downloads the installer; the caller runs it with [`launch_installer`] and then exits.
     pub fn download(&self) -> Result<PathBuf> {
         let update = {
@@ -249,21 +255,34 @@ fn download_setup(update: &Update) -> Result<PathBuf> {
     Ok(path)
 }
 
-/// Runs the NSIS setup silently once this process has exited, then starts the updated app.
+/// Runs the NSIS setup silently once this process has exited, then starts the installed app
+/// (falling back to this exe, e.g. a portable copy, if the install folder isn't there).
+/// The steps go in a batch file because Rust's argument quoting is not what cmd expects.
 pub fn launch_installer(setup: &std::path::Path) -> Result<()> {
     let exe = std::env::current_exe()?;
-    let script = format!(
-        "timeout /t 2 /nobreak >nul & start \"\" /wait \"{}\" /S & start \"\" \"{}\"",
-        setup.display(),
-        exe.display()
+    let script = setup.with_extension("cmd");
+    let body = format!(
+        "@echo off\r\n\
+         ping -n 3 127.0.0.1 >nul\r\n\
+         start \"\" /wait \"{setup}\" /S\r\n\
+         set \"APP=%LOCALAPPDATA%\\RGBable\\rgbable.exe\"\r\n\
+         if not exist \"%APP%\" set \"APP={exe}\"\r\n\
+         start \"\" \"%APP%\"\r\n",
+        setup = setup.display(),
+        exe = exe.display(),
     );
+    std::fs::write(&script, body).with_context(|| format!("writing {}", script.display()))?;
+    tracing::info!("running {} via {}", setup.display(), script.display());
     let mut command = std::process::Command::new("cmd");
-    command.args(["/C", &script]);
+    command.arg("/C");
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
+        command.raw_arg(format!("\"{}\"", script.display()));
         command.creation_flags(0x0800_0000);
     }
+    #[cfg(not(windows))]
+    command.arg(&script);
     command.spawn().context("starting the installer")?;
     Ok(())
 }

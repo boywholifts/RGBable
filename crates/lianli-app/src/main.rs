@@ -8,18 +8,18 @@ mod lights;
 mod openrgb;
 mod updater;
 
-use engine::{DeviceView, Engine, OledView, Telemetry};
 use effects::Effect;
+use engine::{DeviceView, Engine, OledView, Telemetry};
 use lights::{GroupView, LightView, SetupEntry};
 use openrgb::{OpenRgb, OrgbView};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use updater::{Channel, UpdateView, Updater};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, State};
 use tracing::{error, info};
+use updater::{Channel, UpdateView, Updater};
 
 struct AppState {
     engine: Arc<Engine>,
@@ -77,13 +77,19 @@ fn set_color(state: State<'_, AppState>, id: String, color: [u8; 3]) -> Result<(
 }
 
 #[tauri::command]
-async fn set_all(state: State<'_, AppState>, effect: Effect, include_openrgb: bool) -> Result<(), String> {
+async fn set_all(
+    state: State<'_, AppState>,
+    effect: Effect,
+    include_openrgb: bool,
+) -> Result<(), String> {
     let engine = state.engine.clone();
     let openrgb = state.openrgb.clone();
-    tauri::async_runtime::spawn_blocking(move || lights::set_all(&engine, &openrgb, effect, include_openrgb))
-        .await
-        .map_err(err)?
-        .map_err(chain)
+    tauri::async_runtime::spawn_blocking(move || {
+        lights::set_all(&engine, &openrgb, effect, include_openrgb)
+    })
+    .await
+    .map_err(err)?
+    .map_err(chain)
 }
 
 #[tauri::command]
@@ -92,7 +98,11 @@ fn set_effect(state: State<'_, AppState>, id: String, effect: Effect) -> Result<
 }
 
 #[tauri::command]
-fn set_group_effect(state: State<'_, AppState>, group: String, effect: Effect) -> Result<(), String> {
+fn set_group_effect(
+    state: State<'_, AppState>,
+    group: String,
+    effect: Effect,
+) -> Result<(), String> {
     lights::set_group_effect(&state.engine, &state.openrgb, &group, effect).map_err(chain)
 }
 
@@ -106,7 +116,9 @@ fn default_name(state: &AppState, id: &str) -> Option<String> {
 #[tauri::command]
 fn rename(state: State<'_, AppState>, id: String, name: String) {
     let default = default_name(&state, &id);
-    state.engine.update_config(|c| lights::set_name(c, &id, &name, default.as_deref()));
+    state
+        .engine
+        .update_config(|c| lights::set_name(c, &id, &name, default.as_deref()));
 }
 
 #[tauri::command]
@@ -116,32 +128,52 @@ fn identify(state: State<'_, AppState>, id: String) -> Result<(), String> {
 
 #[tauri::command]
 fn set_sync(state: State<'_, AppState>, id: String, sync: bool) {
-    state.engine.update_config(|c| lights::set_sync(c, &id, sync));
+    state
+        .engine
+        .update_config(|c| lights::set_sync(c, &id, sync));
 }
 
 #[tauri::command]
 fn create_group(state: State<'_, AppState>, name: String) -> String {
-    state.engine.update_config(|c| lights::create_group(c, &name))
+    state
+        .engine
+        .update_config(|c| lights::create_group(c, &name))
 }
 
 #[tauri::command]
 fn rename_group(state: State<'_, AppState>, group: String, name: String) {
-    state.engine.update_config(|c| lights::rename_group(c, &group, &name));
+    state
+        .engine
+        .update_config(|c| lights::rename_group(c, &group, &name));
 }
 
 #[tauri::command]
 fn delete_group(state: State<'_, AppState>, group: String) {
-    state.engine.update_config(|c| lights::delete_group(c, &group));
+    state
+        .engine
+        .update_config(|c| lights::delete_group(c, &group));
 }
 
 #[tauri::command]
 fn move_to_group(state: State<'_, AppState>, id: String, group: Option<String>) {
-    state.engine.update_config(|c| lights::move_to_group(c, &id, group.as_deref()));
+    state
+        .engine
+        .update_config(|c| lights::move_to_group(c, &id, group.as_deref()));
 }
 
 #[tauri::command]
-fn set_group_color(state: State<'_, AppState>, group: String, color: [u8; 3]) -> Result<(), String> {
-    lights::set_group_effect(&state.engine, &state.openrgb, &group, lights::static_effect(color)).map_err(chain)
+fn set_group_color(
+    state: State<'_, AppState>,
+    group: String,
+    color: [u8; 3],
+) -> Result<(), String> {
+    lights::set_group_effect(
+        &state.engine,
+        &state.openrgb,
+        &group,
+        lights::static_effect(color),
+    )
+    .map_err(chain)
 }
 
 #[tauri::command]
@@ -150,7 +182,9 @@ fn finish_setup(state: State<'_, AppState>, entries: Vec<SetupEntry>) {
         .into_iter()
         .map(|l| (l.id, l.default_name))
         .collect();
-    state.engine.update_config(|c| lights::apply_setup(c, &entries, &defaults));
+    state
+        .engine
+        .update_config(|c| lights::apply_setup(c, &entries, &defaults));
 }
 
 #[tauri::command]
@@ -163,9 +197,9 @@ async fn openrgb_connect(state: State<'_, AppState>) -> Result<(), String> {
         lights::sync_openrgb_effects(&engine, &openrgb);
         anyhow::Ok(())
     })
-        .await
-        .map_err(err)?
-        .map_err(|e| format!("{e:#}"))
+    .await
+    .map_err(err)?
+    .map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -176,7 +210,9 @@ async fn pick_media(app: AppHandle) -> Option<String> {
         .set_title("Choose what the OLED should loop")
         .add_filter(
             "Video, GIF or image",
-            &["mp4", "mkv", "mov", "webm", "avi", "gif", "png", "jpg", "jpeg", "bmp", "webp"],
+            &[
+                "mp4", "mkv", "mov", "webm", "avi", "gif", "png", "jpg", "jpeg", "bmp", "webp",
+            ],
         )
         .blocking_pick_file()
         .and_then(|path| path.into_path().ok())
@@ -184,8 +220,16 @@ async fn pick_media(app: AppHandle) -> Option<String> {
 }
 
 #[tauri::command]
-fn set_oled(state: State<'_, AppState>, file: Option<String>, fit: String, fps: u32) -> Result<(), String> {
-    state.engine.set_oled(file.map(PathBuf::from), fit, fps).map_err(err)
+fn set_oled(
+    state: State<'_, AppState>,
+    file: Option<String>,
+    fit: String,
+    fps: u32,
+) -> Result<(), String> {
+    state
+        .engine
+        .set_oled(file.map(PathBuf::from), fit, fps)
+        .map_err(err)
 }
 
 #[tauri::command]
@@ -211,7 +255,10 @@ async fn check_update(state: State<'_, AppState>) -> Result<UpdateView, String> 
 }
 
 #[tauri::command]
-async fn set_update_channel(state: State<'_, AppState>, channel: Channel) -> Result<UpdateView, String> {
+async fn set_update_channel(
+    state: State<'_, AppState>,
+    channel: Channel,
+) -> Result<UpdateView, String> {
     state.engine.set_update_channel(channel);
     check_update(state).await
 }
@@ -223,7 +270,11 @@ async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<()
         .await
         .map_err(err)?
         .map_err(|e| format!("{e:#}"))?;
-    updater::launch_installer(&setup).map_err(|e| format!("{e:#}"))?;
+    if let Err(e) = updater::launch_installer(&setup) {
+        let message = format!("{e:#}");
+        state.updater.failed(&message);
+        return Err(message);
+    }
     app.exit(0);
     Ok(())
 }
@@ -261,15 +312,16 @@ fn reg(args: &[&str]) -> std::io::Result<std::process::Output> {
 }
 
 fn autostart_enabled() -> bool {
-    cfg!(windows)
-        && reg(&["query", RUN_KEY, "/v", "RGBable"]).is_ok_and(|o| o.status.success())
+    cfg!(windows) && reg(&["query", RUN_KEY, "/v", "RGBable"]).is_ok_and(|o| o.status.success())
 }
 
 fn set_autostart_impl(enabled: bool) -> anyhow::Result<()> {
     let output = if enabled {
         let exe = std::env::current_exe()?;
         let value = format!("\"{}\" --minimized", exe.display());
-        reg(&["add", RUN_KEY, "/v", "RGBable", "/t", "REG_SZ", "/d", &value, "/f"])?
+        reg(&[
+            "add", RUN_KEY, "/v", "RGBable", "/t", "REG_SZ", "/d", &value, "/f",
+        ])?
     } else {
         reg(&["delete", RUN_KEY, "/v", "RGBable", "/f"])?
     };
@@ -299,7 +351,10 @@ fn main() {
         let client = OpenRgb::new();
         let result = client.connect(port);
         let view = client.view();
-        let text = format!("{result:?}\n{}", serde_json::to_string_pretty(&view).unwrap_or_default());
+        let text = format!(
+            "{result:?}\n{}",
+            serde_json::to_string_pretty(&view).unwrap_or_default()
+        );
         println!("{text}");
         let _ = std::fs::write(data_dir().join("openrgb-probe.txt"), text);
         return;
@@ -394,7 +449,11 @@ fn main() {
     let minimized = std::env::args().any(|a| a == "--minimized");
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState { engine, openrgb, updater })
+        .manage(AppState {
+            engine,
+            openrgb,
+            updater,
+        })
         .invoke_handler(tauri::generate_handler![
             overview,
             set_color,
@@ -421,7 +480,13 @@ fn main() {
         ])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Open RGBable", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit (stops lighting control)", true, None::<&str>)?;
+            let quit = MenuItem::with_id(
+                app,
+                "quit",
+                "Quit (stops lighting control)",
+                true,
+                None::<&str>,
+            )?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
             let mut tray = TrayIconBuilder::with_id("rgbable")
                 .tooltip("RGBable")

@@ -6,14 +6,14 @@
 //! protocol 6 every command is acknowledged with a status code, so failures
 //! are reported instead of being silently dropped.
 
+use crate::effects::Effect;
 use anyhow::{bail, Context, Result};
 use parking_lot::{Mutex, RwLock};
-use crate::effects::Effect;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::Arc;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{info, warn};
 
@@ -101,14 +101,19 @@ impl OpenRgb {
             match Self::open(port) {
                 Ok((mut stream, version)) => match list_devices(&mut stream, version) {
                     Ok(devices) if !devices.is_empty() => {
-                        info!("OpenRGB on port {port}: {} device(s), protocol {version}", devices.len());
+                        info!(
+                            "OpenRGB on port {port}: {} device(s), protocol {version}",
+                            devices.len()
+                        );
                         *self.status.write() = format!("Connected to OpenRGB on port {port}");
                         *self.port.write() = Some(port);
                         *self.devices.write() = devices;
                         *self.stream.lock() = Some((stream, version));
                         return Ok(());
                     }
-                    Ok(_) => last_error = Some(anyhow::anyhow!("OpenRGB on port {port} has no devices")),
+                    Ok(_) => {
+                        last_error = Some(anyhow::anyhow!("OpenRGB on port {port} has no devices"))
+                    }
                     Err(e) => last_error = Some(e),
                 },
                 Err(e) => last_error = Some(e),
@@ -131,18 +136,31 @@ impl OpenRgb {
         stream.set_nodelay(true)?;
         stream.set_read_timeout(Some(Duration::from_secs(3)))?;
         send(&mut stream, 0, PKT_SET_CLIENT_NAME, b"RGBable\0")?;
-        send(&mut stream, 0, PKT_REQUEST_PROTOCOL_VERSION, &CLIENT_PROTOCOL.to_le_bytes())?;
+        send(
+            &mut stream,
+            0,
+            PKT_REQUEST_PROTOCOL_VERSION,
+            &CLIENT_PROTOCOL.to_le_bytes(),
+        )?;
         let reply = expect(&mut stream, PKT_REQUEST_PROTOCOL_VERSION)?;
-        let server = reply.get(..4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+        let server = reply
+            .get(..4)
+            .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
         Ok((stream, server.min(CLIENT_PROTOCOL)))
     }
 
     /// Re-read one controller from the server (to verify what it applied).
     pub fn refresh(&self, index: u32) -> Result<OrgbDevice> {
         let mut guard = self.stream.lock();
-        let Some((stream, version)) = guard.as_mut() else { bail!("OpenRGB is not connected") };
+        let Some((stream, version)) = guard.as_mut() else {
+            bail!("OpenRGB is not connected")
+        };
         let version = *version;
-        let request: Vec<u8> = if version >= 6 { Vec::new() } else { version.to_le_bytes().to_vec() };
+        let request: Vec<u8> = if version >= 6 {
+            Vec::new()
+        } else {
+            version.to_le_bytes().to_vec()
+        };
         send(stream, index, PKT_REQUEST_CONTROLLER_DATA, &request)?;
         let data = expect(stream, PKT_REQUEST_CONTROLLER_DATA)?;
         parse_controller(index, &data, version)
@@ -155,8 +173,7 @@ impl OpenRgb {
     }
 
     pub fn led_count(&self, index: u32) -> Result<usize> {
-        self
-            .devices
+        self.devices
             .read()
             .iter()
             .find(|d| d.index == index)
@@ -168,7 +185,9 @@ impl OpenRgb {
     pub fn set_leds(&self, index: u32, colors: &[[u8; 3]], custom_mode: bool) -> Result<()> {
         let leds = colors.len();
         let mut guard = self.stream.lock();
-        let Some((stream, version)) = guard.as_mut() else { bail!("OpenRGB is not connected") };
+        let Some((stream, version)) = guard.as_mut() else {
+            bail!("OpenRGB is not connected")
+        };
         let version = *version;
         let mut payload = Vec::with_capacity(6 + leds * 4);
         payload.extend_from_slice(&((6 + leds * 4) as u32).to_le_bytes());
@@ -238,7 +257,10 @@ impl OpenRgb {
                         let period = u64::from(effect.period_ms().max(1));
                         let phase = (elapsed % period) as f32 / period as f32;
                         let first = in_direct_mode.insert(index);
-                        if openrgb.set_leds(index, &effect.frame(zones, phase), first).is_err() {
+                        if openrgb
+                            .set_leds(index, &effect.frame(zones, phase), first)
+                            .is_err()
+                        {
                             in_direct_mode.remove(&index);
                         }
                     }
@@ -307,7 +329,10 @@ fn expect(stream: &mut TcpStream, id: u32) -> Result<Vec<u8>> {
 fn list_devices(stream: &mut TcpStream, version: u32) -> Result<Vec<OrgbDevice>> {
     send(stream, 0, PKT_REQUEST_CONTROLLER_COUNT, &[])?;
     let reply = expect(stream, PKT_REQUEST_CONTROLLER_COUNT)?;
-    let count = reply.get(..4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap())).min(256);
+    let count = reply
+        .get(..4)
+        .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
+        .min(256);
     // Protocol 6 addresses controllers by ID (listed after the count), older by index.
     let ids: Vec<u32> = if version >= 6 {
         (0..count as usize)
@@ -319,7 +344,11 @@ fn list_devices(stream: &mut TcpStream, version: u32) -> Result<Vec<OrgbDevice>>
     };
     let mut devices = Vec::new();
     for index in ids {
-        let request: Vec<u8> = if version >= 6 { Vec::new() } else { version.to_le_bytes().to_vec() };
+        let request: Vec<u8> = if version >= 6 {
+            Vec::new()
+        } else {
+            version.to_le_bytes().to_vec()
+        };
         send(stream, index, PKT_REQUEST_CONTROLLER_DATA, &request)?;
         let data = expect(stream, PKT_REQUEST_CONTROLLER_DATA)?;
         match parse_controller(index, &data, version) {
@@ -362,7 +391,11 @@ fn parse_controller(index: u32, data: &[u8], version: u32) -> Result<OrgbDevice>
     r.u32()?; // data size
     let kind = r.u32()?;
     let name = r.string()?;
-    let vendor = if version >= 1 { r.string()? } else { String::new() };
+    let vendor = if version >= 1 {
+        r.string()?
+    } else {
+        String::new()
+    };
     r.string()?; // description
     r.string()?; // version
     let serial = r.string()?;
@@ -420,8 +453,23 @@ fn parse_controller(index: u32, data: &[u8], version: u32) -> Result<OrgbDevice>
     } else {
         None
     };
-    let active_mode = modes.get(active).cloned().unwrap_or_else(|| format!("#{active}"));
-    Ok(OrgbDevice { index, name, vendor, kind: kind_name(kind), serial, location, leds, zones, modes, active_mode, first_color })
+    let active_mode = modes
+        .get(active)
+        .cloned()
+        .unwrap_or_else(|| format!("#{active}"));
+    Ok(OrgbDevice {
+        index,
+        name,
+        vendor,
+        kind: kind_name(kind),
+        serial,
+        location,
+        leds,
+        zones,
+        modes,
+        active_mode,
+        first_color,
+    })
 }
 
 /// One mode entry (RGBController::GetModeDescriptionData); returns its name.
@@ -452,7 +500,10 @@ struct Reader<'a> {
 impl Reader<'_> {
     fn take(&mut self, n: usize) -> Result<&[u8]> {
         let end = self.pos.checked_add(n).context("length overflow")?;
-        let bytes = self.data.get(self.pos..end).context("truncated controller data")?;
+        let bytes = self
+            .data
+            .get(self.pos..end)
+            .context("truncated controller data")?;
         self.pos = end;
         Ok(bytes)
     }
@@ -468,6 +519,8 @@ impl Reader<'_> {
     fn string(&mut self) -> Result<String> {
         let n = self.u16()? as usize;
         let bytes = self.take(n)?;
-        Ok(String::from_utf8_lossy(bytes).trim_end_matches('\0').to_string())
+        Ok(String::from_utf8_lossy(bytes)
+            .trim_end_matches('\0')
+            .to_string())
     }
 }
