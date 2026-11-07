@@ -17,6 +17,8 @@ use tracing::{error, info, warn};
 
 pub const RING_ID: &str = "oled-ring";
 const RING_LEDS: usize = 45;
+pub const IDENTIFY_STEPS: u32 = 6;
+pub const IDENTIFY_STEP: Duration = Duration::from_millis(700);
 
 // ------------------------------------------------------------------ config
 
@@ -33,12 +35,34 @@ pub struct Config {
     pub openrgb_port: Option<u16>,
     #[serde(default)]
     pub update_channel: crate::updater::Channel,
+    #[serde(default)]
+    pub groups: Vec<GroupConfig>,
+    #[serde(default)]
+    pub setup_done: bool,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DeviceConfig {
     #[serde(default)]
     pub name: Option<String>,
+    #[serde(default)]
+    pub color: Option<[u8; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync: Option<bool>,
+}
+
+impl DeviceConfig {
+    pub fn in_sync(&self) -> bool {
+        self.sync.unwrap_or(true)
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GroupConfig {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub members: Vec<String>,
     #[serde(default)]
     pub color: Option<[u8; 3]>,
 }
@@ -79,6 +103,7 @@ pub fn load_config(path: &Path) -> Config {
 pub struct DeviceView {
     pub id: String,
     pub name: String,
+    pub default_name: String,
     /// "fans", "strimer" or "ring"
     pub kind: &'static str,
     pub model: String,
@@ -118,6 +143,7 @@ struct Controller {
     target: Target,
     colors: Mutex<Vec<[u8; 3]>>,
     dirty: AtomicBool,
+    identifying: AtomicBool,
 }
 
 impl Controller {
@@ -282,6 +308,7 @@ impl Engine {
                 target: Target::Wireless { mac: device.mac },
                 colors: Mutex::new(vec![[0, 0, 0]; leds]),
                 dirty: AtomicBool::new(false),
+                identifying: AtomicBool::new(false),
             }));
         }
         if let Some(ring) = ring {
@@ -294,6 +321,7 @@ impl Engine {
                 target: Target::Ring(ring),
                 colors: Mutex::new(vec![[0, 0, 0]; RING_LEDS]),
                 dirty: AtomicBool::new(false),
+                identifying: AtomicBool::new(false),
             }));
         }
         *self.controllers.write() = list;
@@ -330,7 +358,8 @@ impl Engine {
                     .unwrap_or_default();
                 DeviceView {
                     id: ctl.id.clone(),
-                    name: saved.and_then(|s| s.name.clone()).unwrap_or(default_name),
+                    name: saved.and_then(|s| s.name.clone()).unwrap_or_else(|| default_name.clone()),
+                    default_name,
                     kind: ctl.kind,
                     model: ctl.model.clone(),
                     fans: ctl.fans,
@@ -363,19 +392,56 @@ impl Engine {
     }
 
     pub fn set_all_colors(&self, color: [u8; 3]) {
-        let ids: Vec<String> = self.controllers.read().iter().map(|c| c.id.clone()).collect();
+        let config = self.config();
+        let ids: Vec<String> = self
+            .controllers
+            .read()
+            .iter()
+            .map(|c| c.id.clone())
+            .filter(|id| config.devices.get(id).is_none_or(DeviceConfig::in_sync))
+            .collect();
         for id in ids {
             let _ = self.set_color(&id, color);
         }
     }
 
-    pub fn rename(&self, id: &str, name: &str) {
-        let name = name.trim();
-        let mut config = self.config.lock();
-        let entry = config.devices.entry(id.to_string()).or_default();
-        entry.name = (!name.is_empty()).then(|| name.to_string());
-        drop(config);
+    pub fn update_config<R>(&self, change: impl FnOnce(&mut Config) -> R) -> R {
+        let result = change(&mut self.config.lock());
         self.save_config();
+        result
+    }
+
+    fn saved_color(&self, id: &str) -> Option<[u8; 3]> {
+        let config = self.config.lock();
+        if id == RING_ID {
+            config.oled_ring
+        } else {
+            config.devices.get(id).and_then(|d| d.color)
+        }
+    }
+
+    /// Blinks a device white so the user can tell which one it is, then restores its colour.
+    pub fn identify(self: &Arc<Self>, id: &str) -> Result<()> {
+        let ctl = self
+            .controllers
+            .read()
+            .iter()
+            .find(|c| c.id == id)
+            .cloned()
+            .with_context(|| format!("no device {id}"))?;
+        if ctl.identifying.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let engine = self.clone();
+        thread::Builder::new().name("identify".into()).spawn(move || {
+            for step in 0..IDENTIFY_STEPS {
+                ctl.set_all(if step % 2 == 0 { [255, 255, 255] } else { [0, 0, 0] });
+                thread::sleep(IDENTIFY_STEP);
+            }
+            ctl.set_all(engine.saved_color(&ctl.id).unwrap_or([0, 0, 0]));
+            ctl.identifying.store(false, Ordering::Release);
+        })?;
+        Ok(())
     }
 
     pub fn set_update_channel(&self, channel: crate::updater::Channel) {

@@ -52,19 +52,18 @@
           <div>
             <div class="card-title">Sync everything</div>
             <label class="check"><input type="checkbox" id="sync-openrgb" checked /> Include OpenRGB devices (RAM, GPU, motherboard)</label>
+            <div class="muted small">Devices with their Sync switch off are left alone.</div>
           </div>
         </div>
         <div class="presets" id="presets"></div>
         <button class="btn primary" id="sync-apply">Apply to all</button>
       </div>
 
-      <h2>Lian Li</h2>
-      <div class="grid" id="lianli-devices">
-        <div class="empty">Waiting for devices…</div>
+      <div class="lights-head">
+        <span class="muted small" id="orgb-status"></span>
+        <button class="btn" id="group-new">New group</button>
       </div>
-
-      <h2>Other lighting <span class="muted small" id="orgb-status"></span></h2>
-      <div class="grid" id="orgb-devices"></div>
+      <div id="lights"><div class="empty">Waiting for devices…</div></div>
     </section>
 
     <!-- OLED -->
@@ -143,6 +142,11 @@
         <p class="muted small">Only one program can talk to the Lian Li devices. Turn off L-Connect's "start with Windows" and exit it; RGBable waits until it has closed.</p>
       </div>
       <div class="card">
+        <div class="card-title">Device setup</div>
+        <p class="muted small">Walk through every light again: blink it, name it, put it in a group and choose whether Sync everything changes it.</p>
+        <div class="row"><button class="btn" id="setup-again">Run setup again</button></div>
+      </div>
+      <div class="card">
         <div class="card-title">Updates</div>
         <p class="muted small">RGBable checks GitHub for new versions when it starts and every few hours. Dev builds are untested and come out with every change.</p>
         <div class="row">
@@ -162,6 +166,26 @@
       </div>
     </section>
   </main>
+
+  <div class="overlay" id="wizard" hidden>
+    <div class="card wizard">
+      <div class="wizard-head">
+        <div>
+          <div class="muted small" id="wz-step"></div>
+          <div class="card-title" id="wz-title"></div>
+        </div>
+        <button class="btn" id="wz-close" title="Close without saving">Close</button>
+      </div>
+      <div id="wz-body"></div>
+      <div class="row wizard-foot">
+        <button class="btn" id="wz-back">Back</button>
+        <span class="grow"></span>
+        <button class="btn" id="wz-skip">Skip</button>
+        <button class="btn primary" id="wz-next">Next</button>
+      </div>
+    </div>
+  </div>
+  <datalist id="group-names"></datalist>
 
   <div id="toast"></div>
   <script src="app.js"></script>

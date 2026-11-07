@@ -32,6 +32,8 @@ pub struct OrgbDevice {
     pub name: String,
     pub vendor: String,
     pub kind: &'static str,
+    pub serial: String,
+    pub location: String,
     pub leds: usize,
     pub zones: Vec<(String, usize)>,
     pub modes: Vec<String>,
@@ -278,8 +280,8 @@ fn parse_controller(index: u32, data: &[u8], version: u32) -> Result<OrgbDevice>
     let vendor = if version >= 1 { r.string()? } else { String::new() };
     r.string()?; // description
     r.string()?; // version
-    r.string()?; // serial
-    r.string()?; // location
+    let serial = r.string()?;
+    let location = r.string()?;
     let mode_count = r.u16()?;
     let active = r.u32()? as usize;
     let mut modes = Vec::new();
@@ -334,7 +336,7 @@ fn parse_controller(index: u32, data: &[u8], version: u32) -> Result<OrgbDevice>
         None
     };
     let active_mode = modes.get(active).cloned().unwrap_or_else(|| format!("#{active}"));
-    Ok(OrgbDevice { index, name, vendor, kind: kind_name(kind), leds, zones, modes, active_mode, first_color })
+    Ok(OrgbDevice { index, name, vendor, kind: kind_name(kind), serial, location, leds, zones, modes, active_mode, first_color })
 }
 
 /// One mode entry (RGBController::GetModeDescriptionData); returns its name.

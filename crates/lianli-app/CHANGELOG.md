@@ -4,6 +4,13 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 
 ## [Unreleased]
 
+### Added
+
+- Device groups: create, rename and delete groups, mix Lian Li and OpenRGB devices, colour a whole group, drag devices between groups.
+- Identify button that blinks a device white.
+- First-run setup wizard that walks through every light (Settings > Run setup again).
+- Per-device switch to leave a device out of Sync everything.
+
 ## [0.2.0] - 2026-11-07
 
 ### Added

@@ -3,10 +3,12 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod engine;
+mod lights;
 mod openrgb;
 mod updater;
 
 use engine::{DeviceView, Engine, OledView, Telemetry};
+use lights::{GroupView, LightView, SetupEntry};
 use openrgb::{OpenRgb, OrgbView};
 use serde::Serialize;
 use std::path::PathBuf;
@@ -33,6 +35,9 @@ struct Overview {
     openrgb: OrgbView,
     autostart: bool,
     data_dir: String,
+    lights: Vec<LightView>,
+    groups: Vec<GroupView>,
+    setup_done: bool,
     update: UpdateView,
     update_channel: Channel,
 }
@@ -52,33 +57,83 @@ fn overview(state: State<'_, AppState>) -> Overview {
         openrgb: state.openrgb.view(),
         autostart: autostart_enabled(),
         data_dir: data_dir().to_string_lossy().into_owned(),
+        lights: lights::lights(&state.engine, &state.openrgb),
+        groups: lights::groups(&state.engine),
+        setup_done: state.engine.config().setup_done,
         update: state.updater.view(),
         update_channel: state.engine.config().update_channel,
     }
 }
 
+fn chain(e: anyhow::Error) -> String {
+    format!("{e:#}")
+}
+
 #[tauri::command]
 fn set_color(state: State<'_, AppState>, id: String, color: [u8; 3]) -> Result<(), String> {
-    state.engine.set_color(&id, color).map_err(err)
+    lights::set_color(&state.engine, &state.openrgb, &id, color).map_err(chain)
 }
 
 #[tauri::command]
 fn set_all(state: State<'_, AppState>, color: [u8; 3], include_openrgb: bool) -> Result<(), String> {
-    state.engine.set_all_colors(color);
-    if include_openrgb {
-        for device in state.openrgb.view().devices {
-            if let Err(e) = state.openrgb.set_color(device.index, color) {
-                tracing::warn!("OpenRGB {}: {e:#}", device.name);
-                return Err(format!("{}: {e:#}", device.name));
-            }
-        }
-    }
-    Ok(())
+    lights::set_all(&state.engine, &state.openrgb, color, include_openrgb).map_err(chain)
+}
+
+fn default_name(state: &AppState, id: &str) -> Option<String> {
+    lights::lights(&state.engine, &state.openrgb)
+        .into_iter()
+        .find(|l| l.id == id)
+        .map(|l| l.default_name)
 }
 
 #[tauri::command]
 fn rename(state: State<'_, AppState>, id: String, name: String) {
-    state.engine.rename(&id, &name);
+    let default = default_name(&state, &id);
+    state.engine.update_config(|c| lights::set_name(c, &id, &name, default.as_deref()));
+}
+
+#[tauri::command]
+fn identify(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    lights::identify(&state.engine, &state.openrgb, &id).map_err(chain)
+}
+
+#[tauri::command]
+fn set_sync(state: State<'_, AppState>, id: String, sync: bool) {
+    state.engine.update_config(|c| lights::set_sync(c, &id, sync));
+}
+
+#[tauri::command]
+fn create_group(state: State<'_, AppState>, name: String) -> String {
+    state.engine.update_config(|c| lights::create_group(c, &name))
+}
+
+#[tauri::command]
+fn rename_group(state: State<'_, AppState>, group: String, name: String) {
+    state.engine.update_config(|c| lights::rename_group(c, &group, &name));
+}
+
+#[tauri::command]
+fn delete_group(state: State<'_, AppState>, group: String) {
+    state.engine.update_config(|c| lights::delete_group(c, &group));
+}
+
+#[tauri::command]
+fn move_to_group(state: State<'_, AppState>, id: String, group: Option<String>) {
+    state.engine.update_config(|c| lights::move_to_group(c, &id, group.as_deref()));
+}
+
+#[tauri::command]
+fn set_group_color(state: State<'_, AppState>, group: String, color: [u8; 3]) -> Result<(), String> {
+    lights::set_group_color(&state.engine, &state.openrgb, &group, color).map_err(chain)
+}
+
+#[tauri::command]
+fn finish_setup(state: State<'_, AppState>, entries: Vec<SetupEntry>) {
+    let defaults: Vec<(String, String)> = lights::lights(&state.engine, &state.openrgb)
+        .into_iter()
+        .map(|l| (l.id, l.default_name))
+        .collect();
+    state.engine.update_config(|c| lights::apply_setup(c, &entries, &defaults));
 }
 
 #[tauri::command]
@@ -89,11 +144,6 @@ async fn openrgb_connect(state: State<'_, AppState>) -> Result<(), String> {
         .await
         .map_err(err)?
         .map_err(|e| format!("{e:#}"))
-}
-
-#[tauri::command]
-fn openrgb_set_color(state: State<'_, AppState>, index: u32, color: [u8; 3]) -> Result<(), String> {
-    state.openrgb.set_color(index, color).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
@@ -326,7 +376,14 @@ fn main() {
             set_all,
             rename,
             openrgb_connect,
-            openrgb_set_color,
+            identify,
+            set_sync,
+            create_group,
+            rename_group,
+            delete_group,
+            move_to_group,
+            set_group_color,
+            finish_setup,
             pick_media,
             set_oled,
             stop_oled,

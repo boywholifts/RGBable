@@ -165,3 +165,37 @@ select { background: var(--bg); color: var(--text); border: 1px solid var(--line
 .update-banner[hidden] { display: none; }
 .update-text { min-width: 0; }
 .update-notes { white-space: pre-wrap; max-height: 96px; overflow: auto; margin: 0; font-family: inherit; }
+
+/* lighting groups */
+.lights-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 22px 0 6px; }
+.lights-head a { color: var(--accent-2); }
+.group { border: 1px dashed transparent; border-radius: var(--radius); padding: 6px 8px 10px; margin: 0 -8px 10px; transition: border-color .15s, background .15s; }
+.group.drop { border-color: var(--accent); background: rgba(128,0,255,.06); }
+.group-head { display: flex; align-items: center; gap: 12px; margin: 8px 0 12px; }
+.group-head h2 { margin: 6px 0 0; }
+.group-head .swatch { width: 32px; height: 32px; border-radius: 9px; }
+.group-name { all: unset; font-weight: 700; font-size: 16px; padding: 2px 6px; border-radius: 6px; min-width: 60px; }
+.group-name:hover { background: var(--card-hi); }
+.group-name:focus { background: var(--card-hi); outline: 1px solid var(--accent); }
+.group-head .btn.mini { margin-left: auto; }
+.device { align-items: flex-start; }
+.device.dragging { opacity: .45; }
+.device[draggable="true"] { cursor: grab; }
+.actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.actions select { padding: 3px 6px; font-size: 12px; max-width: 120px; }
+.btn.mini { padding: 4px 10px; font-size: 12px; border-radius: 8px; }
+.btn[disabled] { opacity: .4; pointer-events: none; }
+
+/* setup wizard */
+.overlay { position: fixed; inset: 0; background: rgba(5, 3, 10, .72); display: flex; align-items: center; justify-content: center; z-index: 10; }
+.overlay[hidden] { display: none; }
+.wizard { width: min(520px, calc(100vw - 40px)); max-height: calc(100vh - 60px); overflow: auto; margin: 0; padding: 22px 24px; }
+.wizard-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; margin-bottom: 10px; }
+.wizard-head .card-title { font-size: 18px; margin: 2px 0 0; }
+.wizard-foot { margin-top: 20px; }
+.grow { flex: 1; }
+.field-col { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; font-size: 13px; color: var(--muted); }
+input.text { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; font-size: 14px; }
+input.text:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+.wizard .toggle-row { margin-top: 16px; }
+.wizard-summary { margin: 0; padding-left: 18px; line-height: 1.8; font-size: 13px; }
