@@ -22,6 +22,9 @@ pub struct LightView {
     pub detail: String,
     pub color: Option<[u8; 3]>,
     pub effect: Option<Effect>,
+    pub outer_effect: Option<Effect>,
+    /// SL Flex fans: effects can target the inner or outer ring.
+    pub sides: bool,
     pub sync: bool,
     pub group: Option<String>,
     /// OpenRGB zones whose LED count the user can set (addressable headers).
@@ -89,6 +92,8 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 detail: d.model,
                 color: d.color,
                 effect: d.effect,
+                outer_effect: d.outer_effect,
+                sides: d.sides,
                 zones: Vec::new(),
                 sync: saved.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &d.id),
@@ -111,6 +116,8 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
             detail: format!("{} LEDs via OpenRGB", device.leds),
             color: saved.and_then(|s| s.color).or(device.first_color),
             effect: saved.and_then(|s| s.effect.clone()),
+            outer_effect: None,
+            sides: false,
             zones: device
                 .zones
                 .iter()
@@ -248,6 +255,7 @@ pub fn static_effect(color: [u8; 3]) -> Effect {
         speed: 3,
         brightness: 100,
         reverse: false,
+        ..Effect::default()
     }
 }
 

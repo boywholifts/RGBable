@@ -61,6 +61,7 @@ const PULSING = ["breathing", "heartbeat", "strobe", "police", "color_cycle"];
 
 function effectColors(effect) {
   if (effect.kind === "rainbow" || effect.kind === "rainbow_wave") return RAINBOW;
+  if (effect.kind === "lianli" && !effect.colors.length) return RAINBOW;
   if (effect.kind === "fire") return FIRE_COLORS;
   const colors = effect.colors.map(rgbToHex);
   return colors.length ? colors : ["#8000ff"];
@@ -93,7 +94,14 @@ function lightCard(l, groups) {
   name.addEventListener("keydown", (e) => e.key === "Enter" && name.blur());
   const meta = el("div", { class: "meta", title: l.detail }, [
     el("span", { class: "tag" }, l.kind),
-    ...(l.effect ? [el("span", { class: "tag fx" }, kindLabelOf(l.effect))] : []),
+    ...(l.outer_effect
+      ? [
+          el("span", { class: "tag fx" }, "In: " + (l.effect ? kindLabelOf(l.effect) : "Colour")),
+          el("span", { class: "tag fx" }, "Out: " + kindLabelOf(l.outer_effect)),
+        ]
+      : l.effect
+        ? [el("span", { class: "tag fx" }, kindLabelOf(l.effect) + (l.effect.side && l.effect.side !== "both" ? ` (${l.effect.side})` : ""))]
+        : []),
     l.detail,
   ]);
 
@@ -402,29 +410,93 @@ const KINDS = [
   { id: "police", label: "Police", colors: 2, defaults: ["#ff0000", "#0040ff"] },
 ];
 const kindInfo = (id) => KINDS.find((k) => k.id === id) || KINDS[0];
-const kindLabelOf = (effect) => (effect ? kindInfo(effect.kind).label : "Static");
+let LIANLI = [];
+const DIRECTIONS = { Clockwise: "Clockwise", CounterClockwise: "Counter-clockwise", Up: "Up", Down: "Down", Spread: "Spread out", Gather: "Gather in" };
+const MODE_NAMES = { RainbowMorph: "Rainbow morph", ColorCycle: "Colour cycle", ElectricCurrent: "Electric current", ShuttleRun: "Shuttle run", GradientRibbon: "Gradient ribbon", PingPong: "Ping-pong" };
+const modeName = (mode) => MODE_NAMES[mode] || mode.replace(/([a-z])([A-Z])/g, "$1 $2");
+const lianliInfo = (mode) => LIANLI.find((m) => m.mode === mode);
+function kindLabelOf(effect) {
+  if (!effect) return "Static";
+  if (effect.kind === "lianli") return modeName(effect.mode || "");
+  return kindInfo(effect.kind).label;
+}
 
-const fx = { kind: "static", colors: ["#8000ff"], active: 0, targetKey: "" };
+const fx = { kind: "static", mode: null, side: "both", colors: ["#8000ff"], active: 0, targetKey: "" };
+
+function chip(label, on, onclick, disabled) {
+  const b = el("button", { class: "chip" + (on ? " on" : ""), onclick }, label);
+  if (disabled) {
+    b.disabled = true;
+    b.title = "Not available for a single ring";
+  }
+  return b;
+}
 
 function renderKinds() {
   $("#fx-kinds").replaceChildren(...KINDS.map((k) =>
-    el("button", { class: "chip" + (k.id === fx.kind ? " on" : ""), onclick: () => {
+    chip(k.label, fx.kind === k.id, () => {
       fx.kind = k.id;
+      fx.mode = null;
       if (k.defaults) fx.colors = k.defaults.slice();
       renderEditor();
-    } }, k.label)
+    })
+  ));
+  $("#fx-lianli").replaceChildren(...LIANLI.map((m) =>
+    chip(modeName(m.mode), fx.kind === "lianli" && fx.mode === m.mode, () => {
+      fx.kind = "lianli";
+      fx.mode = m.mode;
+      renderEditor();
+    }, fx.side !== "both" && !m.side)
   ));
 }
 
-function renderEditor() {
-  renderKinds();
+/// What the colour/speed/direction controls should offer for the chosen effect.
+function controls() {
+  if (fx.kind === "lianli") {
+    const m = lianliInfo(fx.mode) || { max_colors: 4, min_colors: 1, directions: [], speed: true };
+    const colors = m.per_fan_colors ? 4 : m.max_colors;
+    return { colors, speed: m.speed, directions: m.directions, reverse: false, hint: m.per_fan_colors ? "Each fan takes the next colour." : "" };
+  }
   const info = kindInfo(fx.kind);
-  fx.colors = fx.colors.slice(0, Math.max(1, info.colors));
+  return { colors: info.colors, speed: fx.kind !== "static", directions: [], reverse: !!info.reverse, hint: info.hint || "" };
+}
+
+function targetHasSides() {
+  const value = $("#fx-target").value;
+  if (!last) return false;
+  if (value.startsWith("dev:")) {
+    const l = last.lights.find((x) => x.id === value.slice(4));
+    return !!(l && l.sides);
+  }
+  if (value.startsWith("group:")) {
+    const g = last.groups.find((x) => x.id === value.slice(6));
+    return !!(g && g.members.some((id) => last.lights.some((l) => l.id === id && l.sides)));
+  }
+  return last.lights.some((l) => l.sides);
+}
+
+function renderEditor() {
+  const sides = targetHasSides();
+  if (!sides) fx.side = "both";
+  $("#fx-side").hidden = !sides;
+  document.querySelectorAll("#fx-side button").forEach((b) => b.classList.toggle("on", b.dataset.side === fx.side));
+  if (fx.kind === "lianli" && fx.side !== "both" && !(lianliInfo(fx.mode) || {}).side) {
+    fx.kind = "static";
+    fx.mode = null;
+  }
+  renderKinds();
+  const c = controls();
+  fx.colors = fx.colors.slice(0, Math.max(1, c.colors));
   fx.active = Math.min(fx.active, fx.colors.length - 1);
-  $("#fx-colors-row").hidden = info.colors === 0;
-  $("#fx-add").hidden = fx.colors.length >= info.colors;
-  $("#fx-speed-row").hidden = fx.kind === "static";
-  $("#fx-reverse-row").hidden = !info.reverse;
+  $("#fx-colors-row").hidden = c.colors === 0;
+  $("#fx-add").hidden = fx.colors.length >= c.colors;
+  $("#fx-speed-row").hidden = !c.speed;
+  $("#fx-reverse-row").hidden = !c.reverse;
+  $("#fx-dir-row").hidden = c.directions.length === 0;
+  const dir = $("#fx-dir");
+  const previous = dir.value;
+  dir.replaceChildren(...c.directions.map((d) => el("option", { value: d }, DIRECTIONS[d] || d)));
+  if (c.directions.includes(previous)) dir.value = previous;
   $("#fx-bright-val").textContent = $("#fx-brightness").value + "%";
   $("#fx-colors").replaceChildren(...fx.colors.map((hex, i) => {
     const s = swatch(hexToRgb(hex), () => {});
@@ -444,37 +516,65 @@ function renderEditor() {
   }));
   const target = $("#fx-target").value;
   $("#fx-openrgb-row").hidden = target !== "all";
-  const hint = info.hint ? info.hint + " " : "";
-  $("#fx-note").textContent = hint + (target === "all"
-    ? "Devices with their Sync switch off are left alone."
-    : fx.kind === "static" ? "" : "Lian Li fans and Strimers play effects by themselves; RGBable keeps the OLED ring and OpenRGB devices animated while it runs.");
+  const notes = [];
+  if (c.hint) notes.push(c.hint);
+  if (fx.side !== "both") notes.push(`Only the ${fx.side} ring of SL Flex fans changes; other devices get the whole effect.`);
+  if (target === "all") notes.push("Devices with their Sync switch off are left alone.");
+  else if (fx.kind !== "static") notes.push("Lian Li fans and Strimers play effects by themselves; RGBable keeps the OLED ring and OpenRGB devices animated while it runs.");
+  $("#fx-note").textContent = notes.join(" ");
 }
 
+document.querySelectorAll("#fx-side button").forEach((b) =>
+  b.addEventListener("click", () => {
+    fx.side = b.dataset.side;
+    renderEditor();
+  })
+);
+
 function currentEffect() {
-  return {
+  const effect = {
     kind: fx.kind,
     colors: fx.colors.map(hexToRgb),
     speed: Number($("#fx-speed").value),
     brightness: Number($("#fx-brightness").value),
     reverse: $("#fx-reverse").checked,
+    side: fx.side,
   };
+  if (fx.kind === "lianli") {
+    effect.mode = fx.mode;
+    if (!$("#fx-dir-row").hidden && $("#fx-dir").value) effect.direction = $("#fx-dir").value;
+    if (controls().colors === 0) effect.colors = [];
+  }
+  return effect;
 }
 
 function loadEffect(effect, color) {
   if (effect) {
     fx.kind = effect.kind;
+    fx.mode = effect.mode || null;
+    fx.side = effect.side || "both";
     fx.colors = effect.colors.length ? effect.colors.map(rgbToHex) : fx.colors;
     $("#fx-speed").value = effect.speed;
     $("#fx-brightness").value = effect.brightness;
     $("#fx-reverse").checked = effect.reverse;
+    if (effect.direction) {
+      renderEditor();
+      $("#fx-dir").value = effect.direction;
+    }
   } else {
     fx.kind = "static";
+    fx.mode = null;
     if (color) fx.colors = [rgbToHex(color)];
     $("#fx-brightness").value = 100;
   }
   fx.active = 0;
   renderEditor();
 }
+
+invoke("lianli_effects").then((list) => {
+  LIANLI = list || [];
+  renderEditor();
+}).catch(() => {});
 
 function renderTargets(o) {
   const select = $("#fx-target");

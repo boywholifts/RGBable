@@ -7,6 +7,7 @@ mod engine;
 mod lights;
 mod openrgb;
 mod openrgb_host;
+mod render;
 mod updater;
 
 use anyhow::Context;
@@ -342,6 +343,11 @@ async fn resize_zone(
 }
 
 #[tauri::command]
+fn lianli_effects() -> Vec<render::LianliEffect> {
+    render::lianli_effects()
+}
+
+#[tauri::command]
 async fn check_update(state: State<'_, AppState>) -> Result<UpdateView, String> {
     let updater = state.updater.clone();
     let channel = state.engine.config().update_channel;
@@ -566,7 +572,8 @@ fn main() {
             install_pawnio,
             set_openrgb_managed,
             locate_openrgb,
-            resize_zone
+            resize_zone,
+            lianli_effects
         ])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Open RGBable", true, None::<&str>)?;

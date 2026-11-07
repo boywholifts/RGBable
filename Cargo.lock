@@ -4235,6 +4235,8 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "lianli-devices",
+ "lianli-media",
+ "lianli-shared",
  "parking_lot",
  "serde",
  "serde_json",

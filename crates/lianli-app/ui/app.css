@@ -248,3 +248,10 @@ input.text.num { width: 64px; padding: 4px 6px; font-size: 13px; }
 .swatch.pulse { animation: fx-flow calc(var(--fx-time, 3s) * 2) linear infinite, fx-pulse var(--fx-time, 3s) ease-in-out infinite; }
 @keyframes fx-flow { from { background-position: 0 0; } to { background-position: 132px 0; } }
 @keyframes fx-pulse { 0%, 100% { filter: brightness(.35); } 50% { filter: brightness(1); } }
+
+/* effect sources and fan rings */
+.fx-section { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: -6px; }
+.fx-section .muted { font-weight: 400; margin-left: 6px; }
+.chip:disabled { opacity: .35; cursor: not-allowed; }
+#fx-side[hidden] { display: none; }
+#fx-dir-row[hidden] { display: none; }

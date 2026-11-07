@@ -1,6 +1,7 @@
 //! Lighting effects rendered on the host. Every effect is a periodic function of a phase in
 //! 0..1, so a loop of frames repeats seamlessly on devices that play animations themselves.
 
+use lianli_shared::rgb::{RgbDirection, RgbMode};
 use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
 
@@ -25,6 +26,19 @@ pub enum EffectKind {
     StarryNight,
     Aurora,
     Police,
+    /// One of L-Connect's own effects (`mode`), rendered by the Lian Li device renderer.
+    /// Devices that don't have it show the closest RGBable effect.
+    Lianli,
+}
+
+/// Which ring of an SL Flex fan an effect is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Side {
+    #[default]
+    Both,
+    Inner,
+    Outer,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +54,12 @@ pub struct Effect {
     pub brightness: u8,
     #[serde(default)]
     pub reverse: bool,
+    #[serde(default)]
+    pub side: Side,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode: Option<RgbMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<RgbDirection>,
 }
 
 fn default_speed() -> u8 {
@@ -54,7 +74,57 @@ const FALLBACK_COLOR: [u8; 3] = [128, 0, 255];
 /// loops small enough for the wireless devices' animation memory.
 const COARSE_BLOCK: usize = 4;
 
+impl Default for Effect {
+    fn default() -> Self {
+        Self {
+            kind: EffectKind::Static,
+            colors: Vec::new(),
+            speed: default_speed(),
+            brightness: default_brightness(),
+            reverse: false,
+            side: Side::Both,
+            mode: None,
+            direction: None,
+        }
+    }
+}
+
 impl Effect {
+    /// The RGBable effect closest to an L-Connect one, for devices without a Lian Li renderer.
+    pub fn generic(&self) -> Effect {
+        if self.kind != EffectKind::Lianli {
+            return self.clone();
+        }
+        let kind = match self.mode {
+            Some(RgbMode::Static) => EffectKind::Static,
+            Some(RgbMode::Rainbow) => EffectKind::Rainbow,
+            Some(RgbMode::RainbowMorph | RgbMode::Endless) => EffectKind::RainbowWave,
+            Some(RgbMode::Breathing) => EffectKind::Breathing,
+            Some(RgbMode::Runway | RgbMode::Staggered) => EffectKind::Runway,
+            Some(RgbMode::Meteor | RgbMode::Pioneer) => EffectKind::Meteor,
+            Some(RgbMode::Tide | RgbMode::Mixing | RgbMode::River | RgbMode::GradientRibbon) => {
+                EffectKind::Wave
+            }
+            Some(RgbMode::Render | RgbMode::Stack | RgbMode::Hourglass) => EffectKind::Fill,
+            Some(
+                RgbMode::PingPong
+                | RgbMode::Collide
+                | RgbMode::Reflect
+                | RgbMode::Duel
+                | RgbMode::ShuttleRun,
+            ) => EffectKind::Scanner,
+            Some(RgbMode::Ripple) => EffectKind::Ripple,
+            Some(RgbMode::ElectricCurrent) => EffectKind::Strobe,
+            Some(RgbMode::Twinkle) => EffectKind::Twinkle,
+            _ => EffectKind::ColorCycle,
+        };
+        Effect {
+            kind,
+            mode: None,
+            ..self.clone()
+        }
+    }
+
     pub fn is_animated(&self) -> bool {
         self.kind != EffectKind::Static
     }
@@ -76,6 +146,9 @@ impl Effect {
 
     /// Length of one loop in milliseconds.
     pub fn period_ms(&self) -> u32 {
+        if self.kind == EffectKind::Lianli {
+            return self.generic().period_ms();
+        }
         let base = match self.kind {
             EffectKind::Static => 1000,
             EffectKind::Breathing => 4000 * self.colors().len() as u32,
@@ -94,6 +167,7 @@ impl Effect {
             EffectKind::StarryNight => 4000,
             EffectKind::Aurora => 8000,
             EffectKind::Police => 1600,
+            EffectKind::Lianli => 3000,
         };
         let factor = [2.0, 1.4, 1.0, 0.7, 0.5][usize::from(self.speed.clamp(1, 5) - 1)];
         (base as f32 * factor) as u32
@@ -102,6 +176,9 @@ impl Effect {
     /// The LEDs at `phase` (0..1 through the loop). `zones` are the LED counts of each
     /// fan or cable section; position-based effects run around each zone separately.
     pub fn frame(&self, zones: &[usize], phase: f32) -> Vec<[u8; 3]> {
+        if self.kind == EffectKind::Lianli {
+            return self.generic().frame(zones, phase);
+        }
         let phase = phase.rem_euclid(1.0);
         let colors = self.colors();
         let mut out = Vec::with_capacity(zones.iter().sum());
@@ -138,6 +215,7 @@ impl Effect {
                     EffectKind::StarryNight => starry_night(colors, phase, led_index),
                     EffectKind::Aurora => aurora(colors, phase, p),
                     EffectKind::Police => police(colors, phase, p),
+                    EffectKind::Lianli => colors[0],
                 };
                 out.push(scale(color, self.brightness));
                 led_index += 1;
@@ -146,6 +224,7 @@ impl Effect {
         out
     }
 
+    #[cfg(test)]
     /// One loop as frames `interval_ms` apart.
     pub fn loop_frames(&self, zones: &[usize], interval_ms: u32) -> Vec<Vec<[u8; 3]>> {
         if !self.is_animated() {
@@ -374,6 +453,7 @@ mod tests {
             speed: 3,
             brightness: 100,
             reverse: false,
+            ..Effect::default()
         }
     }
 

@@ -14,6 +14,8 @@ tauri-build = { workspace = true }
 
 [dependencies]
 lianli-devices = { path = "../lianli-devices" }
+lianli-media = { path = "../lianli-media", default-features = false }
+lianli-shared = { path = "../lianli-shared" }
 tauri = { workspace = true, features = ["tray-icon"] }
 tauri-plugin-dialog = { workspace = true }
 serde = { workspace = true }
