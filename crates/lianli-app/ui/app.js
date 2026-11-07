@@ -127,6 +127,18 @@ $("#wz-back").addEventListener("click", () => {
 });
 $("#wz-close").addEventListener("click", closeWizard);
 $("#setup-again").addEventListener("click", openWizard);
+$("#restart-app").addEventListener("click", async () => {
+  const button = $("#restart-app");
+  button.disabled = true;
+  button.textContent = "Restarting…";
+  try {
+    await invoke("restart_app");
+  } catch (e) {
+    toast(String(e), true);
+    button.disabled = false;
+    button.textContent = "Restart RGBable";
+  }
+});
 
 const startedAt = Date.now();
 let wizardOffered = false;

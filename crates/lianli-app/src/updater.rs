@@ -258,6 +258,32 @@ fn download_setup(update: &Update) -> Result<PathBuf> {
 /// Runs the NSIS setup silently once this process has exited, then starts the installed app
 /// (falling back to this exe, e.g. a portable copy, if the install folder isn't there).
 /// The steps go in a batch file because Rust's argument quoting is not what cmd expects.
+/// Starts this exe again once the current process has exited and let go of the devices
+/// (a direct relaunch would be turned away by the single-instance check).
+pub fn relaunch_after_exit() -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let script = std::env::temp_dir().join("rgbable-restart.cmd");
+    let body = format!(
+        "@echo off\r\n\
+         ping -n 3 127.0.0.1 >nul\r\n\
+         start \"\" \"{exe}\"\r\n",
+        exe = exe.display(),
+    );
+    std::fs::write(&script, body).with_context(|| format!("writing {}", script.display()))?;
+    let mut command = std::process::Command::new("cmd");
+    command.arg("/C");
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.raw_arg(format!("\"{}\"", script.display()));
+        command.creation_flags(0x0800_0000);
+    }
+    #[cfg(not(windows))]
+    command.arg(&script);
+    command.spawn().context("scheduling the restart")?;
+    Ok(())
+}
+
 pub fn launch_installer(setup: &std::path::Path) -> Result<()> {
     let exe = std::env::current_exe()?;
     let script = setup.with_extension("cmd");

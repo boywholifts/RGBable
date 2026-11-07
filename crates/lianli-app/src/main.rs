@@ -417,6 +417,30 @@ fn prepare_oled(app: AppHandle, file: String, fit: String, fps: u32) {
     engine::prepare_oled(engine::OledConfig { file, fit, fps });
 }
 
+/// Restarts RGBable, and the OpenRGB service when RGBable runs it, so newly plugged-in
+/// devices are found.
+#[tauri::command]
+async fn restart_app(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || restart(&app))
+        .await
+        .map_err(err)?
+        .map_err(chain)
+}
+
+fn restart(app: &AppHandle) -> anyhow::Result<()> {
+    let managed = tauri::Manager::try_state::<AppState>(app)
+        .is_some_and(|s| s.engine.config().manage_openrgb);
+    if managed {
+        if let Err(e) = openrgb_host::restart() {
+            tracing::warn!("restarting OpenRGB: {e:#}");
+        }
+    }
+    updater::relaunch_after_exit()?;
+    tracing::info!("restarting RGBable");
+    app.exit(0);
+    Ok(())
+}
+
 #[tauri::command]
 fn stop_oled(state: State<'_, AppState>) {
     state.engine.stop_oled();
@@ -924,6 +948,7 @@ fn main() {
             pick_media,
             set_oled,
             prepare_oled,
+            restart_app,
             oled_palette,
             set_oled_match,
             set_color_presets,
@@ -963,7 +988,9 @@ fn main() {
                 true,
                 None::<&str>,
             )?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let restart_item =
+                MenuItem::with_id(app, "restart", "Restart RGBable", true, None::<&str>)?;
+            let menu = Menu::with_items(app, &[&show, &restart_item, &quit])?;
             let mut tray = TrayIconBuilder::with_id("rgbable")
                 .tooltip("RGBable")
                 .menu(&menu)
@@ -971,6 +998,14 @@ fn main() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main(app),
                     "quit" => app.exit(0),
+                    "restart" => {
+                        let app = app.clone();
+                        std::thread::spawn(move || {
+                            if let Err(e) = restart(&app) {
+                                tracing::warn!("restart: {e:#}");
+                            }
+                        });
+                    }
                     _ => {}
                 })
                 .on_tray_icon_event(|tray, event| {
