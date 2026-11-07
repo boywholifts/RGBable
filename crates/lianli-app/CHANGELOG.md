@@ -18,6 +18,7 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 
 ### Fixed
 
+- Large effects (fire, twinkle, aurora) never reached wireless fans and Strimers, and switching effects sometimes left a device frozen on the old one: effect loops are now kept to 6 KB, and a device that doesn't confirm an effect is sent a smaller version until it does.
 - Device and group colour boxes showed the last plain colour while an effect was running; they now show the effect.
 - Update now failed with "Windows cannot find '\\'"; the installer is now started through a batch file and RGBable reopens from its install folder.
 - Apply to all sometimes left wireless fans or Strimers unchanged: uploads are now confirmed and resent, and devices are taken out of motherboard-sync mode first.

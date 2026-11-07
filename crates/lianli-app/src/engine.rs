@@ -595,6 +595,7 @@ impl Engine {
         // A confirmed device only counts as having lost its lighting after several
         // checks in a row, so stale discovery data cannot trigger a re-send storm.
         const STRIKES: u8 = 2;
+        const SHRINK_AFTER_SENDS: u8 = 2;
 
         enum State {
             Pending {
@@ -609,6 +610,8 @@ impl Engine {
         }
         let mut states: BTreeMap<[u8; 6], State> = BTreeMap::new();
         let mut not_before: BTreeMap<[u8; 6], Instant> = BTreeMap::new();
+        // How far each device's effects had to be shrunk before it accepted them.
+        let mut shrink: BTreeMap<[u8; 6], u8> = BTreeMap::new();
         let mut last_verify = Instant::now();
         let started = Instant::now();
         let mut last_ring_frame = Instant::now();
@@ -640,13 +643,24 @@ impl Engine {
                             None
                         } else if sent.elapsed() < CONFIRM_WAIT {
                             None
+                        } else if *sends >= SHRINK_AFTER_SENDS
+                            && ctl.effect.lock().is_some()
+                            && shrink.get(&mac).copied().unwrap_or(0) < MAX_SHRINK
+                        {
+                            let level = shrink.get(&mac).copied().unwrap_or(0) + 1;
+                            shrink.insert(mac, level);
+                            warn!(
+                                "{}: effect not confirmed, retrying it smaller (level {level})",
+                                ctl.id
+                            );
+                            Some((None, 0))
                         } else if *sends > RESENDS {
                             warn!("{}: lighting not confirmed after {sends} sends, checking again later", ctl.id);
                             let upload = upload.clone();
                             states.insert(mac, State::Settled { upload, strikes: 0 });
                             None
                         } else {
-                            Some((upload.clone(), *sends))
+                            Some((Some(upload.clone()), *sends))
                         }
                     }
                     _ => None,
@@ -670,10 +684,11 @@ impl Engine {
                 }
 
                 let (upload, sends) = match resend {
-                    Some((upload, sends)) if !dirty => (Ok(upload), sends),
+                    Some((Some(upload), sends)) if !dirty => (Ok(upload), sends),
                     _ => {
                         ctl.dirty.store(false, Ordering::Release);
-                        (prepare_lighting(wireless, ctl, &mac), 0)
+                        let level = shrink.get(&mac).copied().unwrap_or(0);
+                        (prepare_lighting(wireless, ctl, &mac, level), 0)
                     }
                 };
                 let result = upload.and_then(|u| wireless.send_rgb_upload(&mac, &u, 4).map(|()| u));
@@ -934,41 +949,48 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
     Ok(output)
 }
 
+/// Compressed bytes an effect loop may use at shrink level 0. The protocol allows 12 KB,
+/// but devices failed to take loops near that size, so loops start at half of it and are
+/// halved again for each level a device needed.
+const UPLOAD_BUDGET: usize = 6 * 1024;
+/// At this level an effect is shown as a still frame.
+const MAX_SHRINK: u8 = 3;
+
 /// Static colours go up as one frame; effects as a loop the device plays by itself. A loop
-/// that doesn't fit the device's animation memory is retried with fewer, longer frames.
+/// over the size budget is made coarser in time (fewer, longer frames) until it fits.
 fn prepare_lighting(
     wireless: &WirelessController,
     ctl: &Controller,
     mac: &[u8; 6],
+    shrink: u8,
 ) -> Result<WirelessRgbUpload> {
     let effect = ctl
         .effect
         .lock()
         .clone()
         .filter(|_| !ctl.identifying.load(Ordering::Acquire));
-    let upload = match effect {
-        None => wireless.prepare_rgb_upload(mac, &[ctl.colors.lock().clone()], 5000)?,
-        Some(effect) => {
-            let mut interval = WIRELESS_FRAME_MS;
-            loop {
-                let frames = effect.loop_frames(&ctl.zones, interval);
-                match wireless.prepare_rgb_upload(mac, &frames, interval as u16) {
-                    Ok(upload) => break upload,
-                    Err(e) if format!("{e:#}").contains("exceeds") => {
-                        if interval >= WIRELESS_SLOWEST_FRAME_MS {
-                            warn!(
-                                "{}: effect too large for the device, showing a still frame",
-                                ctl.id
-                            );
-                            let still = effect.frame(&ctl.zones, 0.0);
-                            break wireless.prepare_rgb_upload(mac, &[still], 5000)?;
-                        }
-                        interval *= 2;
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-        }
+    let Some(effect) = effect else {
+        return wireless.prepare_rgb_upload(mac, &[ctl.colors.lock().clone()], 5000);
     };
-    Ok(upload)
+    if shrink < MAX_SHRINK {
+        let budget = UPLOAD_BUDGET >> shrink;
+        let mut interval = WIRELESS_FRAME_MS;
+        while interval <= WIRELESS_SLOWEST_FRAME_MS {
+            let frames = effect.loop_frames(&ctl.zones, interval);
+            let raw: Vec<u8> = frames.iter().flatten().flatten().copied().collect();
+            let size = lianli_devices::tinyuz::compress(&raw)?.len();
+            if size <= budget {
+                info!(
+                    "{}: {:?} as {} frames, {interval} ms apart, {size} bytes",
+                    ctl.id,
+                    effect.kind,
+                    frames.len()
+                );
+                return wireless.prepare_rgb_upload(mac, &frames, interval as u16);
+            }
+            interval *= 2;
+        }
+    }
+    warn!("{}: showing {:?} as a still frame", ctl.id, effect.kind);
+    wireless.prepare_rgb_upload(mac, &[effect.frame(&ctl.zones, 0.0)], 5000)
 }
