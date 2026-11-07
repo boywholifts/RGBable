@@ -21,6 +21,9 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 - Live preview of the selected effect in the editor.
 - Recipe builder: make an effect from colour, shape, motion and finish choices without writing code; it writes the script for you.
 - Reorganised Lighting page: everything, groups and devices as compact rows with a ⋯ menu, and a side panel with effects sorted into Basic, Motion, Ambient, Lian Li and Mine. Saved effects have their own Effects page.
+- OLED page: live preview of the screen and a video library shared with OLEDable (its converted and recorded videos), plus any folders you add; thumbnails, search, preview before showing.
+- Other apps can play a file on the OLED with `rgbable.exe --oled <file>` (used by OLEDable); a second launch opens the running RGBable instead of starting another.
+- Motherboard ARGB headers with LEDs are their own devices: rename them, give them their own effect, identify and group them.
 
 ### Fixed
 

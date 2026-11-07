@@ -150,7 +150,7 @@ function deviceRow(l) {
     box,
     el("div", { class: "row-text" }, [
       el("div", { class: "row-name" }, [l.name, ...(l.sync ? [] : [el("span", { class: "tag off", title: "Sync everything leaves this device alone" }, "Not synced")])]),
-      el("div", { class: "row-sub" }, `${l.kind} · ${effectSummary(l)}`),
+      el("div", { class: "row-sub" }, `${l.kind === "header" ? "ARGB header" : l.kind} · ${effectSummary(l)}`),
     ]),
     more,
   ]);

@@ -47,6 +47,12 @@ pub struct Config {
     pub setup_done: bool,
     #[serde(default)]
     pub manage_openrgb: bool,
+    /// Leave OLEDable's video folders out of the OLED library.
+    #[serde(default)]
+    pub oled_hide_oledable: bool,
+    /// Extra folders the user added to the OLED library.
+    #[serde(default)]
+    pub oled_folders: Vec<PathBuf>,
     /// Effects the user built or wrote and saved by name.
     #[serde(default)]
     pub custom_effects: Vec<Effect>,
@@ -937,7 +943,7 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
     let still = [".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"]
         .iter()
         .any(|ext| lower.ends_with(ext));
-    let mut ffmpeg = std::process::Command::new("ffmpeg");
+    let mut ffmpeg = std::process::Command::new(crate::oled_library::ffmpeg());
     ffmpeg.args(["-y", "-loglevel", "error"]);
     if still {
         ffmpeg.args(["-loop", "1", "-t", "1"]);

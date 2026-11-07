@@ -144,42 +144,6 @@ async function reconnect() {
 }
 
 
-// ---------------------------------------------------------------- OLED
-
-let oledFit = "cover";
-$("#oled-fit").addEventListener("click", (e) => {
-  const fit = e.target.dataset.fit;
-  if (!fit) return;
-  oledFit = fit;
-  document.querySelectorAll("#oled-fit button").forEach((b) => b.classList.toggle("on", b.dataset.fit === fit));
-});
-$("#oled-pick").addEventListener("click", async () => {
-  const file = await invoke("pick_media");
-  if (!file) return;
-  await call("set_oled", { file, fit: oledFit, fps: Number($("#oled-fps").value) }, "Sending to the OLED…");
-  refresh();
-});
-$("#oled-apply").addEventListener("click", async () => {
-  await call("set_oled", { file: null, fit: oledFit, fps: Number($("#oled-fps").value) }, "Updated");
-  refresh();
-});
-$("#oled-stop").addEventListener("click", async () => {
-  await call("stop_oled", {}, "OLED stopped");
-  refresh();
-});
-
-function renderOled(oled, initial) {
-  $("#oled-file").textContent = oled.file || "Nothing selected";
-  const state = $("#oled-state");
-  state.textContent = oled.state;
-  state.classList.toggle("on", oled.state === "Playing");
-  if (initial) {
-    oledFit = oled.fit;
-    document.querySelectorAll("#oled-fit button").forEach((b) => b.classList.toggle("on", b.dataset.fit === oled.fit));
-    $("#oled-fps").value = String(oled.fps);
-  }
-}
-
 // ---------------------------------------------------------------- monitor
 
 function renderMonitor(o) {

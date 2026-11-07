@@ -5,6 +5,7 @@
 mod effects;
 mod engine;
 mod lights;
+mod oled_library;
 mod openrgb;
 mod openrgb_host;
 mod render;
@@ -227,15 +228,106 @@ async fn pick_media(app: AppHandle) -> Option<String> {
 
 #[tauri::command]
 fn set_oled(
+    app: AppHandle,
     state: State<'_, AppState>,
     file: Option<String>,
     fit: String,
     fps: u32,
 ) -> Result<(), String> {
+    if let Some(file) = &file {
+        allow_preview(&app, std::path::Path::new(file));
+    }
     state
         .engine
         .set_oled(file.map(PathBuf::from), fit, fps)
         .map_err(err)
+}
+
+/// Lets the OLED page show the chosen file through the asset protocol; nothing else is readable.
+fn allow_preview(app: &AppHandle, file: &std::path::Path) {
+    use tauri::Manager;
+    if let Err(e) = app.asset_protocol_scope().allow_file(file) {
+        tracing::warn!("OLED preview for {}: {e}", file.display());
+    }
+}
+
+#[derive(Serialize)]
+struct OledLibrary {
+    folders: Vec<oled_library::LibraryFolder>,
+    items: Vec<oled_library::LibraryItem>,
+    linked: bool,
+    making_thumbs: bool,
+}
+
+static MAKING_THUMBS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+#[tauri::command]
+async fn oled_library(app: AppHandle, state: State<'_, AppState>) -> Result<OledLibrary, String> {
+    use std::sync::atomic::Ordering;
+    use tauri::Manager;
+    let config = state.engine.config();
+    let linked = !config.oled_hide_oledable;
+    let (folders, items) = tauri::async_runtime::spawn_blocking(move || {
+        let folders = oled_library::folders(linked, &config.oled_folders);
+        let items = oled_library::list(&folders);
+        (folders, items)
+    })
+    .await
+    .map_err(err)?;
+    let scope = app.asset_protocol_scope();
+    for folder in folders.iter().filter(|f| f.exists) {
+        let _ = scope.allow_directory(&folder.path, false);
+    }
+    let _ = scope.allow_directory(oled_library::thumbs_folder(), false);
+    let missing = items.iter().any(|i| i.thumb.is_none());
+    if missing && !MAKING_THUMBS.swap(true, Ordering::AcqRel) {
+        let pending = items.clone();
+        std::thread::spawn(move || {
+            oled_library::make_thumbnails(&pending, &oled_library::ffmpeg());
+            MAKING_THUMBS.store(false, Ordering::Release);
+        });
+    }
+    Ok(OledLibrary {
+        folders,
+        items,
+        linked,
+        making_thumbs: missing,
+    })
+}
+
+#[tauri::command]
+async fn add_oled_folder(app: AppHandle, state: State<'_, AppState>) -> Result<bool, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(path) = app
+        .dialog()
+        .file()
+        .set_title("Add a folder of videos to the OLED library")
+        .blocking_pick_folder()
+        .and_then(|p| p.into_path().ok())
+    else {
+        return Ok(false);
+    };
+    state.engine.update_config(|c| {
+        if !c.oled_folders.contains(&path) {
+            c.oled_folders.push(path);
+        }
+    });
+    Ok(true)
+}
+
+#[tauri::command]
+fn remove_oled_folder(state: State<'_, AppState>, path: String) {
+    let path = PathBuf::from(path);
+    state
+        .engine
+        .update_config(|c| c.oled_folders.retain(|p| p != &path));
+}
+
+#[tauri::command]
+fn set_oled_link(state: State<'_, AppState>, linked: bool) {
+    state
+        .engine
+        .update_config(|c| c.oled_hide_oledable = !linked);
 }
 
 #[tauri::command]
@@ -575,6 +667,33 @@ fn set_autostart_impl(enabled: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `--oled <file>` (from OLEDable, or a second launch) plays that file on the OLED screen.
+fn handle_args(app: &AppHandle, engine: &Arc<Engine>, args: &[String]) -> bool {
+    let Some(file) = args
+        .iter()
+        .position(|a| a == "--oled")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from)
+    else {
+        return false;
+    };
+    if !file.is_file() {
+        tracing::warn!("--oled: {} not found", file.display());
+        return false;
+    }
+    allow_preview(app, &file);
+    let current = engine.config().oled;
+    let fit = current
+        .as_ref()
+        .map_or_else(|| "cover".to_string(), |o| o.fit.clone());
+    let fps = current.as_ref().map_or(30, |o| o.fps);
+    match engine.set_oled(Some(file.clone()), fit, fps) {
+        Ok(()) => tracing::info!("playing {} on the OLED (from another app)", file.display()),
+        Err(e) => tracing::warn!("--oled {}: {e:#}", file.display()),
+    }
+    true
+}
+
 fn show_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -675,7 +794,19 @@ fn main() {
     }
 
     let minimized = std::env::args().any(|a| a == "--minimized");
+    let preview_file = engine.config().oled.map(|o| o.file);
+    let startup_args: Vec<String> = std::env::args().collect();
+    let handoff_engine = engine.clone();
+    let startup_engine = engine.clone();
     let result = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(
+            move |app, args, _cwd| {
+                let played = handle_args(app, &handoff_engine, &args);
+                if !played || !args.iter().any(|a| a == "--background") {
+                    show_main(app);
+                }
+            },
+        ))
         .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             engine,
@@ -717,9 +848,17 @@ fn main() {
             save_custom_effect,
             delete_custom_effect,
             export_custom_effects,
-            import_custom_effects
+            import_custom_effects,
+            oled_library,
+            add_oled_folder,
+            remove_oled_folder,
+            set_oled_link
         ])
         .setup(move |app| {
+            if let Some(file) = &preview_file {
+                allow_preview(app.handle(), file);
+            }
+            handle_args(app.handle(), &startup_engine, &startup_args);
             let show = MenuItem::with_id(app, "show", "Open RGBable", true, None::<&str>)?;
             let quit = MenuItem::with_id(
                 app,

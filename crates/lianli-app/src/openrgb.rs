@@ -77,9 +77,40 @@ pub struct OpenRgb {
 
 /// Effects OpenRGB devices play, keyed by controller index. `generation` changes whenever
 /// the set changes, so the animator puts each device back into direct mode.
+/// A run of a device's LEDs that follows one lighting: an effect drawn across `zones`
+/// (LED counts), or a plain colour.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedPart {
+    pub zones: Vec<usize>,
+    pub effect: Option<Effect>,
+    pub color: [u8; 3],
+}
+
+impl LedPart {
+    pub fn leds(&self) -> usize {
+        self.zones.iter().sum()
+    }
+}
+
+/// The device frame `elapsed_ms` into its effects.
+pub fn compose(parts: &[LedPart], elapsed_ms: u64) -> Vec<[u8; 3]> {
+    let mut frame = Vec::new();
+    for part in parts {
+        match part.effect.as_ref().filter(|e| e.is_animated()) {
+            Some(effect) => {
+                let period = u64::from(effect.period_ms().max(1));
+                let phase = (elapsed_ms % period) as f32 / period as f32;
+                frame.extend(effect.frame(&part.zones, phase));
+            }
+            None => frame.extend(std::iter::repeat_n(part.color, part.leds())),
+        }
+    }
+    frame
+}
+
 #[derive(Default)]
 struct Animations {
-    effects: BTreeMap<u32, (Effect, Vec<usize>)>,
+    effects: BTreeMap<u32, Vec<LedPart>>,
     generation: u64,
 }
 
@@ -250,10 +281,10 @@ impl OpenRgb {
     }
 
     /// Replaces the animated effects; returns once no frame of a removed effect can still be sent.
-    pub fn set_animations(&self, effects: BTreeMap<u32, (Effect, Vec<usize>)>) {
+    pub fn set_animation(&self, index: u32, parts: Vec<LedPart>) {
         let mut animations = self.animations.lock();
-        if animations.effects != effects {
-            animations.effects = effects;
+        if animations.effects.get(&index) != Some(&parts) {
+            animations.effects.insert(index, parts);
             animations.generation += 1;
         }
     }
@@ -289,12 +320,10 @@ impl OpenRgb {
                         in_direct_mode.clear();
                     }
                     let elapsed = started.elapsed().as_millis() as u64;
-                    for (&index, (effect, zones)) in &animations.effects {
-                        let period = u64::from(effect.period_ms().max(1));
-                        let phase = (elapsed % period) as f32 / period as f32;
+                    for (&index, parts) in &animations.effects {
                         let first = in_direct_mode.insert(index);
                         if openrgb
-                            .set_leds(index, &effect.frame(zones, phase), first)
+                            .set_leds(index, &compose(parts, elapsed), first)
                             .is_err()
                         {
                             in_direct_mode.remove(&index);

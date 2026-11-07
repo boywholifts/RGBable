@@ -82,32 +82,46 @@
           <h1>OLED screen</h1>
           <p class="muted">Loop a video, GIF or image on the HydroShift II OLED Curve.</p>
         </div>
-        <span class="pill" id="oled-state">Off</span>
+        <div class="row">
+          <span class="pill" id="oled-state">Off</span>
+          <button class="btn" id="oled-stop">Turn off</button>
+        </div>
       </header>
-      <div class="card">
-        <div class="card-title">Now showing</div>
-        <div class="file" id="oled-file">Nothing selected</div>
-        <div class="row">
-          <button class="btn primary" id="oled-pick">Choose file…</button>
-          <button class="btn" id="oled-stop">Stop</button>
+
+      <div class="card oled-stage">
+        <div class="oled-frame" id="oled-frame">
+          <div class="oled-screen" id="oled-screen"><div class="oled-empty">Nothing on the screen</div></div>
         </div>
-      </div>
-      <div class="card">
-        <div class="card-title">Layout</div>
-        <div class="row">
-          <div class="seg" id="oled-fit">
-            <button data-fit="cover">Fill (crop edges)</button>
-            <button data-fit="contain">Fit (black bars)</button>
+        <div class="oled-info">
+          <div class="muted small" id="oled-caption">Now on the OLED</div>
+          <div class="oled-name" id="oled-name">Nothing selected</div>
+          <div class="row">
+            <button class="btn primary" id="oled-show" hidden>Show on OLED</button>
+            <button class="btn" id="oled-pick">Choose file…</button>
           </div>
-          <label class="field">Frame rate
-            <select id="oled-fps">
-              <option>24</option><option selected>30</option><option>60</option>
-            </select>
-          </label>
-          <button class="btn" id="oled-apply">Apply</button>
+          <div class="row">
+            <div class="seg" id="oled-fit">
+              <button data-fit="cover">Fill</button>
+              <button data-fit="contain">Fit</button>
+            </div>
+            <label class="field">Frame rate
+              <select id="oled-fps">
+                <option>24</option><option selected>30</option><option>60</option>
+              </select>
+            </label>
+            <button class="btn mini" id="oled-apply">Apply</button>
+          </div>
+          <p class="muted small">Shown landscape at 2288 × 1080. Fill crops the edges; Fit adds black bars. A new file is encoded with ffmpeg the first time, so it may take a moment to start.</p>
         </div>
-        <p class="muted small">Content is shown landscape (2288 × 1080). The first play of a new file is encoded with ffmpeg and cached, so it may take a moment to start.</p>
       </div>
+
+      <div class="lights-head">
+        <h2>Library</h2>
+        <input class="text search" id="lib-search" placeholder="Search" />
+        <span class="grow"></span>
+        <button class="btn mini" id="oled-folders-btn">Folders…</button>
+      </div>
+      <div class="oled-grid" id="oled-grid"><div class="empty">Loading…</div></div>
     </section>
 
     <!-- Monitor -->
@@ -287,6 +301,7 @@
   <script src="effects.js"></script>
   <script src="lighting.js"></script>
   <script src="library.js"></script>
+  <script src="oled.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

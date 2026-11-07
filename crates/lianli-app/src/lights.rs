@@ -3,10 +3,9 @@
 
 use crate::effects::{Effect, EffectKind};
 use crate::engine::{self, Config, Engine, GroupConfig};
-use crate::openrgb::{OpenRgb, OrgbDevice};
+use crate::openrgb::{compose, LedPart, OpenRgb, OrgbDevice, Zone};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -106,35 +105,84 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
     for device in openrgb.view().devices {
         let id = openrgb_id(&device);
         let saved = config.devices.get(&id);
-        list.push(LightView {
-            source: "openrgb",
-            name: saved
-                .and_then(|s| s.name.clone())
-                .unwrap_or_else(|| device.name.clone()),
-            default_name: device.name.clone(),
-            kind: device.kind.to_string(),
-            detail: format!("{} LEDs via OpenRGB", device.leds),
-            color: saved.and_then(|s| s.color).or(device.first_color),
-            effect: saved.and_then(|s| s.effect.clone()),
-            outer_effect: None,
-            sides: false,
-            zones: device
+        let device_name = saved
+            .and_then(|s| s.name.clone())
+            .unwrap_or_else(|| device.name.clone());
+        let device_color = saved.and_then(|s| s.color).or(device.first_color);
+        let device_effect = saved.and_then(|s| s.effect.clone());
+        let zoned = device.zones.iter().map(|z| z.leds).sum::<usize>() == device.leds;
+        let headers: Vec<(usize, &Zone)> = if zoned {
+            device
                 .zones
                 .iter()
                 .enumerate()
-                .filter(|(_, z)| z.resizable())
-                .map(|(index, z)| ZoneView {
-                    index,
-                    name: z.name.clone(),
-                    leds: z.leds,
-                    min: z.min,
-                    max: z.max,
-                })
-                .collect(),
-            sync: saved.is_none_or(|s| s.in_sync()),
-            group: group_of(&config, &id),
-            id,
-        });
+                .filter(|(_, z)| is_header(z))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let own_leds = device.leds - headers.iter().map(|(_, z)| z.leds).sum::<usize>();
+        let zone_view = |index: usize, z: &Zone| ZoneView {
+            index,
+            name: z.name.clone(),
+            leds: z.leds,
+            min: z.min,
+            max: z.max,
+        };
+        if own_leds > 0 || headers.is_empty() {
+            list.push(LightView {
+                source: "openrgb",
+                name: device_name.clone(),
+                default_name: device.name.clone(),
+                kind: device.kind.to_string(),
+                detail: format!("{own_leds} LEDs via OpenRGB"),
+                color: device_color,
+                effect: device_effect.clone(),
+                outer_effect: None,
+                sides: false,
+                zones: device
+                    .zones
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, z)| z.resizable())
+                    .map(|(index, z)| zone_view(index, z))
+                    .collect(),
+                sync: saved.is_none_or(|s| s.in_sync()),
+                group: group_of(&config, &id),
+                id: id.clone(),
+            });
+        }
+        for (index, zone) in headers {
+            let header = header_id(&id, index);
+            let own = config.devices.get(&header);
+            let lit = has_lighting(&config, &header);
+            let default_name = format!("{} · {}", device.name, zone.name);
+            list.push(LightView {
+                source: "openrgb",
+                name: own
+                    .and_then(|s| s.name.clone())
+                    .unwrap_or_else(|| default_name.clone()),
+                default_name,
+                kind: "header".to_string(),
+                detail: format!("{} LEDs on {}, {}", zone.leds, device_name, zone.name),
+                color: if lit {
+                    own.and_then(|s| s.color)
+                } else {
+                    device_color
+                },
+                effect: if lit {
+                    own.and_then(|s| s.effect.clone())
+                } else {
+                    device_effect.clone()
+                },
+                outer_effect: None,
+                sides: false,
+                zones: vec![zone_view(index, zone)],
+                sync: own.is_none_or(|s| s.in_sync()),
+                group: group_of(&config, &header),
+                id: header,
+            });
+        }
     }
     list
 }
@@ -154,26 +202,102 @@ pub fn groups(engine: &Engine) -> Vec<GroupView> {
         .collect()
 }
 
+/// Motherboard addressable headers get their own id: the device id plus `#z<zone index>`.
+const ZONE_MARK: &str = "#z";
+
+pub fn header_id(device_id: &str, zone: usize) -> String {
+    format!("{device_id}{ZONE_MARK}{zone}")
+}
+
+/// Splits a light id into its OpenRGB device id and, for a header, the zone index.
+fn split_id(id: &str) -> (&str, Option<usize>) {
+    match id.rsplit_once(ZONE_MARK) {
+        Some((device, zone)) => match zone.parse() {
+            Ok(zone) => (device, Some(zone)),
+            Err(_) => (id, None),
+        },
+        None => (id, None),
+    }
+}
+
+/// An addressable header with LEDs on it is shown and lit as its own device.
+fn is_header(zone: &Zone) -> bool {
+    zone.resizable() && zone.leds > 0
+}
+
 fn openrgb_device(openrgb: &OpenRgb, id: &str) -> Option<OrgbDevice> {
+    let (device_id, _) = split_id(id);
     openrgb
         .view()
         .devices
         .into_iter()
-        .find(|d| openrgb_id(d) == id)
+        .find(|d| openrgb_id(d) == device_id)
 }
 
-fn openrgb_zones(device: &OrgbDevice) -> Vec<usize> {
-    let zones: Vec<usize> = device
-        .zones
-        .iter()
-        .map(|zone| zone.leds)
-        .filter(|&n| n > 0)
-        .collect();
-    if zones.iter().sum::<usize>() == device.leds {
-        zones
+fn has_lighting(config: &Config, id: &str) -> bool {
+    config
+        .devices
+        .get(id)
+        .is_some_and(|d| d.effect.is_some() || d.color.is_some())
+}
+
+/// The device's LEDs as runs that each follow one saved lighting. A header follows its own
+/// lighting once it has one, and the motherboard's until then.
+fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
+    let device_id = openrgb_id(device);
+    let mut runs: Vec<(String, Vec<usize>)> = Vec::new();
+    let zoned: usize = device.zones.iter().map(|z| z.leds).sum();
+    if zoned == device.leds {
+        for (index, zone) in device.zones.iter().enumerate().filter(|(_, z)| z.leds > 0) {
+            let own = header_id(&device_id, index);
+            let source = if is_header(zone) && has_lighting(config, &own) {
+                own
+            } else {
+                device_id.clone()
+            };
+            match runs.last_mut() {
+                Some((last, zones)) if *last == source => zones.push(zone.leds),
+                _ => runs.push((source, vec![zone.leds])),
+            }
+        }
     } else {
-        vec![device.leds]
+        runs.push((device_id, vec![device.leds]));
     }
+    runs.into_iter()
+        .map(|(source, zones)| {
+            let saved = config.devices.get(&source);
+            LedPart {
+                zones,
+                effect: saved.and_then(|s| s.effect.clone()),
+                color: saved
+                    .and_then(|s| s.color)
+                    .or(device.first_color)
+                    .unwrap_or([0, 0, 0]),
+            }
+        })
+        .collect()
+}
+
+/// Sends a device its saved lighting: animated parts go to the animator, otherwise one frame.
+/// Devices the user never set are left as they are.
+fn push_device(engine: &Engine, openrgb: &OpenRgb, device: &OrgbDevice) -> Result<()> {
+    let config = engine.config();
+    let parts = device_parts(&config, device);
+    if parts
+        .iter()
+        .any(|p| p.effect.as_ref().is_some_and(Effect::is_animated))
+    {
+        openrgb.set_animation(device.index, parts);
+        return Ok(());
+    }
+    openrgb.stop_animation(device.index);
+    let device_id = openrgb_id(device);
+    let touched = has_lighting(&config, &device_id)
+        || (0..device.zones.len()).any(|z| has_lighting(&config, &header_id(&device_id, z)));
+    if touched {
+        openrgb.set_leds(device.index, &compose(&parts, 0), true)?;
+    }
+    Ok(())
 }
 
 /// Sets an addressable zone's LED count and remembers it, so it is re-applied if OpenRGB
@@ -185,6 +309,8 @@ pub fn resize_zone(
     zone: usize,
     size: usize,
 ) -> Result<()> {
+    let (device_id, header) = split_id(id);
+    let zone = header.unwrap_or(zone);
     let device = openrgb_device(openrgb, id).context("that OpenRGB device is not connected")?;
     let info = device.zones.get(zone).context("no such zone")?;
     anyhow::ensure!(
@@ -197,22 +323,16 @@ pub fn resize_zone(
     openrgb.resize_zone(device.index, zone, size)?;
     engine.update_config(|c| {
         c.devices
-            .entry(id.to_string())
+            .entry(device_id.to_string())
             .or_default()
             .zone_sizes
             .insert(zone, size);
     });
-    sync_openrgb_effects(engine, openrgb);
-    let saved = engine.config().devices.get(id).cloned().unwrap_or_default();
-    if saved.effect.is_none() {
-        if let Some(color) = saved.color {
-            openrgb.set_color(device.index, color)?;
-        }
-    }
-    Ok(())
+    let device = openrgb_device(openrgb, id).context("that OpenRGB device is not connected")?;
+    push_device(engine, openrgb, &device)
 }
 
-/// After (re)connecting: restore zone sizes the user set, then the saved effects.
+/// After (re)connecting: restore zone sizes the user set, then everyone's saved lighting.
 pub fn after_openrgb_connect(engine: &Engine, openrgb: &OpenRgb) {
     let config = engine.config();
     for device in openrgb.view().devices {
@@ -233,19 +353,13 @@ pub fn after_openrgb_connect(engine: &Engine, openrgb: &OpenRgb) {
     sync_openrgb_effects(engine, openrgb);
 }
 
-/// Hands OpenRGB the animated effects saved in the config for the devices it has now.
+/// Sends every OpenRGB device its saved lighting.
 pub fn sync_openrgb_effects(engine: &Engine, openrgb: &OpenRgb) {
-    let config = engine.config();
-    let effects: BTreeMap<u32, (Effect, Vec<usize>)> = openrgb
-        .view()
-        .devices
-        .iter()
-        .filter_map(|device| {
-            let effect = config.devices.get(&openrgb_id(device))?.effect.clone()?;
-            Some((device.index, (effect, openrgb_zones(device))))
-        })
-        .collect();
-    openrgb.set_animations(effects);
+    for device in openrgb.view().devices {
+        if let Err(e) = push_device(engine, openrgb, &device) {
+            warn!("{}: {e:#}", device.name);
+        }
+    }
 }
 
 pub fn static_effect(color: [u8; 3]) -> Effect {
@@ -276,11 +390,7 @@ pub fn set_effect(engine: &Engine, openrgb: &OpenRgb, id: &str, effect: Effect) 
             entry.color = Some(color);
         }
     });
-    sync_openrgb_effects(engine, openrgb);
-    if !animated {
-        openrgb.set_color(device.index, color)?;
-    }
-    Ok(())
+    push_device(engine, openrgb, &device)
 }
 
 pub fn set_color(engine: &Engine, openrgb: &OpenRgb, id: &str, color: [u8; 3]) -> Result<()> {
@@ -360,27 +470,40 @@ pub fn identify(engine: &Arc<Engine>, openrgb: &Arc<OpenRgb>, id: &str) -> Resul
         return engine.identify(id);
     }
     let device = openrgb_device(openrgb, id).context("that OpenRGB device is not connected")?;
-    let saved = engine.config().devices.get(id).cloned().unwrap_or_default();
-    let restore = saved.color.or(device.first_color).unwrap_or([0, 0, 0]);
+    let (_, header) = split_id(id);
+    let start: usize = header.map_or(0, |zone| {
+        device.zones.iter().take(zone).map(|z| z.leds).sum()
+    });
+    let len = header.map_or(device.leds, |zone| {
+        device.zones.get(zone).map_or(0, |z| z.leds)
+    });
+    let parts = device_parts(&engine.config(), &device);
     openrgb.stop_animation(device.index);
     let engine = engine.clone();
     let openrgb = openrgb.clone();
     std::thread::Builder::new()
         .name("identify-openrgb".into())
         .spawn(move || {
+            let mut frame = compose(&parts, 0);
+            frame.resize(device.leds, [0, 0, 0]);
             for step in 0..engine::IDENTIFY_STEPS {
                 let color = if step % 2 == 0 {
                     [255, 255, 255]
                 } else {
                     [0, 0, 0]
                 };
-                let _ = openrgb.set_color(device.index, color);
+                for led in frame.iter_mut().skip(start).take(len) {
+                    *led = color;
+                }
+                let _ = openrgb.set_leds(device.index, &frame, step == 0);
                 std::thread::sleep(engine::IDENTIFY_STEP);
             }
-            if saved.effect.is_some() {
-                sync_openrgb_effects(&engine, &openrgb);
-            } else if let Err(e) = openrgb.set_color(device.index, restore) {
-                tracing::warn!("{}: restoring after identify: {e:#}", device.name);
+            let base = compose(&parts, 0);
+            if let Err(e) = push_device(&engine, &openrgb, &device) {
+                warn!("{}: restoring after identify: {e:#}", device.name);
+            }
+            if !parts.iter().any(|p| p.effect.is_some()) && base.len() == device.leds {
+                let _ = openrgb.set_leds(device.index, &base, false);
             }
         })?;
     Ok(())
@@ -480,6 +603,50 @@ mod tests {
             group: group.map(Into::into),
             sync,
         }
+    }
+
+    fn board() -> OrgbDevice {
+        let zone = |name: &str, leds, min, max| Zone {
+            name: name.into(),
+            leds,
+            min,
+            max,
+        };
+        OrgbDevice {
+            index: 3,
+            name: "Z690 Hero".into(),
+            vendor: "ASUS".into(),
+            kind: "motherboard",
+            serial: String::new(),
+            location: "HID".into(),
+            leds: 12,
+            zones: vec![
+                zone("Onboard", 4, 4, 4),
+                zone("Addressable 1", 0, 0, 120),
+                zone("Addressable 4", 8, 0, 120),
+            ],
+            modes: Vec::new(),
+            active_mode: String::new(),
+            first_color: Some([1, 2, 3]),
+        }
+    }
+
+    #[test]
+    fn headers_follow_the_board_until_they_get_their_own_lighting() {
+        let device = board();
+        let mut config = Config::default();
+        let board_id = openrgb_id(&device);
+        config.devices.entry(board_id.clone()).or_default().color = Some([255, 0, 0]);
+        let parts = device_parts(&config, &device);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(compose(&parts, 0), vec![[255, 0, 0]; 12]);
+
+        let header = header_id(&board_id, 2);
+        assert_eq!(split_id(&header), (board_id.as_str(), Some(2)));
+        config.devices.entry(header).or_default().color = Some([0, 0, 255]);
+        let frame = compose(&device_parts(&config, &device), 0);
+        assert_eq!(frame[..4], [[255, 0, 0]; 4]);
+        assert_eq!(frame[4..], [[0, 0, 255]; 8]);
     }
 
     #[test]
