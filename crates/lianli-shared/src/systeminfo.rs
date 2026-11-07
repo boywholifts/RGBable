@@ -1,5 +1,8 @@
 use std::fs::File;
+#[cfg(unix)]
 use std::os::unix::fs::FileExt;
+#[cfg(windows)]
+use std::os::windows::fs::FileExt;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::thread;
@@ -84,7 +87,7 @@ impl SysSensor {
             let start_time = Instant::now();
 
             if let Some(ref mut f) = stat_file {
-                if let Ok(n) = f.read_at(&mut buffer, 0) {
+                if let Ok(n) = read_from_start(f, &mut buffer) {
                     let s = std::str::from_utf8(&buffer[..n]).unwrap_or("");
                     let cpu_lines: Vec<&str> = s.lines().filter(|l| l.starts_with("cpu")).collect();
 
@@ -136,4 +139,13 @@ impl SysSensor {
             thread::sleep(sleep_dur);
         }
     }
+}
+
+/// `/proc/stat` is re-read from offset 0 each tick. On Windows the file never
+/// opens, so this is only here to keep the code path compiling.
+fn read_from_start(file: &File, buffer: &mut [u8]) -> std::io::Result<usize> {
+    #[cfg(unix)]
+    return file.read_at(buffer, 0);
+    #[cfg(windows)]
+    return file.seek_read(buffer, 0);
 }

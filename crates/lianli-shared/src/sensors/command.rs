@@ -2,7 +2,9 @@ use super::SensorReading;
 use anyhow::{ensure, Context, Result};
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read};
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -173,8 +175,18 @@ fn sample_commands(state: Arc<SamplerState>) {
 
 pub(super) fn reading(script: &str, stop: &AtomicBool) -> Result<SensorReading> {
     let observed_at = Instant::now();
-    let mut command = Command::new("sh");
-    command.args(["-c", script]);
+    #[cfg(unix)]
+    let command = {
+        let mut command = Command::new("sh");
+        command.args(["-c", script]);
+        command
+    };
+    #[cfg(not(unix))]
+    let command = {
+        let mut command = Command::new("cmd");
+        command.args(["/C", script]);
+        command
+    };
     let output = output_until(command, COMMAND_TIMEOUT, stop)?;
     let text = std::str::from_utf8(&output).context("Sensor output is not UTF-8")?;
     let value: f32 = text
@@ -190,6 +202,7 @@ pub(super) fn output(command: Command) -> Result<Vec<u8>> {
     output_until(command, COMMAND_TIMEOUT, &AtomicBool::new(false))
 }
 
+#[cfg(unix)]
 fn output_until(mut command: Command, timeout: Duration, stop: &AtomicBool) -> Result<Vec<u8>> {
     ensure!(!stop.load(Ordering::Relaxed), "Sensor command cancelled");
     let parent = std::process::id() as libc::pid_t;
@@ -269,8 +282,67 @@ fn output_until(mut command: Command, timeout: Duration, stop: &AtomicBool) -> R
     }
 }
 
+/// Windows: no process groups or `poll` on pipes, so stdout is drained on a
+/// helper thread while the caller polls `try_wait` against the deadline.
+#[cfg(not(unix))]
+fn output_until(mut command: Command, timeout: Duration, stop: &AtomicBool) -> Result<Vec<u8>> {
+    use std::os::windows::process::CommandExt;
+    use std::sync::mpsc;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    ensure!(!stop.load(Ordering::Relaxed), "Sensor command cancelled");
+    let mut child: Child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .context("Starting sensor command")?;
+    let mut pipe = child.stdout.take().unwrap();
+    let (sender, receiver) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut output = Vec::new();
+        let mut buffer = [0u8; 1024];
+        let result = loop {
+            match pipe.read(&mut buffer) {
+                Ok(0) => break Ok(output),
+                Ok(length) if output.len() + length > OUTPUT_LIMIT => {
+                    break Err(anyhow::anyhow!("Sensor command output exceeds 8 KiB"))
+                }
+                Ok(length) => output.extend_from_slice(&buffer[..length]),
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => break Err(anyhow::Error::new(error).context("Reading sensor command output")),
+            }
+        };
+        let _ = sender.send(result);
+    });
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        if let Some(status) = child.try_wait().context("Inspecting sensor command")? {
+            break status;
+        }
+        if stop.load(Ordering::Relaxed) || Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            ensure!(!stop.load(Ordering::Relaxed), "Sensor command cancelled");
+            anyhow::bail!("Sensor command timed out");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    // A grandchild can keep the pipe open after the child exits; never wait past the deadline.
+    let remaining = deadline.saturating_duration_since(Instant::now()).max(Duration::from_millis(1));
+    let output = receiver
+        .recv_timeout(remaining)
+        .map_err(|_| anyhow::anyhow!("Sensor command timed out"))??;
+    ensure!(status.success(), "Sensor command failed: {status}");
+    Ok(output)
+}
+
+#[cfg(unix)]
 struct CommandProcess(Option<Child>);
 
+#[cfg(unix)]
 impl CommandProcess {
     fn exited(&self) -> Result<bool> {
         let mut status: libc::siginfo_t = unsafe { std::mem::zeroed() };
@@ -300,6 +372,7 @@ impl CommandProcess {
     }
 }
 
+#[cfg(unix)]
 impl Drop for CommandProcess {
     fn drop(&mut self) {
         if self.0.is_some() {
@@ -308,7 +381,7 @@ impl Drop for CommandProcess {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

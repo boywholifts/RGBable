@@ -2,6 +2,7 @@ use super::{DiskDirection, NetDirection, NvidiaMetric, RateState, ResolvedSensor
 use crate::systeminfo::SysSensor;
 use std::collections::HashMap;
 use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::process::Command;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -28,10 +29,11 @@ pub fn read_sensor_reading(resolved: &ResolvedSensor) -> anyhow::Result<SensorRe
 }
 
 fn read_runtime_reading(path: &std::path::Path) -> anyhow::Result<SensorReading> {
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
-        .open(path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW);
+    let file = options.open(path)?;
     let metadata = file.metadata()?;
     anyhow::ensure!(
         metadata.is_file() && metadata.len() <= 64,

@@ -11,7 +11,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::io::Read;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -287,11 +289,12 @@ impl PreparedTemplate {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 fn prepare_directory(config_dir: &Path, id: &str) -> Result<AssetDirectory> {
     prepare_directory_checked(config_dir, id, &|| false)
 }
 
+#[cfg(unix)]
 fn prepare_directory_checked(
     config_dir: &Path,
     id: &str,
@@ -322,6 +325,7 @@ fn prepare_directory_checked(
     })
 }
 
+#[cfg(unix)]
 fn remaining_download_time(deadline: Instant, now: Instant) -> Result<Duration> {
     deadline
         .checked_duration_since(now)
@@ -330,6 +334,20 @@ fn remaining_download_time(deadline: Instant, now: Instant) -> Result<Duration> 
         .context("catalog installation exceeded its two-minute download deadline")
 }
 
+/// Windows: catalog installs rely on Linux directory-handle hardening that
+/// has not been ported yet, so they are refused instead of half-working.
+#[cfg(not(unix))]
+pub fn install_template(
+    _template: &CatalogTemplate,
+    _bindings: &SensorBindings,
+    _sensors: &[SensorInfo],
+    _config_dir: &Path,
+    _cancelled: impl Fn() -> bool,
+) -> Result<PreparedTemplate> {
+    bail!("installing catalog templates is not supported on Windows yet")
+}
+
+#[cfg(unix)]
 pub fn install_template(
     template: &CatalogTemplate,
     bindings: &SensorBindings,
@@ -409,6 +427,7 @@ pub fn install_template(
     })
 }
 
+#[cfg(unix)]
 fn write_staged_file(path: &Path, bytes: &[u8]) -> Result<()> {
     use std::io::Write;
     let mut file = std::fs::OpenOptions::new()
@@ -422,6 +441,7 @@ fn write_staged_file(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 fn sync_directory(path: &Path) -> Result<()> {
     for entry in std::fs::read_dir(path).context("reading staged catalog directory")? {
         let entry = entry?;
@@ -531,7 +551,7 @@ pub fn filter_supported(
     supported
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 

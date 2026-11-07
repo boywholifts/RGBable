@@ -4,9 +4,9 @@ use anyhow::Result;
 use lianli_shared::config::HidBackend;
 use lianli_shared::device_id::DeviceFamily;
 use lianli_transport::UsbContext;
-use lianli_transport::{
-    HidTransport, HidrawReopener, HidrawTransport, RusbBulk, RusbHid, RusbHidReopener,
-};
+use lianli_transport::{HidTransport, RusbBulk, RusbHid, RusbHidReopener};
+#[cfg(target_os = "linux")]
+use lianli_transport::{HidrawReopener, HidrawTransport};
 use parking_lot::Mutex;
 use rusb::Device;
 use std::sync::Arc;
@@ -15,6 +15,7 @@ use tracing::warn;
 
 type SharedHid = Arc<Mutex<Box<dyn HidTransport>>>;
 
+#[cfg(target_os = "linux")]
 fn make_hidraw_reopener(
     vid: u16,
     pid: u16,
@@ -36,6 +37,7 @@ fn make_hidraw_reopener(
     })
 }
 
+#[cfg(target_os = "linux")]
 /// Fail instead of opening a sibling when the requested topology is unavailable.
 fn open_hidraw_device_strict(
     vid: u16,
@@ -72,6 +74,7 @@ fn open_hidraw_device_strict(
         .map_err(|e| anyhow::anyhow!("hidraw open at requested topology {vid:04x}:{pid:04x}: {e}"))
 }
 
+#[cfg(target_os = "linux")]
 fn hidraw_matches_topology(path: &std::ffi::CStr, bus: u8, ports: &[u8]) -> bool {
     use std::os::unix::ffi::OsStrExt;
     let path = std::path::Path::new(std::ffi::OsStr::from_bytes(path.to_bytes()));
@@ -88,6 +91,7 @@ fn hidraw_matches_topology(path: &std::ffi::CStr, bus: u8, ports: &[u8]) -> bool
     )
 }
 
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn topology_matches_sysfs(path: &str, topology: &str) -> bool {
     path.split('/')
         .rev()
@@ -213,6 +217,7 @@ pub fn hidraw_path_for_usb_topology(bus: u8, port_numbers: &[u8]) -> Option<std:
     None
 }
 
+#[cfg(target_os = "linux")]
 fn open_hidraw_device(
     vid: u16,
     pid: u16,
@@ -221,6 +226,18 @@ fn open_hidraw_device(
     usage_page: Option<u16>,
 ) -> Result<(hidapi::HidDevice, Option<std::ffi::OsString>)> {
     open_hidraw_device_strict(vid, pid, bus, port_numbers, usage_page)
+}
+
+/// `hidraw` is a Linux kernel interface. Elsewhere every HID device goes
+/// through libusb (`rusb`), whatever the saved config asks for.
+fn effective_backend(backend: HidBackend) -> HidBackend {
+    #[cfg(target_os = "linux")]
+    return backend;
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = backend;
+        HidBackend::Rusb
+    }
 }
 
 pub fn open_shared_hid(
@@ -232,7 +249,11 @@ pub fn open_shared_hid(
     port_numbers: &[u8],
     backend: HidBackend,
 ) -> Result<SharedHid> {
+    let backend = effective_backend(backend);
     match backend {
+        #[cfg(not(target_os = "linux"))]
+        HidBackend::Hidraw => unreachable!("hidraw is Linux-only"),
+        #[cfg(target_os = "linux")]
         HidBackend::Hidraw => {
             let pn = port_numbers.to_vec();
             let (dev, path) = open_hidraw_device(vid, pid, bus, port_numbers, usage_page)?;
@@ -260,7 +281,11 @@ pub fn open_hid_transient_for_device(
     usage_page: Option<u16>,
     backend: HidBackend,
 ) -> Result<Box<dyn HidTransport>> {
+    let backend = effective_backend(backend);
     match backend {
+        #[cfg(not(target_os = "linux"))]
+        HidBackend::Hidraw => unreachable!("hidraw is Linux-only"),
+        #[cfg(target_os = "linux")]
         HidBackend::Hidraw => {
             let descriptor = device.device_descriptor()?;
             let (dev, path) = open_hidraw_device_strict(
@@ -288,7 +313,11 @@ pub fn open_hid_transient(
     port_numbers: &[u8],
     backend: HidBackend,
 ) -> Result<Box<dyn HidTransport>> {
+    let backend = effective_backend(backend);
     match backend {
+        #[cfg(not(target_os = "linux"))]
+        HidBackend::Hidraw => unreachable!("hidraw is Linux-only"),
+        #[cfg(target_os = "linux")]
         HidBackend::Hidraw => {
             let (dev, path) = open_hidraw_device(vid, pid, bus, port_numbers, usage_page)?;
             Ok(Box::new(HidrawTransport::new(dev, path)))
@@ -445,7 +474,7 @@ pub fn open_usb_bulk_backend(det: &DetectedDevice) -> Result<RusbBulk> {
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::topology_matches_sysfs;
 

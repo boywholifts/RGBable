@@ -7,8 +7,17 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub mod catalog;
+#[cfg(unix)]
 mod catalog_recovery;
+#[cfg(unix)]
 mod catalog_review;
+#[cfg(not(unix))]
+#[path = "catalog_review_windows.rs"]
+mod catalog_review;
+#[cfg(unix)]
+mod catalog_storage;
+#[cfg(not(unix))]
+#[path = "catalog_storage_windows.rs"]
 mod catalog_storage;
 pub mod widget_kind;
 
