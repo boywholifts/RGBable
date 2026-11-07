@@ -157,6 +157,16 @@ function deviceMenu(l, anchor) {
   openMenu(anchor, items);
 }
 
+/// Small marks after a device's name for settings that aren't visible in its color box.
+function rowBadges(l) {
+  const badges = [];
+  const reversed = [l.effect, l.outer_effect].some((e) => e && e.reverse && e.kind !== "static");
+  if (reversed) badges.push(el("span", { class: "badge", title: "Effect runs in reverse" }, "⇄"));
+  if (l.delay_ms) badges.push(el("span", { class: "badge", title: `Starts ${(l.delay_ms / 1000).toFixed(1)} s behind` }, `⏱ ${(l.delay_ms / 1000).toFixed(1)}s`));
+  if (!l.sync) badges.push(el("span", { class: "tag off", title: "Sync everything leaves this device alone" }, "Not synced"));
+  return badges;
+}
+
 function deviceRow(l) {
   const more = el("button", { class: "icon-btn", title: "More" }, "⋯");
   more.addEventListener("click", (e) => {
@@ -168,7 +178,7 @@ function deviceRow(l) {
   const row = el("div", { class: "device-row", draggable: "true", "data-id": l.id, title: "Change this device's lighting" }, [
     box,
     el("div", { class: "row-text" }, [
-      el("div", { class: "row-name" }, [l.name, ...(l.sync ? [] : [el("span", { class: "tag off", title: "Sync everything leaves this device alone" }, "Not synced")])]),
+      el("div", { class: "row-name" }, [l.name, ...rowBadges(l)]),
       el("div", { class: "row-sub" }, `${l.kind === "header" ? "ARGB header" : l.kind} · ${effectSummary(l)}`),
     ]),
     more,
