@@ -728,6 +728,11 @@ impl Engine {
                     Some((Some(upload), sends)) if !dirty => (Ok(upload), sends),
                     _ => {
                         ctl.dirty.store(false, Ordering::Release);
+                        // A missed confirmation can be radio trouble rather than size, so a
+                        // new effect starts at full size instead of inheriting a still frame.
+                        if dirty {
+                            shrink.remove(&mac);
+                        }
                         let level = shrink.get(&mac).copied().unwrap_or(0);
                         (prepare_lighting(wireless, ctl, &mac, level), 0)
                     }
