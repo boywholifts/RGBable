@@ -17,6 +17,7 @@
     </div>
     <nav>
       <button class="nav active" data-page="lighting"><span class="ico"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg></span>Lighting</button>
+      <button class="nav" data-page="effects"><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9l-4.7 1.8L12 15.5l-1.8-4.7L5.5 9l4.7-1.3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></span>Effects</button>
       <button class="nav" data-page="oled"><span class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>OLED screen</button>
       <button class="nav" data-page="monitor"><span class="ico"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg></span>Monitor</button>
       <button class="nav" data-page="settings"><span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></span>Settings</button>
@@ -42,58 +43,36 @@
       <header class="page-head">
         <div>
           <h1>Lighting</h1>
-          <p class="muted">Set colours and effects for the whole build, a group or a single device.</p>
+          <p class="muted">Choose everything, a group or a device to change its lighting.</p>
         </div>
       </header>
 
-      <div class="card editor" id="editor">
-        <div class="editor-top">
-          <div class="card-title">Effect</div>
-          <label class="field">Apply to <select id="fx-target"></select></label>
-          <div class="seg" id="fx-side" title="SL Flex fans have an inner and an outer ring">
-            <button data-side="both" class="on">Both rings</button>
-            <button data-side="inner">Inner ring</button>
-            <button data-side="outer">Outer ring</button>
-          </div>
-          <label class="check" id="fx-openrgb-row"><input type="checkbox" id="sync-openrgb" checked /> Include OpenRGB devices</label>
-        </div>
-        <div class="fx-section">RGBable effects <span class="muted small">every device</span></div>
-        <div class="fx-kinds" id="fx-kinds"></div>
-        <div class="fx-section">Lian Li effects <span class="muted small">L-Connect's own patterns on Lian Li fans and Strimers; other devices get the closest RGBable effect</span></div>
-        <div class="fx-kinds" id="fx-lianli"></div>
-        <div class="fx-section">My effects <span class="muted small">built from layers or written as a script</span>
-          <span class="fx-mine-actions">
-            <button class="btn mini" id="fx-new">+ New effect</button>
-            <button class="btn mini" id="fx-edit" hidden>Edit</button>
-            <button class="btn mini" id="fx-import">Import</button>
-            <button class="btn mini" id="fx-export">Export</button>
-          </span>
-        </div>
-        <div class="fx-kinds" id="fx-mine"></div>
-        <div class="fx-row" id="fx-colors-row">
-          <span class="fx-label">Colours</span>
-          <div class="fx-colors" id="fx-colors"></div>
-          <button class="btn mini" id="fx-add" title="Add a colour">+ Colour</button>
-          <div class="presets" id="presets"></div>
-        </div>
-        <div class="fx-row">
-          <label class="field" id="fx-speed-row">Speed <input type="range" id="fx-speed" min="1" max="5" value="3" /></label>
-          <label class="field">Brightness <input type="range" id="fx-brightness" min="5" max="100" step="5" value="100" /> <span id="fx-bright-val">100%</span></label>
-          <label class="field" id="fx-dir-row">Direction <select id="fx-dir"></select></label>
-          <label class="check" id="fx-reverse-row"><input type="checkbox" id="fx-reverse" /> Reverse direction</label>
-          <span class="grow"></span>
-          <button class="btn primary" id="fx-apply">Apply</button>
-        </div>
-        <div class="muted small" id="fx-note"></div>
-        <canvas class="fx-preview" id="fx-preview" width="132" height="132" title="Preview: one SL Flex fan, inner and outer ring"></canvas>
-      </div>
+      <div class="card everything" id="everything"></div>
 
       <div class="lights-head">
+        <h2>Devices</h2>
         <span class="muted small" id="orgb-status"></span>
         <span class="hint small" id="ram-hint" hidden>No RAM found. To control RGB RAM, open <a href="#" id="ram-hint-link">Settings → OpenRGB</a>.</span>
-        <button class="btn" id="group-new">New group</button>
+        <span class="grow"></span>
+        <button class="btn mini" id="group-new">New group</button>
       </div>
       <div id="lights"><div class="empty">Waiting for devices…</div></div>
+    </section>
+
+    <!-- Effects library -->
+    <section class="page" id="page-effects">
+      <header class="page-head">
+        <div>
+          <h1>My effects</h1>
+          <p class="muted">Effects you make here can be used on any device, group or the whole build.</p>
+        </div>
+        <div class="row">
+          <button class="btn" id="lib-import">Import</button>
+          <button class="btn" id="lib-export">Export</button>
+          <button class="btn primary" id="lib-new">New effect</button>
+        </div>
+      </header>
+      <div class="lib-grid" id="library"></div>
     </section>
 
     <!-- OLED -->
@@ -233,6 +212,34 @@
       </div>
     </div>
   </div>
+  <div class="drawer-bg" id="drawer-bg" hidden></div>
+  <aside class="drawer" id="drawer" hidden>
+    <div class="drawer-head">
+      <div>
+        <div class="muted small">Lighting for</div>
+        <div class="drawer-title" id="d-target"></div>
+      </div>
+      <button class="icon-btn" id="d-close" title="Close">✕</button>
+    </div>
+    <div class="drawer-preview">
+      <canvas class="fx-preview big" id="d-preview" width="200" height="200"></canvas>
+      <div class="drawer-effect" id="d-effect-name"></div>
+    </div>
+    <div class="drawer-body">
+      <div class="seg tabs" id="d-tabs"></div>
+      <div class="tiles" id="d-tiles"></div>
+      <div class="ring-row" id="d-ring" hidden></div>
+      <div class="settings" id="d-settings"></div>
+      <div class="muted small" id="d-note"></div>
+    </div>
+    <div class="drawer-foot">
+      <label class="check" id="d-openrgb-row"><input type="checkbox" id="d-openrgb" checked /> Include OpenRGB devices</label>
+      <span class="grow"></span>
+      <button class="btn" id="d-cancel">Cancel</button>
+      <button class="btn primary" id="d-apply">Apply</button>
+    </div>
+  </aside>
+
   <div class="overlay" id="builder" hidden>
     <div class="card wizard builder">
       <div class="wizard-head">
@@ -245,23 +252,25 @@
       <div class="builder-body">
         <div class="builder-main">
           <div class="seg" id="b-mode">
-            <button data-mode="custom" class="on">Layers</button>
+            <button data-mode="recipe" class="on">Recipe</button>
+            <button data-mode="custom">Layers</button>
             <button data-mode="script">Script</button>
           </div>
+          <div class="recipe" id="b-recipe"></div>
           <div id="b-layers-pane">
             <div id="b-layers"></div>
             <button class="btn mini" id="b-add-layer">+ Add layer</button>
           </div>
           <div id="b-script-pane" hidden>
             <textarea class="code" id="b-script" spellcheck="false"></textarea>
-            <div class="row"><span class="fx-label">Colours</span><div class="fx-colors" id="b-script-colors"></div><button class="btn mini" id="b-script-add-color">+ Colour</button>
-              <label class="field">Speed <input type="range" id="b-script-speed" min="1" max="5" value="3" /></label></div>
-            <div class="script-error" id="b-error"></div>
+            <div class="row"><span class="fx-label">Colours</span><div id="b-script-colors"></div></div>
           </div>
+          <div class="script-error" id="b-error"></div>
         </div>
         <div class="builder-side">
           <canvas class="fx-preview big" id="b-preview" width="220" height="220"></canvas>
           <div class="muted small">Preview: one SL Flex fan</div>
+          <label class="field" id="b-speed-row">Speed <input type="range" id="b-speed" min="1" max="5" value="3" /></label>
         </div>
       </div>
       <div class="row wizard-foot">
@@ -274,6 +283,10 @@
   <datalist id="group-names"></datalist>
 
   <div id="toast"></div>
+  <script src="core.js"></script>
+  <script src="effects.js"></script>
+  <script src="lighting.js"></script>
+  <script src="library.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

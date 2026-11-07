@@ -57,6 +57,29 @@ fn engine() -> &'static Engine {
             let level = level.clamp(0.0, 1.0);
             color_array(c[0] * level, c[1] * level, c[2] * level)
         });
+        engine.register_fn("palette", |colors: Array, x: FLOAT| {
+            if colors.is_empty() {
+                return color_array(255.0, 255.0, 255.0);
+            }
+            let x = (x - x.floor()) * colors.len() as FLOAT;
+            let i = x.floor() as usize % colors.len();
+            let next = (i + 1) % colors.len();
+            let a = colors[i]
+                .read_lock::<Array>()
+                .map(|a| to_rgb(&a))
+                .unwrap_or([255.0; 3]);
+            let b = colors[next]
+                .read_lock::<Array>()
+                .map(|a| to_rgb(&a))
+                .unwrap_or([255.0; 3]);
+            let f = x.fract();
+            let f = f * f * (3.0 - 2.0 * f);
+            color_array(
+                a[0] + (b[0] - a[0]) * f,
+                a[1] + (b[1] - a[1]) * f,
+                a[2] + (b[2] - a[2]) * f,
+            )
+        });
         engine.register_fn("fract", |x: FLOAT| x - x.floor());
         engine.register_fn("clamp01", |x: FLOAT| x.clamp(0.0, 1.0));
         engine.register_fn("smooth", |x: FLOAT| {
@@ -156,13 +179,16 @@ pub fn render_frame(
     t: f32,
 ) -> Result<Vec<[u8; 3]>, String> {
     let ast = compiled(source)?;
-    let palette: Array = colors
-        .iter()
+    // Only the user's own colours, so gradients and random picks never bring in new ones;
+    // a single colour is repeated so `colors[1]` still works.
+    let chosen: &[[u8; 3]] = if colors.is_empty() {
+        &[[255, 255, 255]]
+    } else {
+        colors
+    };
+    let palette: Array = (0..chosen.len().max(2))
+        .map(|i| chosen[i % chosen.len()])
         .map(|c| Dynamic::from_array(c.iter().map(|&v| Dynamic::from_int(INT::from(v))).collect()))
-        .chain(
-            std::iter::repeat_with(|| Dynamic::from_array(vec![Dynamic::from_int(255); 3]))
-                .take(4usize.saturating_sub(colors.len())),
-        )
         .collect();
     let mut scope = Scope::new();
     scope.push_constant("PI", std::f32::consts::PI);

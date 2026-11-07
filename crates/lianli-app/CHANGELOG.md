@@ -19,6 +19,8 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 - L-Connect's own effects for Lian Li fans and Strimers (rainbow morph, staggered, tide, mixing, ping-pong, collide, reflect, hourglass, shuttle run and more), rendered by lian-li-linux's Lian Li renderer.
 - Custom effects: build one from up to six blended layers, or write a short script; both have a live preview, are saved under your own name and can be exported and imported as files.
 - Live preview of the selected effect in the editor.
+- Recipe builder: make an effect from colour, shape, motion and finish choices without writing code; it writes the script for you.
+- Reorganised Lighting page: everything, groups and devices as compact rows with a ⋯ menu, and a side panel with effects sorted into Basic, Motion, Ambient, Lian Li and Mine. Saved effects have their own Effects page.
 
 ### Fixed
 

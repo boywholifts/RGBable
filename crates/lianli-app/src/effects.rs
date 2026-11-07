@@ -68,6 +68,9 @@ pub struct Effect {
     pub layers: Vec<Layer>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub script: Option<String>,
+    /// The recipe-builder settings a script was generated from, as JSON, so it can be reopened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recipe: Option<String>,
     /// Name of a saved custom effect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -120,6 +123,7 @@ impl Default for Effect {
             direction: None,
             layers: Vec::new(),
             script: None,
+            recipe: None,
             name: None,
         }
     }
@@ -208,6 +212,7 @@ impl Effect {
             layer.opacity = layer.opacity.min(100);
             layer.effect.layers.clear();
             layer.effect.script = None;
+            layer.effect.recipe = None;
             if matches!(layer.effect.kind, EffectKind::Custom | EffectKind::Script) {
                 layer.effect.kind = EffectKind::Static;
             }
@@ -215,6 +220,9 @@ impl Effect {
         }
         if let Some(script) = &mut self.script {
             script.truncate(crate::script::MAX_SCRIPT_LEN);
+        }
+        if let Some(recipe) = &mut self.recipe {
+            recipe.truncate(4096);
         }
         self
     }
