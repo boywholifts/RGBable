@@ -7,6 +7,7 @@ use lianli_devices::winusb::hs2_oled_led::Hs2OledLedController;
 use lianli_devices::wireless::{DiscoveredDevice, WirelessController, WirelessRgbUpload};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
+use crate::effects::Effect;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -19,6 +20,9 @@ pub const RING_ID: &str = "oled-ring";
 const RING_LEDS: usize = 45;
 pub const IDENTIFY_STEPS: u32 = 6;
 pub const IDENTIFY_STEP: Duration = Duration::from_millis(700);
+const RING_FRAME: Duration = Duration::from_millis(33);
+const WIRELESS_FRAME_MS: u32 = 40;
+const WIRELESS_SLOWEST_FRAME_MS: u32 = 640;
 
 // ------------------------------------------------------------------ config
 
@@ -49,6 +53,8 @@ pub struct DeviceConfig {
     pub color: Option<[u8; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sync: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<Effect>,
 }
 
 impl DeviceConfig {
@@ -65,6 +71,8 @@ pub struct GroupConfig {
     pub members: Vec<String>,
     #[serde(default)]
     pub color: Option<[u8; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effect: Option<Effect>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +119,7 @@ pub struct DeviceView {
     pub leds: usize,
     pub color: Option<[u8; 3]>,
     pub rpm: Vec<u16>,
+    pub effect: Option<Effect>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -140,7 +149,9 @@ struct Controller {
     model: String,
     fans: u8,
     leds: usize,
+    zones: Vec<usize>,
     target: Target,
+    effect: Mutex<Option<Effect>>,
     colors: Mutex<Vec<[u8; 3]>>,
     dirty: AtomicBool,
     identifying: AtomicBool,
@@ -258,6 +269,10 @@ impl Engine {
             if let Some(color) = saved {
                 ctl.set_all(color);
             }
+            if let Some(effect) = config.devices.get(&ctl.id).and_then(|d| d.effect.clone()) {
+                *ctl.effect.lock() = Some(effect);
+                ctl.dirty.store(true, Ordering::Release);
+            }
         }
 
         {
@@ -295,7 +310,8 @@ impl Engine {
         let mut sorted: Vec<&DiscoveredDevice> = devices.iter().collect();
         sorted.sort_by_key(|d| d.mac);
         for device in sorted {
-            let leds: usize = device.fan_type.rgb_zone_led_counts(device.fan_count).iter().sum();
+            let zones = device.fan_type.rgb_zone_led_counts(device.fan_count);
+            let leds: usize = zones.iter().sum();
             if leds == 0 {
                 continue;
             }
@@ -305,7 +321,9 @@ impl Engine {
                 model: device.fan_type.display_name().to_string(),
                 fans: device.fan_count,
                 leds,
+                zones,
                 target: Target::Wireless { mac: device.mac },
+                effect: Mutex::new(None),
                 colors: Mutex::new(vec![[0, 0, 0]; leds]),
                 dirty: AtomicBool::new(false),
                 identifying: AtomicBool::new(false),
@@ -318,7 +336,9 @@ impl Engine {
                 model: "HydroShift II OLED Curve ambient ring".into(),
                 fans: 0,
                 leds: RING_LEDS,
+                zones: vec![RING_LEDS],
                 target: Target::Ring(ring),
+                effect: Mutex::new(None),
                 colors: Mutex::new(vec![[0, 0, 0]; RING_LEDS]),
                 dirty: AtomicBool::new(false),
                 identifying: AtomicBool::new(false),
@@ -366,6 +386,7 @@ impl Engine {
                     leds: ctl.leds,
                     color,
                     rpm,
+                    effect: saved.and_then(|s| s.effect.clone()),
                 }
             })
             .collect()
@@ -379,19 +400,40 @@ impl Engine {
             .find(|c| c.id == id)
             .cloned()
             .with_context(|| format!("no device {id}"))?;
+        *ctl.effect.lock() = None;
         ctl.set_all(color);
         let mut config = self.config.lock();
+        let entry = config.devices.entry(id.to_string()).or_default();
+        entry.effect = None;
         if id == RING_ID {
             config.oled_ring = Some(color);
         } else {
-            config.devices.entry(id.to_string()).or_default().color = Some(color);
+            entry.color = Some(color);
         }
         drop(config);
         self.save_config();
         Ok(())
     }
 
-    pub fn set_all_colors(&self, color: [u8; 3]) {
+    /// A static effect becomes a plain colour, so the device keeps a single saved colour.
+    pub fn set_effect(&self, id: &str, effect: Effect) -> Result<()> {
+        if !effect.is_animated() {
+            return self.set_color(id, effect.frame(&[1], 0.0)[0]);
+        }
+        let ctl = self
+            .controllers
+            .read()
+            .iter()
+            .find(|c| c.id == id)
+            .cloned()
+            .with_context(|| format!("no device {id}"))?;
+        *ctl.effect.lock() = Some(effect.clone());
+        ctl.dirty.store(true, Ordering::Release);
+        self.update_config(|c| c.devices.entry(id.to_string()).or_default().effect = Some(effect));
+        Ok(())
+    }
+
+    pub fn set_all_effect(&self, effect: &Effect) {
         let config = self.config();
         let ids: Vec<String> = self
             .controllers
@@ -401,7 +443,7 @@ impl Engine {
             .filter(|id| config.devices.get(id).is_none_or(DeviceConfig::in_sync))
             .collect();
         for id in ids {
-            let _ = self.set_color(&id, color);
+            let _ = self.set_effect(&id, effect.clone());
         }
     }
 
@@ -438,8 +480,8 @@ impl Engine {
                 ctl.set_all(if step % 2 == 0 { [255, 255, 255] } else { [0, 0, 0] });
                 thread::sleep(IDENTIFY_STEP);
             }
-            ctl.set_all(engine.saved_color(&ctl.id).unwrap_or([0, 0, 0]));
             ctl.identifying.store(false, Ordering::Release);
+            ctl.set_all(engine.saved_color(&ctl.id).unwrap_or([0, 0, 0]));
         })?;
         Ok(())
     }
@@ -517,11 +559,29 @@ impl Engine {
         const STRIKES: u8 = 3;
         let mut sent: BTreeMap<[u8; 6], (Instant, WirelessRgbUpload, u8)> = BTreeMap::new();
         let mut last_verify = Instant::now();
+        let started = Instant::now();
+        let mut last_ring_frame = Instant::now();
 
         loop {
             let controllers = self.controllers.read().clone();
             let mut uploaded = false;
             for ctl in &controllers {
+                if let Target::Ring(ring) = &ctl.target {
+                    let effect = ctl.effect.lock().clone();
+                    if let Some(effect) = effect.filter(|_| !ctl.identifying.load(Ordering::Acquire)) {
+                        if last_ring_frame.elapsed() >= RING_FRAME {
+                            last_ring_frame = Instant::now();
+                            let elapsed = started.elapsed().as_millis() as u64;
+                            let period = u64::from(effect.period_ms().max(1));
+                            let phase = (elapsed % period) as f32 / period as f32;
+                            if let Err(e) = ring.send_rgb_frame(&effect.frame(&ctl.zones, phase)) {
+                                warn!("OLED ring: {e:#}");
+                            }
+                        }
+                        ctl.dirty.store(false, Ordering::Release);
+                        continue;
+                    }
+                }
                 if !ctl.dirty.load(Ordering::Acquire) {
                     continue;
                 }
@@ -538,16 +598,12 @@ impl Engine {
                             continue;
                         }
                         ctl.dirty.store(false, Ordering::Release);
-                        let colors = ctl.colors.lock().clone();
-                        match wireless
-                            .prepare_rgb_upload(mac, &[colors], 5000)
-                            .and_then(|u| wireless.send_rgb_upload(mac, &u, 4).map(|()| u))
-                        {
+                        match upload_lighting(wireless, ctl, mac) {
                             Ok(upload) => {
                                 sent.insert(*mac, (Instant::now(), upload, 0));
                             }
                             Err(e) => {
-                                warn!("{}: colour upload failed: {e:#}", ctl.id);
+                                warn!("{}: lighting upload failed: {e:#}", ctl.id);
                                 ctl.dirty.store(true, Ordering::Release);
                             }
                         }
@@ -729,4 +785,32 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
         bail!("ffmpeg failed: {}", String::from_utf8_lossy(&result.stderr).trim());
     }
     Ok(output)
+}
+
+/// Static colours go up as one frame; effects as a loop the device plays by itself. A loop
+/// that doesn't fit the device's animation memory is retried with fewer, longer frames.
+fn upload_lighting(wireless: &WirelessController, ctl: &Controller, mac: &[u8; 6]) -> Result<WirelessRgbUpload> {
+    let effect = ctl
+        .effect
+        .lock()
+        .clone()
+        .filter(|_| !ctl.identifying.load(Ordering::Acquire));
+    let upload = match effect {
+        None => wireless.prepare_rgb_upload(mac, &[ctl.colors.lock().clone()], 5000)?,
+        Some(effect) => {
+            let mut interval = WIRELESS_FRAME_MS;
+            loop {
+                let frames = effect.loop_frames(&ctl.zones, interval);
+                match wireless.prepare_rgb_upload(mac, &frames, interval as u16) {
+                    Ok(upload) => break upload,
+                    Err(e) if interval < WIRELESS_SLOWEST_FRAME_MS && format!("{e:#}").contains("exceeds") => {
+                        interval *= 2;
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+    };
+    wireless.send_rgb_upload(mac, &upload, 4)?;
+    Ok(upload)
 }

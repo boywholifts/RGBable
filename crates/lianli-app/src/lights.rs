@@ -1,10 +1,12 @@
 //! One list of every light RGBable controls, Lian Li devices and OpenRGB devices alike,
 //! with the user's names, groups and "Sync everything" choices from the config.
 
+use crate::effects::{Effect, EffectKind};
 use crate::engine::{self, Config, Engine, GroupConfig};
 use crate::openrgb::{OpenRgb, OrgbDevice};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 pub const OPENRGB_PREFIX: &str = "orgb:";
@@ -18,6 +20,7 @@ pub struct LightView {
     pub kind: String,
     pub detail: String,
     pub color: Option<[u8; 3]>,
+    pub effect: Option<Effect>,
     pub sync: bool,
     pub group: Option<String>,
 }
@@ -27,6 +30,7 @@ pub struct GroupView {
     pub id: String,
     pub name: String,
     pub color: Option<[u8; 3]>,
+    pub effect: Option<Effect>,
     pub members: Vec<String>,
 }
 
@@ -72,6 +76,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 },
                 detail: d.model,
                 color: d.color,
+                effect: d.effect,
                 sync: saved.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &d.id),
                 default_name: d.default_name,
@@ -92,6 +97,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
             kind: device.kind.to_string(),
             detail: format!("{} LEDs via OpenRGB", device.leds),
             color: saved.and_then(|s| s.color).or(device.first_color),
+            effect: saved.and_then(|s| s.effect.clone()),
             sync: saved.is_none_or(|s| s.in_sync()),
             group: group_of(&config, &id),
             id,
@@ -109,6 +115,7 @@ pub fn groups(engine: &Engine) -> Vec<GroupView> {
             id: g.id,
             name: g.name,
             color: g.color,
+            effect: g.effect,
             members: g.members,
         })
         .collect()
@@ -122,24 +129,82 @@ fn openrgb_device(openrgb: &OpenRgb, id: &str) -> Option<OrgbDevice> {
         .find(|d| openrgb_id(d) == id)
 }
 
-pub fn set_color(engine: &Engine, openrgb: &OpenRgb, id: &str, color: [u8; 3]) -> Result<()> {
+fn openrgb_zones(device: &OrgbDevice) -> Vec<usize> {
+    let zones: Vec<usize> = device
+        .zones
+        .iter()
+        .map(|(_, leds)| *leds)
+        .filter(|&n| n > 0)
+        .collect();
+    if zones.iter().sum::<usize>() == device.leds {
+        zones
+    } else {
+        vec![device.leds]
+    }
+}
+
+/// Hands OpenRGB the animated effects saved in the config for the devices it has now.
+pub fn sync_openrgb_effects(engine: &Engine, openrgb: &OpenRgb) {
+    let config = engine.config();
+    let effects: BTreeMap<u32, (Effect, Vec<usize>)> = openrgb
+        .view()
+        .devices
+        .iter()
+        .filter_map(|device| {
+            let effect = config.devices.get(&openrgb_id(device))?.effect.clone()?;
+            Some((device.index, (effect, openrgb_zones(device))))
+        })
+        .collect();
+    openrgb.set_animations(effects);
+}
+
+pub fn static_effect(color: [u8; 3]) -> Effect {
+    Effect {
+        kind: EffectKind::Static,
+        colors: vec![color],
+        speed: 3,
+        brightness: 100,
+        reverse: false,
+    }
+}
+
+pub fn set_effect(engine: &Engine, openrgb: &OpenRgb, id: &str, effect: Effect) -> Result<()> {
+    let effect = effect.sanitized();
     if !id.starts_with(OPENRGB_PREFIX) {
-        return engine.set_color(id, color);
+        return engine.set_effect(id, effect);
     }
     let device = openrgb_device(openrgb, id).context("that OpenRGB device is not connected")?;
-    openrgb.set_color(device.index, color)?;
-    engine.update_config(|c| c.devices.entry(id.to_string()).or_default().color = Some(color));
+    let animated = effect.is_animated();
+    let color = effect.frame(&[1], 0.0)[0];
+    engine.update_config(|c| {
+        let entry = c.devices.entry(id.to_string()).or_default();
+        if animated {
+            entry.effect = Some(effect);
+        } else {
+            entry.effect = None;
+            entry.color = Some(color);
+        }
+    });
+    sync_openrgb_effects(engine, openrgb);
+    if !animated {
+        openrgb.set_color(device.index, color)?;
+    }
     Ok(())
 }
 
-/// Paints every light that is in "Sync everything"; stops at the first OpenRGB error.
+pub fn set_color(engine: &Engine, openrgb: &OpenRgb, id: &str, color: [u8; 3]) -> Result<()> {
+    set_effect(engine, openrgb, id, static_effect(color))
+}
+
+/// Applies an effect to every light that is in "Sync everything"; stops at the first OpenRGB error.
 pub fn set_all(
     engine: &Engine,
     openrgb: &OpenRgb,
-    color: [u8; 3],
+    effect: Effect,
     include_openrgb: bool,
 ) -> Result<()> {
-    engine.set_all_colors(color);
+    let effect = effect.sanitized();
+    engine.set_all_effect(&effect);
     if !include_openrgb {
         return Ok(());
     }
@@ -147,20 +212,27 @@ pub fn set_all(
         .into_iter()
         .filter(|l| l.source == "openrgb" && l.sync)
     {
-        set_color(engine, openrgb, &light.id, color).with_context(|| light.name.clone())?;
+        set_effect(engine, openrgb, &light.id, effect.clone())
+            .with_context(|| light.name.clone())?;
     }
     Ok(())
 }
 
-pub fn set_group_color(
+pub fn set_group_effect(
     engine: &Engine,
     openrgb: &OpenRgb,
     group: &str,
-    color: [u8; 3],
+    effect: Effect,
 ) -> Result<()> {
+    let effect = effect.sanitized();
     let members = engine.update_config(|c| {
         let g = c.groups.iter_mut().find(|g| g.id == group)?;
-        g.color = Some(color);
+        if effect.is_animated() {
+            g.effect = Some(effect.clone());
+        } else {
+            g.effect = None;
+            g.color = Some(effect.frame(&[1], 0.0)[0]);
+        }
         Some(g.members.clone())
     });
     let Some(members) = members else {
@@ -168,7 +240,7 @@ pub fn set_group_color(
     };
     let mut first_error = None;
     for id in members {
-        if let Err(e) = set_color(engine, openrgb, &id, color) {
+        if let Err(e) = set_effect(engine, openrgb, &id, effect.clone()) {
             tracing::warn!("{id}: {e:#}");
             first_error.get_or_insert(e);
         }
@@ -181,13 +253,10 @@ pub fn identify(engine: &Arc<Engine>, openrgb: &Arc<OpenRgb>, id: &str) -> Resul
         return engine.identify(id);
     }
     let device = openrgb_device(openrgb, id).context("that OpenRGB device is not connected")?;
-    let restore = engine
-        .config()
-        .devices
-        .get(id)
-        .and_then(|d| d.color)
-        .or(device.first_color)
-        .unwrap_or([0, 0, 0]);
+    let saved = engine.config().devices.get(id).cloned().unwrap_or_default();
+    let restore = saved.color.or(device.first_color).unwrap_or([0, 0, 0]);
+    openrgb.stop_animation(device.index);
+    let engine = engine.clone();
     let openrgb = openrgb.clone();
     std::thread::Builder::new()
         .name("identify-openrgb".into())
@@ -201,7 +270,9 @@ pub fn identify(engine: &Arc<Engine>, openrgb: &Arc<OpenRgb>, id: &str) -> Resul
                 let _ = openrgb.set_color(device.index, color);
                 std::thread::sleep(engine::IDENTIFY_STEP);
             }
-            if let Err(e) = openrgb.set_color(device.index, restore) {
+            if saved.effect.is_some() {
+                sync_openrgb_effects(&engine, &openrgb);
+            } else if let Err(e) = openrgb.set_color(device.index, restore) {
                 tracing::warn!("{}: restoring after identify: {e:#}", device.name);
             }
         })?;

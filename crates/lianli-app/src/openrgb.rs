@@ -8,7 +8,10 @@
 
 use anyhow::{bail, Context, Result};
 use parking_lot::{Mutex, RwLock};
+use crate::effects::Effect;
 use serde::Serialize;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::time::{Duration, Instant};
@@ -54,7 +57,18 @@ pub struct OpenRgb {
     port: RwLock<Option<u16>>,
     status: RwLock<String>,
     devices: RwLock<Vec<OrgbDevice>>,
+    animations: Mutex<Animations>,
 }
+
+/// Effects OpenRGB devices play, keyed by controller index. `generation` changes whenever
+/// the set changes, so the animator puts each device back into direct mode.
+#[derive(Default)]
+struct Animations {
+    effects: BTreeMap<u32, (Effect, Vec<usize>)>,
+    generation: u64,
+}
+
+const ANIMATION_FRAME: Duration = Duration::from_millis(50);
 
 impl OpenRgb {
     pub fn new() -> Self {
@@ -63,6 +77,7 @@ impl OpenRgb {
             port: RwLock::new(None),
             status: RwLock::new("Not connected".into()),
             devices: RwLock::new(Vec::new()),
+            animations: Mutex::new(Animations::default()),
         }
     }
 
@@ -135,25 +150,40 @@ impl OpenRgb {
 
     /// Put the device in its custom/direct mode and paint every LED one colour.
     pub fn set_color(&self, index: u32, color: [u8; 3]) -> Result<()> {
-        let leds = self
+        let leds = self.led_count(index)?;
+        self.set_leds(index, &vec![color; leds], true)
+    }
+
+    pub fn led_count(&self, index: u32) -> Result<usize> {
+        self
             .devices
             .read()
             .iter()
             .find(|d| d.index == index)
             .map(|d| d.leds)
-            .context("unknown OpenRGB device")?;
+            .context("unknown OpenRGB device")
+    }
+
+    /// Writes one colour per LED; `custom_mode` first switches the device to direct control.
+    pub fn set_leds(&self, index: u32, colors: &[[u8; 3]], custom_mode: bool) -> Result<()> {
+        let leds = colors.len();
         let mut guard = self.stream.lock();
         let Some((stream, version)) = guard.as_mut() else { bail!("OpenRGB is not connected") };
         let version = *version;
         let mut payload = Vec::with_capacity(6 + leds * 4);
         payload.extend_from_slice(&((6 + leds * 4) as u32).to_le_bytes());
         payload.extend_from_slice(&(leds as u16).to_le_bytes());
-        for _ in 0..leds {
-            payload.extend_from_slice(&color);
+        for color in colors {
+            payload.extend_from_slice(color);
             payload.push(0);
         }
-        let result = send(stream, index, PKT_SET_CUSTOM_MODE, &[])
-            .and_then(|()| expect_ack(stream, version, PKT_SET_CUSTOM_MODE))
+        let mode = if custom_mode {
+            send(stream, index, PKT_SET_CUSTOM_MODE, &[])
+                .and_then(|()| expect_ack(stream, version, PKT_SET_CUSTOM_MODE))
+        } else {
+            Ok(())
+        };
+        let result = mode
             .and_then(|()| send(stream, index, PKT_UPDATE_LEDS, &payload))
             .and_then(|()| expect_ack(stream, version, PKT_UPDATE_LEDS));
         if let Err(e) = &result {
@@ -162,6 +192,61 @@ impl OpenRgb {
             *self.status.write() = "Disconnected from OpenRGB".into();
         }
         result
+    }
+
+    /// Replaces the animated effects; returns once no frame of a removed effect can still be sent.
+    pub fn set_animations(&self, effects: BTreeMap<u32, (Effect, Vec<usize>)>) {
+        let mut animations = self.animations.lock();
+        if animations.effects != effects {
+            animations.effects = effects;
+            animations.generation += 1;
+        }
+    }
+
+    pub fn stop_animation(&self, index: u32) {
+        let mut animations = self.animations.lock();
+        if animations.effects.remove(&index).is_some() {
+            animations.generation += 1;
+        }
+    }
+
+    /// Plays animated effects at about 20 frames a second; idles while there are none.
+    pub fn start_animator(self: &Arc<Self>) {
+        let openrgb = self.clone();
+        std::thread::Builder::new()
+            .name("openrgb-effects".into())
+            .spawn(move || {
+                let started = Instant::now();
+                let mut generation = u64::MAX;
+                let mut in_direct_mode = BTreeSet::new();
+                loop {
+                    let tick = Instant::now();
+                    let connected = openrgb.stream.lock().is_some();
+                    let animations = openrgb.animations.lock();
+                    if !connected || animations.effects.is_empty() {
+                        drop(animations);
+                        generation = u64::MAX;
+                        std::thread::sleep(Duration::from_millis(500));
+                        continue;
+                    }
+                    if animations.generation != generation {
+                        generation = animations.generation;
+                        in_direct_mode.clear();
+                    }
+                    let elapsed = started.elapsed().as_millis() as u64;
+                    for (&index, (effect, zones)) in &animations.effects {
+                        let period = u64::from(effect.period_ms().max(1));
+                        let phase = (elapsed % period) as f32 / period as f32;
+                        let first = in_direct_mode.insert(index);
+                        if openrgb.set_leds(index, &effect.frame(zones, phase), first).is_err() {
+                            in_direct_mode.remove(&index);
+                        }
+                    }
+                    drop(animations);
+                    std::thread::sleep(ANIMATION_FRAME.saturating_sub(tick.elapsed()));
+                }
+            })
+            .expect("spawn OpenRGB effects thread");
     }
 }
 

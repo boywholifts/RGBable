@@ -42,21 +42,31 @@
       <header class="page-head">
         <div>
           <h1>Lighting</h1>
-          <p class="muted">Pick a colour for each device, or one colour for the whole build.</p>
+          <p class="muted">Set colours and effects for the whole build, a group or a single device.</p>
         </div>
       </header>
 
-      <div class="card sync">
-        <div class="sync-left">
-          <label class="swatch big"><input type="color" id="sync-color" value="#8000ff" /></label>
-          <div>
-            <div class="card-title">Sync everything</div>
-            <label class="check"><input type="checkbox" id="sync-openrgb" checked /> Include OpenRGB devices (RAM, GPU, motherboard)</label>
-            <div class="muted small">Devices with their Sync switch off are left alone.</div>
-          </div>
+      <div class="card editor" id="editor">
+        <div class="editor-top">
+          <div class="card-title">Effect</div>
+          <label class="field">Apply to <select id="fx-target"></select></label>
+          <label class="check" id="fx-openrgb-row"><input type="checkbox" id="sync-openrgb" checked /> Include OpenRGB devices</label>
         </div>
-        <div class="presets" id="presets"></div>
-        <button class="btn primary" id="sync-apply">Apply to all</button>
+        <div class="fx-kinds" id="fx-kinds"></div>
+        <div class="fx-row" id="fx-colors-row">
+          <span class="fx-label">Colours</span>
+          <div class="fx-colors" id="fx-colors"></div>
+          <button class="btn mini" id="fx-add" title="Add a colour">+ Colour</button>
+          <div class="presets" id="presets"></div>
+        </div>
+        <div class="fx-row">
+          <label class="field" id="fx-speed-row">Speed <input type="range" id="fx-speed" min="1" max="5" value="3" /></label>
+          <label class="field">Brightness <input type="range" id="fx-brightness" min="5" max="100" step="5" value="100" /> <span id="fx-bright-val">100%</span></label>
+          <label class="check" id="fx-reverse-row"><input type="checkbox" id="fx-reverse" /> Reverse direction</label>
+          <span class="grow"></span>
+          <button class="btn primary" id="fx-apply">Apply</button>
+        </div>
+        <div class="muted small" id="fx-note"></div>
       </div>
 
       <div class="lights-head">

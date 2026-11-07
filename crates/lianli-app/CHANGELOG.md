@@ -10,6 +10,7 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 - Identify button that blinks a device white.
 - First-run setup wizard that walks through every light (Settings > Run setup again).
 - Per-device switch to leave a device out of Sync everything.
+- Lighting effects: breathing, colour cycle, rainbow, rainbow wave, wave, meteor and twinkle, with colours, speed, brightness and direction, for everything, a group or one device. Wireless fans and Strimers play effects by themselves; the OLED ring and OpenRGB devices are animated by RGBable.
 
 ## [0.2.0] - 2026-11-07
 

@@ -2,12 +2,14 @@
 // No console window in release builds.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod effects;
 mod engine;
 mod lights;
 mod openrgb;
 mod updater;
 
 use engine::{DeviceView, Engine, OledView, Telemetry};
+use effects::Effect;
 use lights::{GroupView, LightView, SetupEntry};
 use openrgb::{OpenRgb, OrgbView};
 use serde::Serialize;
@@ -75,8 +77,18 @@ fn set_color(state: State<'_, AppState>, id: String, color: [u8; 3]) -> Result<(
 }
 
 #[tauri::command]
-fn set_all(state: State<'_, AppState>, color: [u8; 3], include_openrgb: bool) -> Result<(), String> {
-    lights::set_all(&state.engine, &state.openrgb, color, include_openrgb).map_err(chain)
+fn set_all(state: State<'_, AppState>, effect: Effect, include_openrgb: bool) -> Result<(), String> {
+    lights::set_all(&state.engine, &state.openrgb, effect, include_openrgb).map_err(chain)
+}
+
+#[tauri::command]
+fn set_effect(state: State<'_, AppState>, id: String, effect: Effect) -> Result<(), String> {
+    lights::set_effect(&state.engine, &state.openrgb, &id, effect).map_err(chain)
+}
+
+#[tauri::command]
+fn set_group_effect(state: State<'_, AppState>, group: String, effect: Effect) -> Result<(), String> {
+    lights::set_group_effect(&state.engine, &state.openrgb, &group, effect).map_err(chain)
 }
 
 fn default_name(state: &AppState, id: &str) -> Option<String> {
@@ -124,7 +136,7 @@ fn move_to_group(state: State<'_, AppState>, id: String, group: Option<String>) 
 
 #[tauri::command]
 fn set_group_color(state: State<'_, AppState>, group: String, color: [u8; 3]) -> Result<(), String> {
-    lights::set_group_color(&state.engine, &state.openrgb, &group, color).map_err(chain)
+    lights::set_group_effect(&state.engine, &state.openrgb, &group, lights::static_effect(color)).map_err(chain)
 }
 
 #[tauri::command]
@@ -139,8 +151,13 @@ fn finish_setup(state: State<'_, AppState>, entries: Vec<SetupEntry>) {
 #[tauri::command]
 async fn openrgb_connect(state: State<'_, AppState>) -> Result<(), String> {
     let openrgb = state.openrgb.clone();
-    let preferred = state.engine.config().openrgb_port;
-    tauri::async_runtime::spawn_blocking(move || openrgb.connect(preferred))
+    let engine = state.engine.clone();
+    let preferred = engine.config().openrgb_port;
+    tauri::async_runtime::spawn_blocking(move || {
+        openrgb.connect(preferred)?;
+        lights::sync_openrgb_effects(&engine, &openrgb);
+        anyhow::Ok(())
+    })
         .await
         .map_err(err)?
         .map_err(|e| format!("{e:#}"))
@@ -339,13 +356,16 @@ fn main() {
     engine.start();
 
     let openrgb = Arc::new(OpenRgb::new());
+    openrgb.start_animator();
     {
         let openrgb = openrgb.clone();
+        let engine = engine.clone();
         let preferred = engine.config().openrgb_port;
         std::thread::spawn(move || {
             // OpenRGB may still be starting at logon; try for about a minute.
             for _ in 0..12 {
                 if openrgb.connect(preferred).is_ok() {
+                    lights::sync_openrgb_effects(&engine, &openrgb);
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_secs(5));
@@ -383,6 +403,8 @@ fn main() {
             delete_group,
             move_to_group,
             set_group_color,
+            set_effect,
+            set_group_effect,
             finish_setup,
             pick_media,
             set_oled,

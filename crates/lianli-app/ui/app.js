@@ -68,7 +68,11 @@ function lightCard(l, groups) {
   const name = el("input", { class: "name", value: l.name, spellcheck: "false", title: "Rename" });
   name.addEventListener("change", () => call("rename", { id: l.id, name: name.value }, "Renamed").then(rerender));
   name.addEventListener("keydown", (e) => e.key === "Enter" && name.blur());
-  const meta = el("div", { class: "meta", title: l.detail }, [el("span", { class: "tag" }, l.kind), l.detail]);
+  const meta = el("div", { class: "meta", title: l.detail }, [
+    el("span", { class: "tag" }, l.kind),
+    ...(l.effect ? [el("span", { class: "tag fx" }, kindLabelOf(l.effect))] : []),
+    l.detail,
+  ]);
 
   const move = el("select", { class: "small", title: "Move to group" }, [
     el("option", { value: "" }, "Ungrouped"),
@@ -89,6 +93,7 @@ function lightCard(l, groups) {
       name,
       meta,
       el("div", { class: "actions" }, [
+        el("button", { class: "btn mini", onclick: () => editTarget("dev:" + l.id) }, "Effect"),
         el("button", { class: "btn mini", onclick: () => call("identify", { id: l.id }, `Blinking ${l.name}`) }, "Identify"),
         move,
         el("label", { class: "check", title: "Include in Sync everything" }, [sync, "Sync"]),
@@ -127,6 +132,8 @@ function groupSection(g, members, groups) {
     swatch(g.color, (rgb) => call("set_group_color", { group: g.id, color: rgb }, `${g.name} updated`).finally(rerender)),
     title,
     el("span", { class: "muted small" }, members.length === 1 ? "1 device" : `${members.length} devices`),
+    ...(g.effect ? [el("span", { class: "tag fx" }, kindLabelOf(g.effect))] : []),
+    el("button", { class: "btn mini push", onclick: () => editTarget("group:" + g.id) }, "Effect"),
     el("button", {
       class: "btn mini",
       title: "Delete the group; its devices become ungrouped",
@@ -148,6 +155,7 @@ function renderLights(o) {
     ...(orgb.connected ? [] : [el("a", { href: "#", onclick: (e) => { e.preventDefault(); reconnect(); } }, "Connect")])
   );
   $("#orgb-status2").textContent = orgb.status;
+  renderTargets(o);
   const names = $("#group-names");
   names.replaceChildren(...o.groups.map((g) => el("option", { value: g.name })));
 
@@ -328,20 +336,152 @@ async function reconnect() {
   refresh();
 }
 
+// ---------------------------------------------------------------- effect editor
+
+const KINDS = [
+  { id: "static", label: "Static", colors: 1 },
+  { id: "breathing", label: "Breathing", colors: 4 },
+  { id: "color_cycle", label: "Colour cycle", colors: 4 },
+  { id: "rainbow", label: "Rainbow", colors: 0 },
+  { id: "rainbow_wave", label: "Rainbow wave", colors: 0, reverse: true },
+  { id: "wave", label: "Wave", colors: 4, reverse: true },
+  { id: "meteor", label: "Meteor", colors: 4, reverse: true },
+  { id: "twinkle", label: "Twinkle", colors: 4 },
+];
+const kindInfo = (id) => KINDS.find((k) => k.id === id) || KINDS[0];
+const kindLabelOf = (effect) => (effect ? kindInfo(effect.kind).label : "Static");
+
+const fx = { kind: "static", colors: ["#8000ff"], active: 0, targetKey: "" };
+
+function renderKinds() {
+  $("#fx-kinds").replaceChildren(...KINDS.map((k) =>
+    el("button", { class: "chip" + (k.id === fx.kind ? " on" : ""), onclick: () => { fx.kind = k.id; renderEditor(); } }, k.label)
+  ));
+}
+
+function renderEditor() {
+  renderKinds();
+  const info = kindInfo(fx.kind);
+  fx.colors = fx.colors.slice(0, Math.max(1, info.colors));
+  fx.active = Math.min(fx.active, fx.colors.length - 1);
+  $("#fx-colors-row").hidden = info.colors === 0;
+  $("#fx-add").hidden = fx.colors.length >= info.colors;
+  $("#fx-speed-row").hidden = fx.kind === "static";
+  $("#fx-reverse-row").hidden = !info.reverse;
+  $("#fx-bright-val").textContent = $("#fx-brightness").value + "%";
+  $("#fx-colors").replaceChildren(...fx.colors.map((hex, i) => {
+    const s = swatch(hexToRgb(hex), () => {});
+    const input = s.querySelector("input");
+    input.addEventListener("input", () => (fx.colors[i] = input.value));
+    s.classList.add("small");
+    s.classList.toggle("active", i === fx.active);
+    s.addEventListener("click", () => {
+      fx.active = i;
+      document.querySelectorAll("#fx-colors .swatch").forEach((n, j) => n.classList.toggle("active", j === i));
+    });
+    const wrap = el("div", { class: "fx-color" }, s);
+    if (fx.colors.length > 1) {
+      wrap.append(el("button", { class: "remove", title: "Remove colour", onclick: () => { fx.colors.splice(i, 1); renderEditor(); } }, "×"));
+    }
+    return wrap;
+  }));
+  const target = $("#fx-target").value;
+  $("#fx-openrgb-row").hidden = target !== "all";
+  $("#fx-note").textContent = target === "all"
+    ? "Devices with their Sync switch off are left alone."
+    : fx.kind === "static" ? "" : "Lian Li fans and Strimers play effects by themselves; RGBable keeps the OLED ring and OpenRGB devices animated while it runs.";
+}
+
+function currentEffect() {
+  return {
+    kind: fx.kind,
+    colors: fx.colors.map(hexToRgb),
+    speed: Number($("#fx-speed").value),
+    brightness: Number($("#fx-brightness").value),
+    reverse: $("#fx-reverse").checked,
+  };
+}
+
+function loadEffect(effect, color) {
+  if (effect) {
+    fx.kind = effect.kind;
+    fx.colors = effect.colors.length ? effect.colors.map(rgbToHex) : fx.colors;
+    $("#fx-speed").value = effect.speed;
+    $("#fx-brightness").value = effect.brightness;
+    $("#fx-reverse").checked = effect.reverse;
+  } else {
+    fx.kind = "static";
+    if (color) fx.colors = [rgbToHex(color)];
+    $("#fx-brightness").value = 100;
+  }
+  fx.active = 0;
+  renderEditor();
+}
+
+function renderTargets(o) {
+  const select = $("#fx-target");
+  const key = JSON.stringify([o.groups.map((g) => [g.id, g.name]), o.lights.map((l) => [l.id, l.name])]);
+  if (key === fx.targetKey) return;
+  fx.targetKey = key;
+  const value = select.value || "all";
+  const options = [el("option", { value: "all" }, "Everything (Sync everything)")];
+  if (o.groups.length) options.push(el("optgroup", { label: "Groups" }, o.groups.map((g) => el("option", { value: "group:" + g.id }, g.name))));
+  if (o.lights.length) options.push(el("optgroup", { label: "Devices" }, o.lights.map((l) => el("option", { value: "dev:" + l.id }, l.name))));
+  select.replaceChildren(...options);
+  select.value = [...select.options].some((op) => op.value === value) ? value : "all";
+}
+
+function editTarget(value) {
+  const select = $("#fx-target");
+  select.value = value;
+  targetChanged();
+  $("#editor").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function targetChanged() {
+  const value = $("#fx-target").value;
+  if (value.startsWith("dev:")) {
+    const l = last.lights.find((x) => x.id === value.slice(4));
+    if (l) loadEffect(l.effect, l.color);
+  } else if (value.startsWith("group:")) {
+    const g = last.groups.find((x) => x.id === value.slice(6));
+    if (g) loadEffect(g.effect, g.color);
+  } else {
+    renderEditor();
+  }
+}
+
 for (const hex of PRESETS) {
   const p = el("button", { class: "preset", title: hex });
   p.style.background = hex;
   p.addEventListener("click", () => {
-    $("#sync-color").value = hex;
+    fx.colors[fx.active] = hex;
+    renderEditor();
   });
   $("#presets").append(p);
 }
-$("#sync-apply").addEventListener("click", async () => {
-  const color = hexToRgb($("#sync-color").value);
-  await call("set_all", { color, includeOpenrgb: $("#sync-openrgb").checked }, "Applied to everything");
-  structureKey = "";
-  refresh();
+$("#fx-target").addEventListener("change", targetChanged);
+$("#fx-add").addEventListener("click", () => {
+  fx.colors.push(PRESETS[fx.colors.length % PRESETS.length]);
+  fx.active = fx.colors.length - 1;
+  renderEditor();
 });
+$("#fx-brightness").addEventListener("input", () => ($("#fx-bright-val").textContent = $("#fx-brightness").value + "%"));
+$("#fx-apply").addEventListener("click", async () => {
+  const effect = currentEffect();
+  const value = $("#fx-target").value;
+  const label = kindInfo(effect.kind).label;
+  $("#fx-apply").disabled = true;
+  try {
+    if (value.startsWith("dev:")) await call("set_effect", { id: value.slice(4), effect }, `${label} applied`);
+    else if (value.startsWith("group:")) await call("set_group_effect", { group: value.slice(6), effect }, `${label} applied to the group`);
+    else await call("set_all", { effect, includeOpenrgb: $("#sync-openrgb").checked }, `${label} applied to everything`);
+  } finally {
+    $("#fx-apply").disabled = false;
+    rerender();
+  }
+});
+renderEditor();
 
 // ---------------------------------------------------------------- OLED
 
