@@ -16,6 +16,7 @@ members = [
     "crates/lianli-media",
     "crates/lianli-daemon",
     "crates/lianli-gui/src-tauri",
+    "crates/lianli-app",
 ]
 exclude = [
     "crates/lianli-gui-old",

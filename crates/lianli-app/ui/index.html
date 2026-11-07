@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>RGBable</title>
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">
+      <img src="logo.png" alt="" />
+      <div>
+        <div class="brand-name">RGBable</div>
+        <div class="brand-sub">Lian Li control</div>
+      </div>
+    </div>
+    <nav>
+      <button class="nav active" data-page="lighting"><span class="ico"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg></span>Lighting</button>
+      <button class="nav" data-page="oled"><span class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>OLED screen</button>
+      <button class="nav" data-page="monitor"><span class="ico"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg></span>Monitor</button>
+      <button class="nav" data-page="settings"><span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></span>Settings</button>
+    </nav>
+    <div class="sidebar-foot">
+      <div id="status" class="status">Starting…</div>
+    </div>
+  </aside>
+
+  <main>
+    <!-- Lighting -->
+    <section class="page active" id="page-lighting">
+      <header class="page-head">
+        <div>
+          <h1>Lighting</h1>
+          <p class="muted">Pick a colour for each device, or one colour for the whole build.</p>
+        </div>
+      </header>
+
+      <div class="card sync">
+        <div class="sync-left">
+          <label class="swatch big"><input type="color" id="sync-color" value="#8000ff" /></label>
+          <div>
+            <div class="card-title">Sync everything</div>
+            <label class="check"><input type="checkbox" id="sync-openrgb" checked /> Include OpenRGB devices (RAM, GPU, motherboard)</label>
+          </div>
+        </div>
+        <div class="presets" id="presets"></div>
+        <button class="btn primary" id="sync-apply">Apply to all</button>
+      </div>
+
+      <h2>Lian Li</h2>
+      <div class="grid" id="lianli-devices">
+        <div class="empty">Waiting for devices…</div>
+      </div>
+
+      <h2>Other lighting <span class="muted small" id="orgb-status"></span></h2>
+      <div class="grid" id="orgb-devices"></div>
+    </section>
+
+    <!-- OLED -->
+    <section class="page" id="page-oled">
+      <header class="page-head">
+        <div>
+          <h1>OLED screen</h1>
+          <p class="muted">Loop a video, GIF or image on the HydroShift II OLED Curve.</p>
+        </div>
+        <span class="pill" id="oled-state">Off</span>
+      </header>
+      <div class="card">
+        <div class="card-title">Now showing</div>
+        <div class="file" id="oled-file">Nothing selected</div>
+        <div class="row">
+          <button class="btn primary" id="oled-pick">Choose file…</button>
+          <button class="btn" id="oled-stop">Stop</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Layout</div>
+        <div class="row">
+          <div class="seg" id="oled-fit">
+            <button data-fit="cover">Fill (crop edges)</button>
+            <button data-fit="contain">Fit (black bars)</button>
+          </div>
+          <label class="field">Frame rate
+            <select id="oled-fps">
+              <option>24</option><option selected>30</option><option>60</option>
+            </select>
+          </label>
+          <button class="btn" id="oled-apply">Apply</button>
+        </div>
+        <p class="muted small">Content is shown landscape (2288 × 1080). The first play of a new file is encoded with ffmpeg and cached, so it may take a moment to start.</p>
+      </div>
+    </section>
+
+    <!-- Monitor -->
+    <section class="page" id="page-monitor">
+      <header class="page-head">
+        <div>
+          <h1>Monitor</h1>
+          <p class="muted">Live readings from the AIO and wireless fans. Fan speed follows your motherboard's fan curves.</p>
+        </div>
+      </header>
+      <div class="stats">
+        <div class="card stat"><div class="stat-label">Pump</div><div class="stat-value" id="m-pump">–</div><div class="stat-unit">RPM</div></div>
+        <div class="card stat"><div class="stat-label">Coolant</div><div class="stat-value" id="m-coolant">–</div><div class="stat-unit">°C</div></div>
+      </div>
+      <h2>Fans</h2>
+      <div class="grid" id="m-fans"></div>
+    </section>
+
+    <!-- Settings -->
+    <section class="page" id="page-settings">
+      <header class="page-head"><div><h1>Settings</h1></div></header>
+      <div class="card">
+        <label class="toggle-row">
+          <div>
+            <div class="card-title">Start with Windows</div>
+            <div class="muted small">Starts minimised to the tray and restores your lighting and OLED.</div>
+          </div>
+          <input type="checkbox" class="toggle" id="autostart" />
+        </label>
+      </div>
+      <div class="card">
+        <div class="card-title">OpenRGB</div>
+        <p class="muted small">RGBable uses OpenRGB in the background for RAM, GPU and motherboard lighting. In OpenRGB, open <b>SDK Server</b> and click <b>Start Server</b> (port 6742), and enable starting OpenRGB minimised at login.</p>
+        <div class="row">
+          <button class="btn" id="orgb-connect">Reconnect to OpenRGB</button>
+          <span class="muted small" id="orgb-status2"></span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">L-Connect</div>
+        <p class="muted small">Only one program can talk to the Lian Li devices. Turn off L-Connect's "start with Windows" and exit it; RGBable waits until it has closed.</p>
+      </div>
+      <div class="card">
+        <div class="card-title">About</div>
+        <p class="muted small">RGBable is an unofficial, open-source app built on the lian-li-linux drivers. Not affiliated with Lian Li.<br />Data folder: <span id="data-dir"></span></p>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
