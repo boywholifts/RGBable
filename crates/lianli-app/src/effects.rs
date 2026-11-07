@@ -15,6 +15,16 @@ pub enum EffectKind {
     Wave,
     Meteor,
     Twinkle,
+    Strobe,
+    Heartbeat,
+    Fire,
+    Scanner,
+    Runway,
+    Fill,
+    Ripple,
+    StarryNight,
+    Aurora,
+    Police,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +50,9 @@ fn default_brightness() -> u8 {
 }
 
 const FALLBACK_COLOR: [u8; 3] = [128, 0, 255];
+/// Fire and aurora change every LED every frame; rendering them in small blocks keeps their
+/// loops small enough for the wireless devices' animation memory.
+const COARSE_BLOCK: usize = 4;
 
 impl Effect {
     pub fn is_animated(&self) -> bool {
@@ -71,6 +84,16 @@ impl Effect {
             EffectKind::RainbowWave | EffectKind::Wave => 4000,
             EffectKind::Meteor => 2400,
             EffectKind::Twinkle => 4000,
+            EffectKind::Strobe => 1200 * self.colors().len() as u32,
+            EffectKind::Heartbeat => 1600 * self.colors().len() as u32,
+            EffectKind::Fire => 4000,
+            EffectKind::Scanner => 2400,
+            EffectKind::Runway => 3000,
+            EffectKind::Fill => 3000 * self.colors().len() as u32,
+            EffectKind::Ripple => 3000,
+            EffectKind::StarryNight => 6000,
+            EffectKind::Aurora => 8000,
+            EffectKind::Police => 1600,
         };
         let factor = [2.0, 1.4, 1.0, 0.7, 0.5][usize::from(self.speed.clamp(1, 5) - 1)];
         (base as f32 * factor) as u32
@@ -84,7 +107,14 @@ impl Effect {
         let mut out = Vec::with_capacity(zones.iter().sum());
         let mut led_index = 0usize;
         for (zone, &count) in zones.iter().enumerate() {
+            let coarse = matches!(self.kind, EffectKind::Fire | EffectKind::Aurora);
             for i in 0..count {
+                let i = if coarse { i - i % COARSE_BLOCK } else { i };
+                let end_to_end = if count > 1 {
+                    i as f32 / (count - 1) as f32
+                } else {
+                    0.5
+                };
                 let mut p = i as f32 / count.max(1) as f32;
                 if self.reverse {
                     p = 1.0 - p;
@@ -98,6 +128,16 @@ impl Effect {
                     EffectKind::Wave => gradient(colors, phase + p),
                     EffectKind::Meteor => meteor(colors[zone % colors.len()], phase, p),
                     EffectKind::Twinkle => twinkle(colors, phase, led_index),
+                    EffectKind::Strobe => strobe(colors, phase),
+                    EffectKind::Heartbeat => heartbeat(colors, phase),
+                    EffectKind::Fire => fire(phase, p, led_index - led_index % COARSE_BLOCK),
+                    EffectKind::Scanner => scanner(colors[zone % colors.len()], phase, end_to_end),
+                    EffectKind::Runway => runway(colors, phase, p),
+                    EffectKind::Fill => fill(colors, phase, p),
+                    EffectKind::Ripple => ripple(colors, phase, end_to_end),
+                    EffectKind::StarryNight => starry_night(colors, phase, led_index),
+                    EffectKind::Aurora => aurora(colors, phase, p),
+                    EffectKind::Police => police(colors, phase, p),
                 };
                 out.push(scale(color, self.brightness));
                 led_index += 1;
@@ -204,6 +244,125 @@ fn twinkle(colors: &[[u8; 3]], t: f32, led: usize) -> [u8; 3] {
     dim(color, (PI * local / FLASH).sin())
 }
 
+fn bump(x: f32, width: f32) -> f32 {
+    if x.abs() >= width {
+        0.0
+    } else {
+        (PI * 0.5 * x / width).cos().powi(2)
+    }
+}
+
+/// Four quick flashes per colour.
+fn strobe(colors: &[[u8; 3]], t: f32) -> [u8; 3] {
+    let flashes = t * colors.len() as f32 * 4.0;
+    if flashes.fract() < 0.3 {
+        colors[(flashes as usize / 4) % colors.len()]
+    } else {
+        [0, 0, 0]
+    }
+}
+
+/// A strong beat, a softer second beat, then rest; one heartbeat per colour.
+fn heartbeat(colors: &[[u8; 3]], t: f32) -> [u8; 3] {
+    let pos = t * colors.len() as f32;
+    let local = pos.fract();
+    let level = bump(local - 0.08, 0.08).max(0.6 * bump(local - 0.3, 0.08));
+    dim(colors[pos as usize % colors.len()], level)
+}
+
+const FIRE: [[u8; 3]; 4] = [[40, 0, 0], [200, 20, 0], [255, 110, 0], [255, 200, 40]];
+
+/// Flicker built from whole-number frequencies, so it loops without a seam.
+fn fire(t: f32, p: f32, led: usize) -> [u8; 3] {
+    let h = hash(led);
+    let o1 = (h & 0xff) as f32 / 256.0;
+    let o2 = ((h >> 8) & 0xff) as f32 / 256.0;
+    let o3 = ((h >> 16) & 0xff) as f32 / 256.0;
+    let heat = 0.55
+        + 0.22 * (2.0 * PI * (2.0 * t + o1 + p)).sin()
+        + 0.15 * (2.0 * PI * (5.0 * t + o2)).sin()
+        + 0.1 * (2.0 * PI * (11.0 * t + o3)).sin();
+    let pos = heat.clamp(0.0, 0.999) * (FIRE.len() - 1) as f32;
+    let index = pos as usize;
+    mix(FIRE[index], FIRE[index + 1], pos.fract())
+}
+
+/// A light sweeping from one end to the other and back.
+fn scanner(color: [u8; 3], t: f32, x: f32) -> [u8; 3] {
+    let head = 1.0 - (2.0 * t - 1.0).abs();
+    dim(color, bump(x - head, 0.18))
+}
+
+const RUNWAY_BLOCKS: f32 = 4.0;
+
+/// Blocks of colour marching along; a single colour alternates with dark gaps.
+fn runway(colors: &[[u8; 3]], t: f32, p: f32) -> [u8; 3] {
+    let u = (p * RUNWAY_BLOCKS - t).rem_euclid(1.0);
+    if colors.len() == 1 {
+        return if u < 0.5 { colors[0] } else { [0, 0, 0] };
+    }
+    colors[(u * colors.len() as f32) as usize % colors.len()]
+}
+
+/// Fills with a colour, drains, then the next colour.
+fn fill(colors: &[[u8; 3]], t: f32, p: f32) -> [u8; 3] {
+    let pos = t * colors.len() as f32;
+    let local = pos.fract();
+    let color = colors[pos as usize % colors.len()];
+    let lit = if local < 0.5 {
+        p < local * 2.0
+    } else {
+        p >= (local - 0.5) * 2.0
+    };
+    if lit {
+        color
+    } else {
+        [0, 0, 0]
+    }
+}
+
+/// Rings spreading out from the middle; each ring takes the next colour.
+fn ripple(colors: &[[u8; 3]], t: f32, x: f32) -> [u8; 3] {
+    let distance = (x - 0.5).abs() * 2.0;
+    let rings = t * 2.0;
+    let radius = rings.fract() * 1.3;
+    dim(
+        colors[rings as usize % colors.len()],
+        bump(distance - radius, 0.25),
+    )
+}
+
+/// A dim base colour with stars twinkling over it.
+fn starry_night(colors: &[[u8; 3]], t: f32, led: usize) -> [u8; 3] {
+    let base = dim(colors[0], 0.25);
+    let star = if colors.len() > 1 {
+        &colors[1..]
+    } else {
+        &[[255, 255, 255]]
+    };
+    let sparkle = twinkle(star, t, led);
+    [0, 1, 2].map(|i| base[i].max(sparkle[i]))
+}
+
+/// Slowly drifting bands of colour.
+fn aurora(colors: &[[u8; 3]], t: f32, p: f32) -> [u8; 3] {
+    let drift = 0.18 * (2.0 * PI * (t + p)).sin() + 0.08 * (2.0 * PI * (2.0 * t - p)).sin();
+    let level = 0.55 + 0.45 * (2.0 * PI * (t + 2.0 * p)).sin().abs();
+    dim(gradient(colors, p * 0.5 + drift + t), level)
+}
+
+/// Two halves flashing twice each, in turn.
+fn police(colors: &[[u8; 3]], t: f32, p: f32) -> [u8; 3] {
+    let side = (t * 2.0) as usize % 2;
+    let on = (t * 8.0).fract() < 0.4;
+    let in_half = if side == 0 { p < 0.5 } else { p >= 0.5 };
+    if on && in_half {
+        colors[side % colors.len()]
+    } else {
+        [0, 0, 0]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,7 +377,7 @@ mod tests {
         }
     }
 
-    const ALL: [EffectKind; 8] = [
+    const ALL: [EffectKind; 18] = [
         EffectKind::Static,
         EffectKind::Breathing,
         EffectKind::ColorCycle,
@@ -227,6 +386,16 @@ mod tests {
         EffectKind::Wave,
         EffectKind::Meteor,
         EffectKind::Twinkle,
+        EffectKind::Strobe,
+        EffectKind::Heartbeat,
+        EffectKind::Fire,
+        EffectKind::Scanner,
+        EffectKind::Runway,
+        EffectKind::Fill,
+        EffectKind::Ripple,
+        EffectKind::StarryNight,
+        EffectKind::Aurora,
+        EffectKind::Police,
     ];
 
     #[test]

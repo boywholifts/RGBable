@@ -954,10 +954,15 @@ fn prepare_lighting(
                 let frames = effect.loop_frames(&ctl.zones, interval);
                 match wireless.prepare_rgb_upload(mac, &frames, interval as u16) {
                     Ok(upload) => break upload,
-                    Err(e)
-                        if interval < WIRELESS_SLOWEST_FRAME_MS
-                            && format!("{e:#}").contains("exceeds") =>
-                    {
+                    Err(e) if format!("{e:#}").contains("exceeds") => {
+                        if interval >= WIRELESS_SLOWEST_FRAME_MS {
+                            warn!(
+                                "{}: effect too large for the device, showing a still frame",
+                                ctl.id
+                            );
+                            let still = effect.frame(&ctl.zones, 0.0);
+                            break wireless.prepare_rgb_upload(mac, &[still], 5000)?;
+                        }
                         interval *= 2;
                     }
                     Err(e) => return Err(e),

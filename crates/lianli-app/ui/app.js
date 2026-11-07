@@ -367,6 +367,16 @@ const KINDS = [
   { id: "wave", label: "Wave", colors: 4, reverse: true },
   { id: "meteor", label: "Meteor", colors: 4, reverse: true },
   { id: "twinkle", label: "Twinkle", colors: 4 },
+  { id: "strobe", label: "Strobe", colors: 4 },
+  { id: "heartbeat", label: "Heartbeat", colors: 4 },
+  { id: "fire", label: "Fire", colors: 0 },
+  { id: "scanner", label: "Scanner", colors: 4 },
+  { id: "runway", label: "Runway", colors: 4, reverse: true },
+  { id: "fill", label: "Fill", colors: 4, reverse: true },
+  { id: "ripple", label: "Ripple", colors: 4 },
+  { id: "starry_night", label: "Starry night", colors: 2, hint: "The first colour is the sky, the second the stars.", defaults: ["#2a0aa0", "#ffffff"] },
+  { id: "aurora", label: "Aurora", colors: 4, reverse: true, defaults: ["#00ffa0", "#8000ff", "#00a0ff"] },
+  { id: "police", label: "Police", colors: 2, defaults: ["#ff0000", "#0040ff"] },
 ];
 const kindInfo = (id) => KINDS.find((k) => k.id === id) || KINDS[0];
 const kindLabelOf = (effect) => (effect ? kindInfo(effect.kind).label : "Static");
@@ -375,7 +385,11 @@ const fx = { kind: "static", colors: ["#8000ff"], active: 0, targetKey: "" };
 
 function renderKinds() {
   $("#fx-kinds").replaceChildren(...KINDS.map((k) =>
-    el("button", { class: "chip" + (k.id === fx.kind ? " on" : ""), onclick: () => { fx.kind = k.id; renderEditor(); } }, k.label)
+    el("button", { class: "chip" + (k.id === fx.kind ? " on" : ""), onclick: () => {
+      fx.kind = k.id;
+      if (k.defaults) fx.colors = k.defaults.slice();
+      renderEditor();
+    } }, k.label)
   ));
 }
 
@@ -407,9 +421,10 @@ function renderEditor() {
   }));
   const target = $("#fx-target").value;
   $("#fx-openrgb-row").hidden = target !== "all";
-  $("#fx-note").textContent = target === "all"
+  const hint = info.hint ? info.hint + " " : "";
+  $("#fx-note").textContent = hint + (target === "all"
     ? "Devices with their Sync switch off are left alone."
-    : fx.kind === "static" ? "" : "Lian Li fans and Strimers play effects by themselves; RGBable keeps the OLED ring and OpenRGB devices animated while it runs.";
+    : fx.kind === "static" ? "" : "Lian Li fans and Strimers play effects by themselves; RGBable keeps the OLED ring and OpenRGB devices animated while it runs.");
 }
 
 function currentEffect() {

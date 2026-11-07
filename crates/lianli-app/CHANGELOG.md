@@ -14,6 +14,7 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 - RGBable can run OpenRGB for you in the background as administrator (Settings > OpenRGB), install the PawnIO driver RAM lighting needs, and turn off OpenRGB's own start-at-login.
 - LED count for addressable motherboard headers (e.g. case ARGB strips), remembered and re-applied.
 - A hint on the Lighting page when OpenRGB finds no RAM.
+- 10 more effects: strobe, heartbeat, fire, scanner, runway, fill, ripple, starry night, aurora and police.
 
 ### Fixed
 
