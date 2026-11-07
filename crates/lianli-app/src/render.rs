@@ -221,8 +221,27 @@ fn generic_frames(
             timing: RgbPlaybackTiming::from_millis(5000),
         };
     };
-    let count = (period / interval_ms.max(1)).max(2) as usize;
     let layout = logical_layout(zones, profile);
+    let animated: Vec<&Effect> = inner
+        .iter()
+        .chain(outer.iter())
+        .filter(|e| e.is_animated())
+        .collect();
+    let steps = animated[0].steps(&layout.zones);
+    let stepped = steps.filter(|_| {
+        animated
+            .iter()
+            .all(|e| e.steps(&layout.zones) == steps && e.period_ms() == period)
+    });
+    let (count, interval_ms) = match stepped {
+        Some(steps) => {
+            let step_ms = (period as f32 / steps as f32).max(1.0);
+            let skip = (interval_ms as f32 / step_ms).round().max(1.0) as usize;
+            let count = (steps / skip).max(2);
+            (count, (period as f32 / count as f32).round() as u32)
+        }
+        None => ((period / interval_ms.max(1)).max(2) as usize, interval_ms),
+    };
     let frames = (0..count)
         .map(|n| {
             let t = n as f32 / count as f32;
@@ -624,6 +643,46 @@ mod tests {
             40,
         );
         assert!(frames.unwrap().frames.len() > 1);
+    }
+
+    #[test]
+    fn drizzle_on_sl_flex_fits_with_one_frame_per_led_step() {
+        for colors in [1, 3, 6] {
+            let drizzle = Lighting::whole(Effect {
+                kind: EffectKind::Drizzle,
+                colors: vec![
+                    [255, 0, 0],
+                    [0, 255, 0],
+                    [0, 0, 255],
+                    [255, 255, 0],
+                    [0, 255, 255],
+                    [255, 0, 255],
+                ][..colors]
+                    .to_vec(),
+                ..Effect::default()
+            });
+            let frames = wireless_frames(
+                &drizzle,
+                &[[0; 3]; 156],
+                &[52, 52, 52],
+                Some(sl_v4(3)),
+                6 * 1024,
+                640,
+                40,
+            )
+            .unwrap();
+            println!(
+                "{colors}: {} frames, {:?}, {} bytes",
+                frames.frames.len(),
+                frames.timing,
+                frames.compressed_len().unwrap()
+            );
+            assert_eq!(
+                frames.frames.len(),
+                colors * 2 * SL_V4_POSITIONS,
+                "{colors} colours"
+            );
+        }
     }
 
     #[test]

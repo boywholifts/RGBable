@@ -237,6 +237,18 @@ impl Effect {
         }
     }
 
+    /// Effects that move one LED at a time look smooth only when each frame is one step;
+    /// in-between frames blur the drops and make the loop too big for wireless devices.
+    pub fn steps(&self, zones: &[usize]) -> Option<usize> {
+        match self.generic().kind {
+            EffectKind::Drizzle => {
+                let longest = zones.iter().copied().max().unwrap_or(1).max(1);
+                Some(self.colors().len() * 2 * longest)
+            }
+            _ => None,
+        }
+    }
+
     /// Length of one loop in milliseconds.
     pub fn period_ms(&self) -> u32 {
         if self.kind == EffectKind::Lianli {
