@@ -198,6 +198,47 @@ $("#autostart").addEventListener("change", (e) =>
 );
 $("#orgb-connect").addEventListener("click", reconnect);
 
+// ---------------------------------------------------------------- updates
+
+let dismissedUpdate = null;
+
+function renderUpdate(u) {
+  $("#app-version").textContent = u.current;
+  const a = u.available;
+  let status = "Up to date";
+  if (u.installing) status = "Downloading update…";
+  else if (u.checking) status = "Checking…";
+  else if (u.error) status = "Couldn't check: " + u.error;
+  else if (a) status = "Version " + a.version + " is available";
+  $("#update-status").textContent = status;
+  $("#update-banner").hidden = !a || a.version === dismissedUpdate;
+  if (a) {
+    $("#update-version").textContent = a.version;
+    $("#update-notes").textContent = a.notes.trim() || "See the release page for what's new.";
+  }
+  $("#update-install").disabled = u.installing;
+  $("#update-install").textContent = u.installing ? "Downloading…" : "Update now";
+}
+
+$("#update-check").addEventListener("click", async () => renderUpdate(await call("check_update")));
+$("#update-channel").addEventListener("change", async (e) =>
+  renderUpdate(await call("set_update_channel", { channel: e.target.value }))
+);
+$("#update-later").addEventListener("click", () => {
+  dismissedUpdate = last && last.update.available ? last.update.available.version : null;
+  $("#update-banner").hidden = true;
+});
+$("#update-install").addEventListener("click", async () => {
+  $("#update-install").disabled = true;
+  $("#update-install").textContent = "Downloading…";
+  try {
+    await call("install_update", {}, "Installing the update, RGBable will reopen");
+  } catch (e) {
+    $("#update-install").disabled = false;
+    $("#update-install").textContent = "Update now";
+  }
+});
+
 // ---------------------------------------------------------------- refresh loop
 
 async function refresh() {
@@ -225,9 +266,11 @@ async function refresh() {
   renderOpenRgb(o.openrgb);
   renderOled(o.oled, initial);
   renderMonitor(o);
+  renderUpdate(o.update);
   if (initial) {
     $("#autostart").checked = o.autostart;
     $("#data-dir").textContent = o.data_dir;
+    $("#update-channel").value = o.update_channel;
   }
 }
 

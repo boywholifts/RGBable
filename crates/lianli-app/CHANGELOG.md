@@ -1,0 +1,21 @@
+# RGBable changelog
+
+Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-dev.N`) are untested pre-releases for the Dev update channel.
+
+## [Unreleased]
+
+## [0.2.0] - 2026-11-07
+
+### Added
+
+- In-app updates from GitHub Releases, with Stable and Dev channels in Settings.
+- Windows installer (NSIS) and automatic builds on GitHub.
+- The app version is shown in Settings > About.
+
+## [0.1.0] - 2026-11-06
+
+### Added
+
+- First Windows build: Lian Li wireless fans and Strimers, HydroShift OLED ring and screen (videos, GIFs and images), pump, coolant and fan readings.
+- RAM, GPU, motherboard and other lighting through OpenRGB running in the background.
+- Sync everything colour, device renaming, tray icon and start with Windows.

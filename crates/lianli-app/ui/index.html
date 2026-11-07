@@ -27,6 +27,16 @@
   </aside>
 
   <main>
+    <div class="card update-banner" id="update-banner" hidden>
+      <div class="update-text">
+        <div class="card-title">RGBable <span id="update-version"></span> is available</div>
+        <pre class="update-notes muted small" id="update-notes"></pre>
+      </div>
+      <div class="row">
+        <button class="btn primary" id="update-install">Update now</button>
+        <button class="btn" id="update-later">Later</button>
+      </div>
+    </div>
     <!-- Lighting -->
     <section class="page active" id="page-lighting">
       <header class="page-head">
@@ -133,8 +143,22 @@
         <p class="muted small">Only one program can talk to the Lian Li devices. Turn off L-Connect's "start with Windows" and exit it; RGBable waits until it has closed.</p>
       </div>
       <div class="card">
+        <div class="card-title">Updates</div>
+        <p class="muted small">RGBable checks GitHub for new versions when it starts and every few hours. Dev builds are untested and come out with every change.</p>
+        <div class="row">
+          <label class="small">Channel
+            <select id="update-channel">
+              <option value="stable">Stable</option>
+              <option value="dev">Dev</option>
+            </select>
+          </label>
+          <button class="btn" id="update-check">Check now</button>
+          <span class="muted small" id="update-status"></span>
+        </div>
+      </div>
+      <div class="card">
         <div class="card-title">About</div>
-        <p class="muted small">RGBable is an unofficial, open-source app built on the lian-li-linux drivers. Not affiliated with Lian Li.<br />Data folder: <span id="data-dir"></span></p>
+        <p class="muted small">RGBable <span id="app-version"></span>. An unofficial, open-source app built on the lian-li-linux drivers. Not affiliated with Lian Li.<br />Data folder: <span id="data-dir"></span></p>
       </div>
     </section>
   </main>

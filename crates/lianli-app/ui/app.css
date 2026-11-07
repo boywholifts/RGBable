@@ -160,3 +160,8 @@ select { background: var(--bg); color: var(--text); border: 1px solid var(--line
 
 ::-webkit-scrollbar { width: 10px; }
 ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 10px; }
+
+.update-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; max-width: 1100px; border-color: var(--accent); }
+.update-banner[hidden] { display: none; }
+.update-text { min-width: 0; }
+.update-notes { white-space: pre-wrap; max-height: 96px; overflow: auto; margin: 0; font-family: inherit; }

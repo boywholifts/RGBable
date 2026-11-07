@@ -31,6 +31,8 @@ pub struct Config {
     /// OpenRGB SDK server to read RAM / GPU / motherboard lighting from.
     #[serde(default)]
     pub openrgb_port: Option<u16>,
+    #[serde(default)]
+    pub update_channel: crate::updater::Channel,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -373,6 +375,11 @@ impl Engine {
         let entry = config.devices.entry(id.to_string()).or_default();
         entry.name = (!name.is_empty()).then(|| name.to_string());
         drop(config);
+        self.save_config();
+    }
+
+    pub fn set_update_channel(&self, channel: crate::updater::Channel) {
+        self.config.lock().update_channel = channel;
         self.save_config();
     }
 

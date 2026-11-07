@@ -4,12 +4,14 @@
 
 mod engine;
 mod openrgb;
+mod updater;
 
 use engine::{DeviceView, Engine, OledView, Telemetry};
 use openrgb::{OpenRgb, OrgbView};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
+use updater::{Channel, UpdateView, Updater};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, State};
@@ -18,6 +20,7 @@ use tracing::{error, info};
 struct AppState {
     engine: Arc<Engine>,
     openrgb: Arc<OpenRgb>,
+    updater: Arc<Updater>,
 }
 
 #[derive(Serialize)]
@@ -30,6 +33,8 @@ struct Overview {
     openrgb: OrgbView,
     autostart: bool,
     data_dir: String,
+    update: UpdateView,
+    update_channel: Channel,
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -47,6 +52,8 @@ fn overview(state: State<'_, AppState>) -> Overview {
         openrgb: state.openrgb.view(),
         autostart: autostart_enabled(),
         data_dir: data_dir().to_string_lossy().into_owned(),
+        update: state.updater.view(),
+        update_channel: state.engine.config().update_channel,
     }
 }
 
@@ -117,6 +124,36 @@ fn stop_oled(state: State<'_, AppState>) {
 #[tauri::command]
 fn set_autostart(enabled: bool) -> Result<(), String> {
     set_autostart_impl(enabled).map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+async fn check_update(state: State<'_, AppState>) -> Result<UpdateView, String> {
+    let updater = state.updater.clone();
+    let channel = state.engine.config().update_channel;
+    tauri::async_runtime::spawn_blocking(move || {
+        updater.check(channel);
+        updater.view()
+    })
+    .await
+    .map_err(err)
+}
+
+#[tauri::command]
+async fn set_update_channel(state: State<'_, AppState>, channel: Channel) -> Result<UpdateView, String> {
+    state.engine.set_update_channel(channel);
+    check_update(state).await
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let updater = state.updater.clone();
+    let setup = tauri::async_runtime::spawn_blocking(move || updater.download())
+        .await
+        .map_err(err)?
+        .map_err(|e| format!("{e:#}"))?;
+    updater::launch_installer(&setup).map_err(|e| format!("{e:#}"))?;
+    app.exit(0);
+    Ok(())
 }
 
 // ------------------------------------------------------------------ paths, autostart
@@ -266,10 +303,23 @@ fn main() {
         });
     }
 
+    let updater = Arc::new(Updater::default());
+    if cfg!(not(debug_assertions)) {
+        let updater = updater.clone();
+        let engine = engine.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_secs(15));
+            loop {
+                updater.check(engine.config().update_channel);
+                std::thread::sleep(updater::CHECK_INTERVAL);
+            }
+        });
+    }
+
     let minimized = std::env::args().any(|a| a == "--minimized");
     let result = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .manage(AppState { engine, openrgb })
+        .manage(AppState { engine, openrgb, updater })
         .invoke_handler(tauri::generate_handler![
             overview,
             set_color,
@@ -280,7 +330,10 @@ fn main() {
             pick_media,
             set_oled,
             stop_oled,
-            set_autostart
+            set_autostart,
+            check_update,
+            set_update_channel,
+            install_update
         ])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Open RGBable", true, None::<&str>)?;
