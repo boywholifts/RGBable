@@ -1,37 +1,68 @@
+#[cfg(feature = "media")]
 pub mod asset_access;
+#[cfg(feature = "media")]
 pub mod common;
+#[cfg(feature = "media")]
 pub mod custom;
+#[cfg(feature = "media")]
 mod fonts;
+#[cfg(feature = "media")]
 pub mod image;
+#[cfg(feature = "media")]
 pub mod pixel_cleaner;
+#[cfg(feature = "media")]
 pub mod preparation;
+#[cfg(feature = "media")]
 mod resource_budget;
+#[cfg(feature = "media")]
 mod text_raster;
+#[cfg(feature = "media")]
 mod text_validation;
+#[cfg(feature = "media")]
 mod text_work;
+#[cfg(feature = "media")]
 pub use resource_budget::Retained;
 pub mod rgb;
+#[cfg(feature = "media")]
 pub mod sensor;
+#[cfg(feature = "media")]
 pub mod startup_image;
+#[cfg(feature = "media")]
 mod temporary_media;
+#[cfg(feature = "media")]
 pub use temporary_media::TemporaryMedia;
+#[cfg(feature = "media")]
 pub mod validation;
+#[cfg(feature = "media")]
 pub mod video;
 
+#[cfg(feature = "media")]
 pub use common::MediaError;
+#[cfg(feature = "media")]
 pub use custom::CustomAsset;
+#[cfg(feature = "media")]
 use lianli_shared::sensors::SensorInfo;
+#[cfg(feature = "media")]
 pub use preparation::PreparationControl;
+#[cfg(feature = "media")]
 pub use sensor::SensorAsset;
 
+#[cfg(feature = "media")]
 use lianli_shared::config::{ConfigKey, LcdConfig};
+#[cfg(feature = "media")]
 use lianli_shared::media::MediaType;
+#[cfg(feature = "media")]
 use lianli_shared::screen::ScreenInfo;
+#[cfg(feature = "media")]
 use lianli_shared::template::LcdTemplate;
+#[cfg(feature = "media")]
 use std::path::PathBuf;
+#[cfg(feature = "media")]
 use std::sync::Arc;
+#[cfg(feature = "media")]
 use std::time::Duration;
 
+#[cfg(feature = "media")]
 #[derive(Debug, Clone)]
 pub struct MediaAsset {
     pub config_key: ConfigKey,
@@ -40,6 +71,7 @@ pub struct MediaAsset {
     pub hardware_video: bool,
 }
 
+#[cfg(feature = "media")]
 #[derive(Debug, Clone)]
 pub enum MediaAssetKind {
     Static {
@@ -64,14 +96,17 @@ pub enum MediaAssetKind {
     },
 }
 
+#[cfg(feature = "media")]
 impl PartialEq for MediaAsset {
     fn eq(&self, other: &Self) -> bool {
         self.config_key == other.config_key
     }
 }
 
+#[cfg(feature = "media")]
 impl Eq for MediaAsset {}
 
+#[cfg(feature = "media")]
 pub fn prepare_media_asset(
     cfg: &LcdConfig,
     default_fps: f32,
