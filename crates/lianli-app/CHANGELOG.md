@@ -12,6 +12,11 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 - Per-device switch to leave a device out of Sync everything.
 - Lighting effects: breathing, colour cycle, rainbow, rainbow wave, wave, meteor and twinkle, with colours, speed, brightness and direction, for everything, a group or one device. Wireless fans and Strimers play effects by themselves; the OLED ring and OpenRGB devices are animated by RGBable.
 
+### Fixed
+
+- Apply to all sometimes left wireless fans or Strimers unchanged: uploads are now confirmed and resent, and devices are taken out of motherboard-sync mode first.
+- One OpenRGB error no longer stops Apply to all for the remaining OpenRGB devices.
+
 ## [0.2.0] - 2026-11-07
 
 ### Added

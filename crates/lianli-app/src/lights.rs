@@ -208,12 +208,28 @@ pub fn set_all(
     if !include_openrgb {
         return Ok(());
     }
+    let mut failed = Vec::new();
     for light in lights(engine, openrgb)
         .into_iter()
         .filter(|l| l.source == "openrgb" && l.sync)
     {
-        set_effect(engine, openrgb, &light.id, effect.clone())
-            .with_context(|| light.name.clone())?;
+        let first = set_effect(engine, openrgb, &light.id, effect.clone());
+        let result = first.or_else(|e| {
+            tracing::warn!(
+                "{}: {e:#}; reconnecting to OpenRGB and retrying",
+                light.name
+            );
+            openrgb.connect(engine.config().openrgb_port)?;
+            sync_openrgb_effects(engine, openrgb);
+            set_effect(engine, openrgb, &light.id, effect.clone())
+        });
+        if let Err(e) = result {
+            tracing::warn!("{}: {e:#}", light.name);
+            failed.push(light.name);
+        }
+    }
+    if !failed.is_empty() {
+        bail!("couldn't set {} through OpenRGB", failed.join(", "));
     }
     Ok(())
 }

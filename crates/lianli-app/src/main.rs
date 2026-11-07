@@ -77,8 +77,13 @@ fn set_color(state: State<'_, AppState>, id: String, color: [u8; 3]) -> Result<(
 }
 
 #[tauri::command]
-fn set_all(state: State<'_, AppState>, effect: Effect, include_openrgb: bool) -> Result<(), String> {
-    lights::set_all(&state.engine, &state.openrgb, effect, include_openrgb).map_err(chain)
+async fn set_all(state: State<'_, AppState>, effect: Effect, include_openrgb: bool) -> Result<(), String> {
+    let engine = state.engine.clone();
+    let openrgb = state.openrgb.clone();
+    tauri::async_runtime::spawn_blocking(move || lights::set_all(&engine, &openrgb, effect, include_openrgb))
+        .await
+        .map_err(err)?
+        .map_err(chain)
 }
 
 #[tauri::command]

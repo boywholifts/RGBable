@@ -2,12 +2,12 @@
 //! pump telemetry and the OLED video loop. Runs on background threads; the UI
 //! talks to it through `Engine`'s methods.
 
+use crate::effects::Effect;
 use anyhow::{bail, Context, Result};
 use lianli_devices::winusb::hs2_oled_led::Hs2OledLedController;
 use lianli_devices::wireless::{DiscoveredDevice, WirelessController, WirelessRgbUpload};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use crate::effects::Effect;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -99,7 +99,10 @@ pub fn load_config(path: &Path) -> Config {
     match serde_json::from_str(text.trim_start_matches('\u{feff}')) {
         Ok(config) => config,
         Err(e) => {
-            error!("{} is not valid, starting with defaults: {e}", path.display());
+            error!(
+                "{} is not valid, starting with defaults: {e}",
+                path.display()
+            );
             Config::default()
         }
     }
@@ -305,7 +308,11 @@ impl Engine {
         }
     }
 
-    fn build_controllers(&self, devices: &[DiscoveredDevice], ring: Option<Arc<Hs2OledLedController>>) {
+    fn build_controllers(
+        &self,
+        devices: &[DiscoveredDevice],
+        ring: Option<Arc<Hs2OledLedController>>,
+    ) {
         let mut list = Vec::new();
         let mut sorted: Vec<&DiscoveredDevice> = devices.iter().collect();
         sorted.sort_by_key(|d| d.mac);
@@ -317,7 +324,11 @@ impl Engine {
             }
             list.push(Arc::new(Controller {
                 id: device.mac_str(),
-                kind: if device.fan_count > 0 { "fans" } else { "strimer" },
+                kind: if device.fan_count > 0 {
+                    "fans"
+                } else {
+                    "strimer"
+                },
                 model: device.fan_type.display_name().to_string(),
                 fans: device.fan_count,
                 leds,
@@ -365,7 +376,12 @@ impl Engine {
                 let default_name = match ctl.kind {
                     "ring" => "OLED ring".to_string(),
                     "strimer" => format!("Strimer {}", &ctl.id[..5]),
-                    _ => format!("{} fan{} {}", ctl.fans, if ctl.fans == 1 { "" } else { "s" }, &ctl.id[..5]),
+                    _ => format!(
+                        "{} fan{} {}",
+                        ctl.fans,
+                        if ctl.fans == 1 { "" } else { "s" },
+                        &ctl.id[..5]
+                    ),
                 };
                 let color = if ctl.id == RING_ID {
                     config.oled_ring
@@ -378,7 +394,9 @@ impl Engine {
                     .unwrap_or_default();
                 DeviceView {
                     id: ctl.id.clone(),
-                    name: saved.and_then(|s| s.name.clone()).unwrap_or_else(|| default_name.clone()),
+                    name: saved
+                        .and_then(|s| s.name.clone())
+                        .unwrap_or_else(|| default_name.clone()),
                     default_name,
                     kind: ctl.kind,
                     model: ctl.model.clone(),
@@ -475,14 +493,20 @@ impl Engine {
             return Ok(());
         }
         let engine = self.clone();
-        thread::Builder::new().name("identify".into()).spawn(move || {
-            for step in 0..IDENTIFY_STEPS {
-                ctl.set_all(if step % 2 == 0 { [255, 255, 255] } else { [0, 0, 0] });
-                thread::sleep(IDENTIFY_STEP);
-            }
-            ctl.identifying.store(false, Ordering::Release);
-            ctl.set_all(engine.saved_color(&ctl.id).unwrap_or([0, 0, 0]));
-        })?;
+        thread::Builder::new()
+            .name("identify".into())
+            .spawn(move || {
+                for step in 0..IDENTIFY_STEPS {
+                    ctl.set_all(if step % 2 == 0 {
+                        [255, 255, 255]
+                    } else {
+                        [0, 0, 0]
+                    });
+                    thread::sleep(IDENTIFY_STEP);
+                }
+                ctl.identifying.store(false, Ordering::Release);
+                ctl.set_all(engine.saved_color(&ctl.id).unwrap_or([0, 0, 0]));
+            })?;
         Ok(())
     }
 
@@ -535,7 +559,9 @@ impl Engine {
     }
 
     fn restart_oled(self: &Arc<Self>) {
-        let Some(oled) = self.config().oled else { return };
+        let Some(oled) = self.config().oled else {
+            return;
+        };
         let stop = Arc::new(AtomicBool::new(false));
         let previous = std::mem::replace(&mut *self.oled_stop.lock(), stop.clone());
         previous.store(true, Ordering::Release);
@@ -548,94 +574,184 @@ impl Engine {
 
     // -------------------------------------------------------------- workers
 
-    /// Wireless frames are full RF uploads: at most one per device every 200 ms,
-    /// 150 ms between uploads on the shared radio. The ring is USB and immediate.
+    /// Wireless lighting goes out one device at a time and is confirmed through the
+    /// receiver's status polls (about every 500 ms). An upload the device didn't take is
+    /// resent, and a device in motherboard-sync mode is switched out of it first.
+    /// The ring is USB: static colours are sent once, effects are streamed.
     fn rgb_writer(self: &Arc<Self>, wireless: &WirelessController) {
-        const MIN_INTERVAL: Duration = Duration::from_millis(200);
         const SPACING: Duration = Duration::from_millis(150);
-        // A device only counts as having lost its colour after several checks
-        // in a row, so stale discovery data cannot trigger a re-send storm.
+        const CONFIRM_WAIT: Duration = Duration::from_millis(1500);
+        const RESENDS: u8 = 4;
+        const MB_SYNC_WAIT: Duration = Duration::from_millis(250);
+        const ERROR_BACKOFF: Duration = Duration::from_secs(1);
         const VERIFY_EVERY: Duration = Duration::from_secs(20);
-        const STRIKES: u8 = 3;
-        let mut sent: BTreeMap<[u8; 6], (Instant, WirelessRgbUpload, u8)> = BTreeMap::new();
+        // A confirmed device only counts as having lost its lighting after several
+        // checks in a row, so stale discovery data cannot trigger a re-send storm.
+        const STRIKES: u8 = 2;
+
+        enum State {
+            Pending {
+                upload: WirelessRgbUpload,
+                sent: Instant,
+                sends: u8,
+            },
+            Settled {
+                upload: WirelessRgbUpload,
+                strikes: u8,
+            },
+        }
+        let mut states: BTreeMap<[u8; 6], State> = BTreeMap::new();
+        let mut not_before: BTreeMap<[u8; 6], Instant> = BTreeMap::new();
         let mut last_verify = Instant::now();
         let started = Instant::now();
         let mut last_ring_frame = Instant::now();
 
         loop {
             let controllers = self.controllers.read().clone();
-            let mut uploaded = false;
+            let mut sent_any = false;
             for ctl in &controllers {
-                if let Target::Ring(ring) = &ctl.target {
-                    let effect = ctl.effect.lock().clone();
-                    if let Some(effect) = effect.filter(|_| !ctl.identifying.load(Ordering::Acquire)) {
-                        if last_ring_frame.elapsed() >= RING_FRAME {
-                            last_ring_frame = Instant::now();
-                            let elapsed = started.elapsed().as_millis() as u64;
-                            let period = u64::from(effect.period_ms().max(1));
-                            let phase = (elapsed % period) as f32 / period as f32;
-                            if let Err(e) = ring.send_rgb_frame(&effect.frame(&ctl.zones, phase)) {
-                                warn!("OLED ring: {e:#}");
-                            }
+                let mac = match &ctl.target {
+                    Target::Ring(ring) => {
+                        self.drive_ring(ctl, ring, started, &mut last_ring_frame);
+                        continue;
+                    }
+                    Target::Wireless { mac } => *mac,
+                };
+                if not_before.get(&mac).is_some_and(|t| Instant::now() < *t) {
+                    continue;
+                }
+
+                let resend = match states.get(&mac) {
+                    Some(State::Pending {
+                        upload,
+                        sent,
+                        sends,
+                    }) if !ctl.dirty.load(Ordering::Acquire) => {
+                        if wireless.rgb_upload_applied(&mac, upload.effect_index()) {
+                            let upload = upload.clone();
+                            states.insert(mac, State::Settled { upload, strikes: 0 });
+                            None
+                        } else if sent.elapsed() < CONFIRM_WAIT {
+                            None
+                        } else if *sends > RESENDS {
+                            warn!("{}: lighting not confirmed after {sends} sends, checking again later", ctl.id);
+                            let upload = upload.clone();
+                            states.insert(mac, State::Settled { upload, strikes: 0 });
+                            None
+                        } else {
+                            Some((upload.clone(), *sends))
                         }
-                        ctl.dirty.store(false, Ordering::Release);
+                    }
+                    _ => None,
+                };
+                let dirty = ctl.dirty.load(Ordering::Acquire);
+                if resend.is_none() && !dirty {
+                    continue;
+                }
+
+                match wireless.mb_rgb_ready_for_upload(&mac) {
+                    Ok(true) => {}
+                    Ok(false) => {
+                        not_before.insert(mac, Instant::now() + MB_SYNC_WAIT);
+                        continue;
+                    }
+                    Err(e) => {
+                        warn!("{}: preparing lighting upload: {e:#}", ctl.id);
+                        not_before.insert(mac, Instant::now() + ERROR_BACKOFF);
                         continue;
                     }
                 }
-                if !ctl.dirty.load(Ordering::Acquire) {
-                    continue;
-                }
-                match &ctl.target {
-                    Target::Ring(ring) => {
+
+                let (upload, sends) = match resend {
+                    Some((upload, sends)) if !dirty => (Ok(upload), sends),
+                    _ => {
                         ctl.dirty.store(false, Ordering::Release);
-                        let colors = ctl.colors.lock().clone();
-                        if let Err(e) = ring.send_rgb_frame(&colors) {
-                            warn!("OLED ring: {e:#}");
-                        }
+                        (prepare_lighting(wireless, ctl, &mac), 0)
                     }
-                    Target::Wireless { mac } => {
-                        if sent.get(mac).is_some_and(|(at, _, _)| at.elapsed() < MIN_INTERVAL) {
-                            continue;
-                        }
-                        ctl.dirty.store(false, Ordering::Release);
-                        match upload_lighting(wireless, ctl, mac) {
-                            Ok(upload) => {
-                                sent.insert(*mac, (Instant::now(), upload, 0));
-                            }
-                            Err(e) => {
-                                warn!("{}: lighting upload failed: {e:#}", ctl.id);
-                                ctl.dirty.store(true, Ordering::Release);
-                            }
-                        }
-                        uploaded = true;
-                        thread::sleep(SPACING);
+                };
+                let result = upload.and_then(|u| wireless.send_rgb_upload(&mac, &u, 4).map(|()| u));
+                sent_any = true;
+                match result {
+                    Ok(upload) => {
+                        states.insert(
+                            mac,
+                            State::Pending {
+                                upload,
+                                sent: Instant::now(),
+                                sends: sends + 1,
+                            },
+                        );
+                    }
+                    Err(e) => {
+                        warn!("{}: lighting upload failed: {e:#}", ctl.id);
+                        ctl.dirty.store(true, Ordering::Release);
+                        not_before.insert(mac, Instant::now() + ERROR_BACKOFF);
                     }
                 }
+                thread::sleep(SPACING);
             }
 
             if last_verify.elapsed() >= VERIFY_EVERY {
                 last_verify = Instant::now();
                 for ctl in &controllers {
-                    let Target::Wireless { mac } = &ctl.target else { continue };
-                    let Some((at, upload, strikes)) = sent.get_mut(mac) else { continue };
-                    if at.elapsed() < Duration::from_secs(10) {
+                    let Target::Wireless { mac } = &ctl.target else {
                         continue;
-                    }
+                    };
+                    let Some(State::Settled { upload, strikes }) = states.get_mut(mac) else {
+                        continue;
+                    };
                     if wireless.rgb_upload_applied(mac, upload.effect_index()) {
                         *strikes = 0;
-                    } else {
-                        *strikes += 1;
-                        if *strikes >= STRIKES {
-                            info!("{} stopped showing its colour, re-sending", ctl.id);
-                            *strikes = 0;
-                            ctl.dirty.store(true, Ordering::Release);
-                        }
+                        continue;
+                    }
+                    *strikes += 1;
+                    if *strikes >= STRIKES {
+                        info!("{} stopped showing its lighting, re-sending", ctl.id);
+                        let upload = upload.clone();
+                        states.insert(
+                            *mac,
+                            State::Pending {
+                                upload,
+                                sent: Instant::now()
+                                    .checked_sub(CONFIRM_WAIT)
+                                    .unwrap_or_else(Instant::now),
+                                sends: 1,
+                            },
+                        );
                     }
                 }
             }
 
-            if !uploaded {
+            if !sent_any {
                 thread::sleep(Duration::from_millis(30));
+            }
+        }
+    }
+
+    fn drive_ring(
+        &self,
+        ctl: &Controller,
+        ring: &Hs2OledLedController,
+        started: Instant,
+        last_frame: &mut Instant,
+    ) {
+        let effect = ctl.effect.lock().clone();
+        if let Some(effect) = effect.filter(|_| !ctl.identifying.load(Ordering::Acquire)) {
+            ctl.dirty.store(false, Ordering::Release);
+            if last_frame.elapsed() < RING_FRAME {
+                return;
+            }
+            *last_frame = Instant::now();
+            let elapsed = started.elapsed().as_millis() as u64;
+            let period = u64::from(effect.period_ms().max(1));
+            let phase = (elapsed % period) as f32 / period as f32;
+            if let Err(e) = ring.send_rgb_frame(&effect.frame(&ctl.zones, phase)) {
+                warn!("OLED ring: {e:#}");
+            }
+        } else if ctl.dirty.swap(false, Ordering::AcqRel) {
+            let colors = ctl.colors.lock().clone();
+            if let Err(e) = ring.send_rgb_frame(&colors) {
+                warn!("OLED ring: {e:#}");
             }
         }
     }
@@ -646,7 +762,10 @@ impl Engine {
             if let Some(ring) = ring {
                 let pump = ring.read_pump_rpm_raw().ok();
                 let coolant = ring.read_temps().ok().map(|(c, _)| c);
-                *self.telemetry.write() = Telemetry { pump_rpm: pump, coolant_c: coolant };
+                *self.telemetry.write() = Telemetry {
+                    pump_rpm: pump,
+                    coolant_c: coolant,
+                };
             }
             thread::sleep(Duration::from_secs(2));
         }
@@ -739,7 +858,11 @@ fn find_wired(vid: u16, pid: u16) -> Result<lianli_devices::detect::DetectedDevi
 /// Fit to the 2288x1080 landscape screen, rotate 90 into the panel's
 /// 1080x2288 frame and encode the way the Linux daemon does. Cached in %TEMP%.
 fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
-    anyhow::ensure!(oled.file.is_file(), "{} does not exist", oled.file.display());
+    anyhow::ensure!(
+        oled.file.is_file(),
+        "{} does not exist",
+        oled.file.display()
+    );
     let fps = oled.fps.clamp(1, 60);
     let source_modified = std::fs::metadata(&oled.file)?.modified()?;
     let cache_dir = std::env::temp_dir().join("rgbable");
@@ -772,8 +895,22 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
         .arg("-i")
         .arg(&oled.file)
         .args(["-vf", &format!("{fit},transpose=1,fps={fps}")])
-        .args(["-r", &fps.to_string(), "-c:v", "libx264", "-preset", "ultrafast"])
-        .args(["-x264opts", "bframes=0", "-threads", "4", "-pix_fmt", "yuv420p"])
+        .args([
+            "-r",
+            &fps.to_string(),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+        ])
+        .args([
+            "-x264opts",
+            "bframes=0",
+            "-threads",
+            "4",
+            "-pix_fmt",
+            "yuv420p",
+        ])
         .args(["-color_range", "pc", "-an", "-f", "h264"])
         .arg(&output);
     no_window(&mut ffmpeg);
@@ -782,14 +919,21 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
         .output()
         .context("running ffmpeg (install it with: winget install Gyan.FFmpeg)")?;
     if !result.status.success() {
-        bail!("ffmpeg failed: {}", String::from_utf8_lossy(&result.stderr).trim());
+        bail!(
+            "ffmpeg failed: {}",
+            String::from_utf8_lossy(&result.stderr).trim()
+        );
     }
     Ok(output)
 }
 
 /// Static colours go up as one frame; effects as a loop the device plays by itself. A loop
 /// that doesn't fit the device's animation memory is retried with fewer, longer frames.
-fn upload_lighting(wireless: &WirelessController, ctl: &Controller, mac: &[u8; 6]) -> Result<WirelessRgbUpload> {
+fn prepare_lighting(
+    wireless: &WirelessController,
+    ctl: &Controller,
+    mac: &[u8; 6],
+) -> Result<WirelessRgbUpload> {
     let effect = ctl
         .effect
         .lock()
@@ -803,7 +947,10 @@ fn upload_lighting(wireless: &WirelessController, ctl: &Controller, mac: &[u8; 6
                 let frames = effect.loop_frames(&ctl.zones, interval);
                 match wireless.prepare_rgb_upload(mac, &frames, interval as u16) {
                     Ok(upload) => break upload,
-                    Err(e) if interval < WIRELESS_SLOWEST_FRAME_MS && format!("{e:#}").contains("exceeds") => {
+                    Err(e)
+                        if interval < WIRELESS_SLOWEST_FRAME_MS
+                            && format!("{e:#}").contains("exceeds") =>
+                    {
                         interval *= 2;
                     }
                     Err(e) => return Err(e),
@@ -811,6 +958,5 @@ fn upload_lighting(wireless: &WirelessController, ctl: &Controller, mac: &[u8; 6
             }
         }
     };
-    wireless.send_rgb_upload(mac, &upload, 4)?;
     Ok(upload)
 }
