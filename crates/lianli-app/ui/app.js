@@ -561,6 +561,9 @@ function renderUpdate(u) {
   }
   $("#update-install").disabled = u.installing;
   $("#update-install").textContent = u.installing ? "Downloading…" : "Update now";
+  $("#update-install2").hidden = !a;
+  $("#update-install2").disabled = u.installing;
+  $("#update-install2").textContent = u.installing ? "Downloading…" : "Update to " + (a ? a.version : "");
 }
 
 $("#update-check").addEventListener("click", async () => renderUpdate(await call("check_update")));
@@ -571,16 +574,19 @@ $("#update-later").addEventListener("click", () => {
   dismissedUpdate = last && last.update.available ? last.update.available.version : null;
   $("#update-banner").hidden = true;
 });
-$("#update-install").addEventListener("click", async () => {
-  $("#update-install").disabled = true;
-  $("#update-install").textContent = "Downloading…";
+async function installUpdate() {
+  for (const b of [$("#update-install"), $("#update-install2")]) {
+    b.disabled = true;
+    b.textContent = "Downloading…";
+  }
   try {
     await call("install_update", {}, "Installing the update, RGBable will reopen");
   } catch (e) {
-    $("#update-install").disabled = false;
-    $("#update-install").textContent = "Update now";
+    refresh();
   }
-});
+}
+$("#update-install").addEventListener("click", installUpdate);
+$("#update-install2").addEventListener("click", installUpdate);
 
 // ---------------------------------------------------------------- refresh loop
 

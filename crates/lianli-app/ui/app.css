@@ -222,3 +222,4 @@ input[type=range] { accent-color: var(--accent); width: 120px; }
 .tag.fx { background: rgba(128,0,255,.18); color: #d9b8ff; }
 .btn.mini.push { margin-left: auto; }
 .group-head .btn.mini.push + .btn.mini { margin-left: 0; }
+.btn[hidden] { display: none; }
