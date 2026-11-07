@@ -8,6 +8,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use tracing::warn;
 
 pub const OPENRGB_PREFIX: &str = "orgb:";
 
@@ -23,6 +24,17 @@ pub struct LightView {
     pub effect: Option<Effect>,
     pub sync: bool,
     pub group: Option<String>,
+    /// OpenRGB zones whose LED count the user can set (addressable headers).
+    pub zones: Vec<ZoneView>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ZoneView {
+    pub index: usize,
+    pub name: String,
+    pub leds: usize,
+    pub min: usize,
+    pub max: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,6 +89,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 detail: d.model,
                 color: d.color,
                 effect: d.effect,
+                zones: Vec::new(),
                 sync: saved.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &d.id),
                 default_name: d.default_name,
@@ -98,6 +111,19 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
             detail: format!("{} LEDs via OpenRGB", device.leds),
             color: saved.and_then(|s| s.color).or(device.first_color),
             effect: saved.and_then(|s| s.effect.clone()),
+            zones: device
+                .zones
+                .iter()
+                .enumerate()
+                .filter(|(_, z)| z.resizable())
+                .map(|(index, z)| ZoneView {
+                    index,
+                    name: z.name.clone(),
+                    leds: z.leds,
+                    min: z.min,
+                    max: z.max,
+                })
+                .collect(),
             sync: saved.is_none_or(|s| s.in_sync()),
             group: group_of(&config, &id),
             id,
@@ -133,7 +159,7 @@ fn openrgb_zones(device: &OrgbDevice) -> Vec<usize> {
     let zones: Vec<usize> = device
         .zones
         .iter()
-        .map(|(_, leds)| *leds)
+        .map(|zone| zone.leds)
         .filter(|&n| n > 0)
         .collect();
     if zones.iter().sum::<usize>() == device.leds {
@@ -141,6 +167,63 @@ fn openrgb_zones(device: &OrgbDevice) -> Vec<usize> {
     } else {
         vec![device.leds]
     }
+}
+
+/// Sets an addressable zone's LED count and remembers it, so it is re-applied if OpenRGB
+/// ever loses the size.
+pub fn resize_zone(
+    engine: &Engine,
+    openrgb: &OpenRgb,
+    id: &str,
+    zone: usize,
+    size: usize,
+) -> Result<()> {
+    let device = openrgb_device(openrgb, id).context("that OpenRGB device is not connected")?;
+    let info = device.zones.get(zone).context("no such zone")?;
+    anyhow::ensure!(
+        info.resizable() && (info.min..=info.max).contains(&size),
+        "{} takes {} to {} LEDs",
+        info.name,
+        info.min,
+        info.max
+    );
+    openrgb.resize_zone(device.index, zone, size)?;
+    engine.update_config(|c| {
+        c.devices
+            .entry(id.to_string())
+            .or_default()
+            .zone_sizes
+            .insert(zone, size);
+    });
+    sync_openrgb_effects(engine, openrgb);
+    let saved = engine.config().devices.get(id).cloned().unwrap_or_default();
+    if saved.effect.is_none() {
+        if let Some(color) = saved.color {
+            openrgb.set_color(device.index, color)?;
+        }
+    }
+    Ok(())
+}
+
+/// After (re)connecting: restore zone sizes the user set, then the saved effects.
+pub fn after_openrgb_connect(engine: &Engine, openrgb: &OpenRgb) {
+    let config = engine.config();
+    for device in openrgb.view().devices {
+        let Some(saved) = config.devices.get(&openrgb_id(&device)) else {
+            continue;
+        };
+        for (&zone, &size) in &saved.zone_sizes {
+            let current = device.zones.get(zone);
+            if current
+                .is_some_and(|z| z.resizable() && z.leds != size && (z.min..=z.max).contains(&size))
+            {
+                if let Err(e) = openrgb.resize_zone(device.index, zone, size) {
+                    warn!("{}: restoring zone size: {e:#}", device.name);
+                }
+            }
+        }
+    }
+    sync_openrgb_effects(engine, openrgb);
 }
 
 /// Hands OpenRGB the animated effects saved in the config for the devices it has now.
@@ -220,7 +303,7 @@ pub fn set_all(
                 light.name
             );
             openrgb.connect(engine.config().openrgb_port)?;
-            sync_openrgb_effects(engine, openrgb);
+            after_openrgb_connect(engine, openrgb);
             set_effect(engine, openrgb, &light.id, effect.clone())
         });
         if let Err(e) = result {

@@ -71,6 +71,7 @@
 
       <div class="lights-head">
         <span class="muted small" id="orgb-status"></span>
+        <span class="hint small" id="ram-hint" hidden>No RAM found. To control RGB RAM, open <a href="#" id="ram-hint-link">Settings → OpenRGB</a>.</span>
         <button class="btn" id="group-new">New group</button>
       </div>
       <div id="lights"><div class="empty">Waiting for devices…</div></div>
@@ -141,7 +142,24 @@
       </div>
       <div class="card">
         <div class="card-title">OpenRGB</div>
-        <p class="muted small">RGBable uses OpenRGB in the background for RAM, GPU and motherboard lighting. In OpenRGB, open <b>SDK Server</b> and click <b>Start Server</b> (port 6742), and enable starting OpenRGB minimised at login.</p>
+        <p class="muted small">RGBable uses OpenRGB for RAM, GPU, motherboard and other lighting. Let RGBable run it in the background as administrator so it can reach your RAM; you won't need to open OpenRGB yourself.</p>
+        <div class="setup-list">
+          <div class="setup-item">
+            <span class="dot" id="os-exe-dot"></span>
+            <div class="grow"><div>OpenRGB</div><div class="muted small" id="os-exe">Checking…</div></div>
+            <button class="btn mini" id="os-locate">Locate…</button>
+          </div>
+          <div class="setup-item">
+            <span class="dot" id="os-pawnio-dot"></span>
+            <div class="grow"><div>PawnIO driver</div><div class="muted small" id="os-pawnio">Needed for RAM and some motherboard lighting.</div></div>
+            <button class="btn mini" id="os-pawnio-install" hidden>Install</button>
+          </div>
+          <label class="toggle-row setup-item">
+            <span class="dot" id="os-managed-dot"></span>
+            <div class="grow"><div>Run OpenRGB for me</div><div class="muted small" id="os-managed-note">Starts OpenRGB hidden, as administrator, whenever RGBable starts. Asks for administrator once to set up.</div></div>
+            <input type="checkbox" class="toggle" id="os-managed" />
+          </label>
+        </div>
         <div class="row">
           <button class="btn" id="orgb-connect">Reconnect to OpenRGB</button>
           <span class="muted small" id="orgb-status2"></span>

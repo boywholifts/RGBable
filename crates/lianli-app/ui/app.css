@@ -223,3 +223,20 @@ input[type=range] { accent-color: var(--accent); width: 120px; }
 .btn.mini.push { margin-left: auto; }
 .group-head .btn.mini.push + .btn.mini { margin-left: 0; }
 .btn[hidden] { display: none; }
+
+/* OpenRGB setup and zones */
+.setup-list { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.setup-item { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.setup-item:first-child { border-top: 0; }
+.dot { width: 9px; height: 9px; border-radius: 50%; background: var(--line); flex: none; }
+.dot.ok { background: var(--ok); }
+.dot.bad { background: var(--danger); }
+.dot.warn { background: #ffb020; }
+.hint { color: #ffb020; margin-right: auto; margin-left: 12px; }
+.hint[hidden] { display: none; }
+.hint a { color: inherit; }
+.zones { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.zones[hidden] { display: none; }
+.zone-row { display: flex; align-items: center; gap: 8px; }
+.zone-name { flex: 1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+input.text.num { width: 64px; padding: 4px 6px; font-size: 13px; }

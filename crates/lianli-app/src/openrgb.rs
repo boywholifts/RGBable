@@ -26,6 +26,7 @@ const PKT_REQUEST_PROTOCOL_VERSION: u32 = 40;
 const PKT_SET_CLIENT_NAME: u32 = 50;
 const PKT_UPDATE_LEDS: u32 = 1050;
 const PKT_SET_CUSTOM_MODE: u32 = 1100;
+const PKT_RESIZE_ZONE: u32 = 1000;
 pub const DEFAULT_PORTS: [u16; 2] = [6742, 6743];
 
 #[derive(Debug, Clone, Serialize)]
@@ -38,10 +39,24 @@ pub struct OrgbDevice {
     pub serial: String,
     pub location: String,
     pub leds: usize,
-    pub zones: Vec<(String, usize)>,
+    pub zones: Vec<Zone>,
     pub modes: Vec<String>,
     pub active_mode: String,
     pub first_color: Option<[u8; 3]>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Zone {
+    pub name: String,
+    pub leds: usize,
+    pub min: usize,
+    pub max: usize,
+}
+
+impl Zone {
+    pub fn resizable(&self) -> bool {
+        self.min != self.max
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -211,6 +226,27 @@ impl OpenRgb {
             *self.status.write() = "Disconnected from OpenRGB".into();
         }
         result
+    }
+
+    /// Sets how many LEDs an addressable header zone drives; OpenRGB saves it in its own settings.
+    pub fn resize_zone(&self, index: u32, zone: usize, size: usize) -> Result<()> {
+        {
+            let mut guard = self.stream.lock();
+            let Some((stream, version)) = guard.as_mut() else {
+                bail!("OpenRGB is not connected")
+            };
+            let version = *version;
+            let mut payload = Vec::with_capacity(8);
+            payload.extend_from_slice(&(zone as i32).to_le_bytes());
+            payload.extend_from_slice(&(size as i32).to_le_bytes());
+            send(stream, index, PKT_RESIZE_ZONE, &payload)?;
+            expect_ack(stream, version, PKT_RESIZE_ZONE)?;
+        }
+        let device = self.refresh(index)?;
+        if let Some(slot) = self.devices.write().iter_mut().find(|d| d.index == index) {
+            *slot = device;
+        }
+        Ok(())
     }
 
     /// Replaces the animated effects; returns once no frame of a removed effect can still be sent.
@@ -410,7 +446,9 @@ fn parse_controller(index: u32, data: &[u8], version: u32) -> Result<OrgbDevice>
     let mut zones = Vec::new();
     for _ in 0..zone_count {
         let zone_name = r.string()?;
-        r.skip(4 * 3)?; // type, leds min, leds max
+        r.skip(4)?; // type
+        let min = r.u32()? as usize;
+        let max = r.u32()? as usize;
         let leds = r.u32()? as usize;
         let matrix = r.u16()? as usize;
         r.skip(matrix)?;
@@ -437,7 +475,12 @@ fn parse_controller(index: u32, data: &[u8], version: u32) -> Result<OrgbDevice>
             }
             r.string()?; // zone display name
         }
-        zones.push((zone_name, leds));
+        zones.push(Zone {
+            name: zone_name,
+            leds,
+            min,
+            max,
+        });
     }
     let leds = r.u16()? as usize;
     for _ in 0..leds {

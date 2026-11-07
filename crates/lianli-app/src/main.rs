@@ -6,8 +6,10 @@ mod effects;
 mod engine;
 mod lights;
 mod openrgb;
+mod openrgb_host;
 mod updater;
 
+use anyhow::Context;
 use effects::Effect;
 use engine::{DeviceView, Engine, OledView, Telemetry};
 use lights::{GroupView, LightView, SetupEntry};
@@ -42,6 +44,7 @@ struct Overview {
     setup_done: bool,
     update: UpdateView,
     update_channel: Channel,
+    manage_openrgb: bool,
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -64,6 +67,7 @@ fn overview(state: State<'_, AppState>) -> Overview {
         setup_done: state.engine.config().setup_done,
         update: state.updater.view(),
         update_channel: state.engine.config().update_channel,
+        manage_openrgb: state.engine.config().manage_openrgb,
     }
 }
 
@@ -194,7 +198,7 @@ async fn openrgb_connect(state: State<'_, AppState>) -> Result<(), String> {
     let preferred = engine.config().openrgb_port;
     tauri::async_runtime::spawn_blocking(move || {
         openrgb.connect(preferred)?;
-        lights::sync_openrgb_effects(&engine, &openrgb);
+        lights::after_openrgb_connect(&engine, &openrgb);
         anyhow::Ok(())
     })
     .await
@@ -240,6 +244,101 @@ fn stop_oled(state: State<'_, AppState>) {
 #[tauri::command]
 fn set_autostart(enabled: bool) -> Result<(), String> {
     set_autostart_impl(enabled).map_err(|e| format!("{e:#}"))
+}
+
+#[derive(Serialize)]
+struct OpenRgbSetup {
+    managed: bool,
+    #[serde(flatten)]
+    host: openrgb_host::HostStatus,
+}
+
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(work)
+        .await
+        .map_err(err)?
+        .map_err(chain)
+}
+
+#[tauri::command]
+async fn openrgb_setup_status(state: State<'_, AppState>) -> Result<OpenRgbSetup, String> {
+    let config = state.engine.config();
+    let host = blocking(move || Ok(openrgb_host::status(config.openrgb_exe.as_deref()))).await?;
+    Ok(OpenRgbSetup {
+        managed: state.engine.config().manage_openrgb,
+        host,
+    })
+}
+
+#[tauri::command]
+async fn install_pawnio(state: State<'_, AppState>) -> Result<(), String> {
+    let engine = state.engine.clone();
+    let openrgb = state.openrgb.clone();
+    blocking(move || {
+        openrgb_host::install_pawnio()?;
+        if engine.config().manage_openrgb {
+            openrgb_host::restart()?;
+            connect_openrgb_in_background(engine, openrgb, false);
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn set_openrgb_managed(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
+    let engine = state.engine.clone();
+    let openrgb = state.openrgb.clone();
+    blocking(move || {
+        if enabled {
+            let exe = openrgb_host::find_exe(engine.config().openrgb_exe.as_deref())
+                .context("OpenRGB isn't installed; install it from openrgb.org, or use Locate if it's somewhere else")?;
+            openrgb_host::create_task(&exe)?;
+            engine.update_config(|c| c.manage_openrgb = true);
+            openrgb_host::disable_openrgb_autostart();
+            openrgb_host::start()?;
+            connect_openrgb_in_background(engine, openrgb, false);
+        } else {
+            openrgb_host::remove_task()?;
+            engine.update_config(|c| c.manage_openrgb = false);
+        }
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+async fn locate_openrgb(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let picked = app
+        .dialog()
+        .file()
+        .set_title("Find OpenRGB.exe")
+        .add_filter("OpenRGB", &["exe"])
+        .blocking_pick_file()
+        .and_then(|path| path.into_path().ok());
+    if let Some(path) = &picked {
+        let path = path.clone();
+        state.engine.update_config(|c| c.openrgb_exe = Some(path));
+    }
+    Ok(picked.map(|p| p.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+async fn resize_zone(
+    state: State<'_, AppState>,
+    id: String,
+    zone: usize,
+    size: usize,
+) -> Result<(), String> {
+    let engine = state.engine.clone();
+    let openrgb = state.openrgb.clone();
+    blocking(move || lights::resize_zone(&engine, &openrgb, &id, zone, size)).await
 }
 
 #[tauri::command]
@@ -417,21 +516,7 @@ fn main() {
 
     let openrgb = Arc::new(OpenRgb::new());
     openrgb.start_animator();
-    {
-        let openrgb = openrgb.clone();
-        let engine = engine.clone();
-        let preferred = engine.config().openrgb_port;
-        std::thread::spawn(move || {
-            // OpenRGB may still be starting at logon; try for about a minute.
-            for _ in 0..12 {
-                if openrgb.connect(preferred).is_ok() {
-                    lights::sync_openrgb_effects(&engine, &openrgb);
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_secs(5));
-            }
-        });
-    }
+    connect_openrgb_in_background(engine.clone(), openrgb.clone(), true);
 
     let updater = Arc::new(Updater::default());
     if cfg!(not(debug_assertions)) {
@@ -476,7 +561,12 @@ fn main() {
             set_autostart,
             check_update,
             set_update_channel,
-            install_update
+            install_update,
+            openrgb_setup_status,
+            install_pawnio,
+            set_openrgb_managed,
+            locate_openrgb,
+            resize_zone
         ])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Open RGBable", true, None::<&str>)?;
@@ -527,4 +617,25 @@ fn main() {
     if let Err(e) = result {
         error!("RGBable stopped: {e}");
     }
+}
+
+/// Starts the managed OpenRGB if the user set that up, then connects to OpenRGB, which may
+/// still be starting (at logon, or just launched), so this keeps trying for about a minute.
+fn connect_openrgb_in_background(engine: Arc<Engine>, openrgb: Arc<OpenRgb>, start_host: bool) {
+    std::thread::spawn(move || {
+        let config = engine.config();
+        if start_host && config.manage_openrgb {
+            openrgb_host::disable_openrgb_autostart();
+            if let Err(e) = openrgb_host::start() {
+                error!("starting OpenRGB: {e:#}");
+            }
+        }
+        for _ in 0..12 {
+            if openrgb.connect(config.openrgb_port).is_ok() {
+                lights::after_openrgb_connect(&engine, &openrgb);
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+    });
 }

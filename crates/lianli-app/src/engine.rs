@@ -43,6 +43,10 @@ pub struct Config {
     pub groups: Vec<GroupConfig>,
     #[serde(default)]
     pub setup_done: bool,
+    #[serde(default)]
+    pub manage_openrgb: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub openrgb_exe: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -55,6 +59,9 @@ pub struct DeviceConfig {
     pub sync: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub effect: Option<Effect>,
+    /// OpenRGB addressable zone sizes the user set, by zone index.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub zone_sizes: BTreeMap<usize, usize>,
 }
 
 impl DeviceConfig {

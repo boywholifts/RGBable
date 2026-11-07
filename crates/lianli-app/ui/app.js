@@ -100,6 +100,24 @@ function lightCard(l, groups) {
       ]),
     ]),
   ]);
+  if (l.zones.length) {
+    const panel = el("div", { class: "zones", hidden: "" }, [
+      el("div", { class: "muted small" }, "How many LEDs are on each header. Raise it until the whole strip lights up."),
+      ...l.zones.map((z) => {
+        const input = el("input", { type: "number", class: "text num", min: z.min, max: z.max, value: z.leds });
+        const save = el("button", { class: "btn mini" }, "Set");
+        save.addEventListener("click", () =>
+          call("resize_zone", { id: l.id, zone: z.index, size: Number(input.value) }, `${z.name}: ${input.value} LEDs`).then(rerender)
+        );
+        input.addEventListener("keydown", (e) => e.key === "Enter" && save.click());
+        return el("div", { class: "zone-row" }, [el("span", { class: "zone-name" }, z.name), input, save]);
+      }),
+    ]);
+    const toggle = el("button", { class: "btn mini" }, "LED count");
+    toggle.addEventListener("click", () => (panel.hidden = !panel.hidden));
+    card.querySelector(".actions").append(toggle);
+    card.querySelector(".info").append(panel);
+  }
   card.addEventListener("dragstart", (e) => {
     e.dataTransfer.setData("text/plain", l.id);
     card.classList.add("dragging");
@@ -155,13 +173,15 @@ function renderLights(o) {
     ...(orgb.connected ? [] : [el("a", { href: "#", onclick: (e) => { e.preventDefault(); reconnect(); } }, "Connect")])
   );
   $("#orgb-status2").textContent = orgb.status;
+  const noRam = orgb.connected && !o.lights.some((l) => l.source === "openrgb" && l.kind === "ram");
+  $("#ram-hint").hidden = !noRam || o.manage_openrgb;
   renderTargets(o);
   const names = $("#group-names");
   names.replaceChildren(...o.groups.map((g) => el("option", { value: g.name })));
 
   const key = JSON.stringify([o.lights, o.groups, orgb.connected]);
   const focused = document.activeElement;
-  const busy = focused && focused.closest("#lights") && focused.matches("input.name, input[type=color]");
+  const busy = focused && focused.closest("#lights") && focused.matches("input.name, input[type=color], input[type=number]");
   if (key === structureKey || busy || document.querySelector("#lights .dragging")) return;
   structureKey = key;
 
@@ -541,6 +561,72 @@ $("#autostart").addEventListener("change", (e) =>
 );
 $("#orgb-connect").addEventListener("click", reconnect);
 
+// ---------------------------------------------------------------- OpenRGB setup
+
+function dot(id, state) {
+  $(id).className = "dot " + state;
+}
+
+async function loadOpenRgbSetup() {
+  let s;
+  try {
+    s = await invoke("openrgb_setup_status");
+  } catch (e) {
+    return;
+  }
+  if (!s) return;
+  dot("#os-exe-dot", s.exe ? "ok" : "bad");
+  $("#os-exe").textContent = s.exe || "Not found. Install it from openrgb.org, or use Locate if it's somewhere else.";
+  dot("#os-pawnio-dot", s.pawnio ? "ok" : "bad");
+  $("#os-pawnio").textContent = s.pawnio ? "Installed" : "Not installed. Needed for RAM and some motherboard lighting.";
+  $("#os-pawnio-install").hidden = s.pawnio;
+  $("#os-managed").checked = s.managed;
+  dot("#os-managed-dot", s.managed && s.task ? (s.task_running ? "ok" : "warn") : "");
+  $("#os-managed-note").textContent = s.managed
+    ? s.task
+      ? s.task_running ? "OpenRGB is running as administrator." : "Set up. OpenRGB starts with RGBable."
+      : "The background task is missing; turn this off and on again."
+    : "Starts OpenRGB hidden, as administrator, whenever RGBable starts. Asks for administrator once to set up.";
+}
+
+async function busyButton(button, text, work) {
+  const old = button.textContent;
+  button.disabled = true;
+  button.textContent = text;
+  try {
+    await work();
+  } finally {
+    button.disabled = false;
+    button.textContent = old;
+    loadOpenRgbSetup();
+  }
+}
+
+$("#os-locate").addEventListener("click", async () => {
+  const path = await call("locate_openrgb");
+  if (path) toast("Using " + path);
+  loadOpenRgbSetup();
+});
+$("#os-pawnio-install").addEventListener("click", (e) =>
+  busyButton(e.target, "Installing…", () => call("install_pawnio", {}, "PawnIO installed"))
+);
+$("#os-managed").addEventListener("change", async (e) => {
+  const enabled = e.target.checked;
+  e.target.disabled = true;
+  $("#os-managed-note").textContent = enabled ? "Setting up; approve the administrator prompt…" : "Removing the background task…";
+  try {
+    await call("set_openrgb_managed", { enabled }, enabled ? "OpenRGB now runs in the background" : "RGBable no longer runs OpenRGB");
+  } catch (err) {
+    e.target.checked = !enabled;
+  } finally {
+    e.target.disabled = false;
+    loadOpenRgbSetup();
+    setTimeout(rerender, 8000);
+  }
+});
+document.querySelector('.nav[data-page="settings"]').addEventListener("click", loadOpenRgbSetup);
+loadOpenRgbSetup();
+
 // ---------------------------------------------------------------- updates
 
 let dismissedUpdate = null;
@@ -620,3 +706,7 @@ async function refresh() {
 
 refresh();
 setInterval(refresh, 1500);
+$("#ram-hint-link").addEventListener("click", (e) => {
+  e.preventDefault();
+  document.querySelector('.nav[data-page="settings"]').click();
+});
