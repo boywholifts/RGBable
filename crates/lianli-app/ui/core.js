@@ -2,7 +2,9 @@
 const invoke = (cmd, args) => window.__TAURI__.core.invoke(cmd, args);
 const $ = (sel) => document.querySelector(sel);
 
-const PRESETS = ["#8000ff", "#ff2040", "#00e5ff", "#ffffff", "#ff8a00", "#00ff6a"];
+const DEFAULT_PRESETS = ["#8000ff", "#ff2040", "#00e5ff", "#ffffff", "#ff8a00", "#00ff6a"];
+let PRESETS = DEFAULT_PRESETS.slice();
+let editingPresets = false;
 let last = null;
 let structureKey = "";
 

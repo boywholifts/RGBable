@@ -19,11 +19,12 @@ const KINDS = [
   { id: "starry_night", label: "Starry night", colors: 2, hint: "The first colour is the sky, the second the stars.", defaults: ["#2a0aa0", "#ffffff"] },
   { id: "aurora", label: "Aurora", colors: 4, reverse: true, defaults: ["#00ffa0", "#8000ff", "#00a0ff"] },
   { id: "police", label: "Police", colors: 2, defaults: ["#ff0000", "#0040ff"] },
+  { id: "drizzle", label: "Drizzle", colors: 6, reverse: true, hint: "Lian Li's Drizzling. Strimers play their built-in version.", defaults: ["#00e5ff", "#8000ff", "#ff2040"] },
 ];
 
 const CATEGORIES = [
   { id: "basic", label: "Basic", kinds: ["static", "breathing", "color_cycle", "rainbow", "heartbeat", "strobe"] },
-  { id: "motion", label: "Motion", kinds: ["wave", "rainbow_wave", "meteor", "scanner", "runway", "fill", "ripple", "police"] },
+  { id: "motion", label: "Motion", kinds: ["wave", "rainbow_wave", "meteor", "drizzle", "scanner", "runway", "fill", "ripple", "police"] },
   { id: "ambient", label: "Ambient", kinds: ["twinkle", "starry_night", "fire", "aurora"] },
   { id: "lianli", label: "Lian Li" },
   { id: "mine", label: "Mine" },

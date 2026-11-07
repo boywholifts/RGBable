@@ -26,6 +26,7 @@ pub enum EffectKind {
     StarryNight,
     Aurora,
     Police,
+    Drizzle,
     /// Layers of other effects blended together (the effect builder).
     Custom,
     /// A Rhai script that colours each LED.
@@ -190,6 +191,7 @@ impl Effect {
             Some(RgbMode::Ripple) => EffectKind::Ripple,
             Some(RgbMode::ElectricCurrent) => EffectKind::Strobe,
             Some(RgbMode::Twinkle) => EffectKind::Twinkle,
+            Some(RgbMode::Drizzling) => EffectKind::Drizzle,
             _ => EffectKind::ColorCycle,
         };
         Effect {
@@ -266,6 +268,7 @@ impl Effect {
             EffectKind::StarryNight => 4000,
             EffectKind::Aurora => 8000,
             EffectKind::Police => 1600,
+            EffectKind::Drizzle => 2400 * self.colors().len() as u32,
             EffectKind::Lianli => 3000,
             EffectKind::Custom => 1000,
             EffectKind::Script => 4000,
@@ -329,6 +332,7 @@ impl Effect {
                     EffectKind::StarryNight => starry_night(colors, phase, led_index),
                     EffectKind::Aurora => aurora(colors, phase, p),
                     EffectKind::Police => police(colors, phase, p),
+                    EffectKind::Drizzle => drizzle(colors, phase, p, count, zone),
                     EffectKind::Lianli | EffectKind::Custom | EffectKind::Script => colors[0],
                 };
                 out.push(scale(color, self.brightness));
@@ -544,6 +548,30 @@ fn aurora(colors: &[[u8; 3]], t: f32, p: f32) -> [u8; 3] {
     dim(gradient(colors, p * 0.5 + drift + t), level)
 }
 
+const DRIZZLE_TAIL: [f32; 5] = [1.0, 0.5, 0.125, 0.03, 0.0];
+
+/// L-Connect's Drizzling: pairs of short drops run along each zone with a lane-length gap
+/// after them. Each pair takes the next colour, and zones start at different points.
+fn drizzle(colors: &[[u8; 3]], t: f32, p: f32, count: usize, zone: usize) -> [u8; 3] {
+    let length = count.max(1) as f32;
+    let cycle = length * 2.0;
+    let offset = (hash(zone) as usize % count.max(1)) as f32;
+    let travelled = t * colors.len() as f32 * cycle;
+    let along = p * length + offset + travelled;
+    let pattern = along.rem_euclid(cycle);
+    let second = (length / 2.0).ceil();
+    let tail = |d: f32| {
+        if !(0.0..4.0).contains(&d) {
+            return 0.0;
+        }
+        let i = d as usize;
+        DRIZZLE_TAIL[i] + (DRIZZLE_TAIL[i + 1] - DRIZZLE_TAIL[i]) * d.fract()
+    };
+    let level = tail(pattern).max(tail(pattern - second));
+    let drop = (along / cycle).floor() as i64 + zone as i64;
+    dim(colors[drop.rem_euclid(colors.len() as i64) as usize], level)
+}
+
 /// Two halves flashing twice each, in turn.
 fn police(colors: &[[u8; 3]], t: f32, p: f32) -> [u8; 3] {
     let side = (t * 2.0) as usize % 2;
@@ -571,7 +599,7 @@ mod tests {
         }
     }
 
-    const ALL: [EffectKind; 18] = [
+    const ALL: [EffectKind; 19] = [
         EffectKind::Static,
         EffectKind::Breathing,
         EffectKind::ColorCycle,
@@ -590,6 +618,7 @@ mod tests {
         EffectKind::StarryNight,
         EffectKind::Aurora,
         EffectKind::Police,
+        EffectKind::Drizzle,
     ];
 
     #[test]

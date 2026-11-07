@@ -8,6 +8,7 @@ mod lights;
 mod oled_library;
 mod openrgb;
 mod openrgb_host;
+mod palette;
 mod render;
 mod script;
 mod updater;
@@ -48,6 +49,8 @@ struct Overview {
     update: UpdateView,
     update_channel: Channel,
     manage_openrgb: bool,
+    color_presets: Vec<String>,
+    oled_match: Option<u8>,
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -71,6 +74,8 @@ fn overview(state: State<'_, AppState>) -> Overview {
         update: state.updater.view(),
         update_channel: state.engine.config().update_channel,
         manage_openrgb: state.engine.config().manage_openrgb,
+        color_presets: state.engine.config().color_presets,
+        oled_match: state.engine.config().oled_match,
     }
 }
 
@@ -234,13 +239,88 @@ fn set_oled(
     fit: String,
     fps: u32,
 ) -> Result<(), String> {
+    let new_file = file.is_some();
     if let Some(file) = &file {
         allow_preview(&app, std::path::Path::new(file));
     }
     state
         .engine
         .set_oled(file.map(PathBuf::from), fit, fps)
-        .map_err(err)
+        .map_err(err)?;
+    if new_file {
+        match_oled_in_background(&state.engine, &state.openrgb);
+    }
+    Ok(())
+}
+
+fn match_oled_in_background(engine: &Arc<Engine>, openrgb: &Arc<OpenRgb>) {
+    let Some(count) = engine.config().oled_match else {
+        return;
+    };
+    let (engine, openrgb) = (engine.clone(), openrgb.clone());
+    std::thread::spawn(move || {
+        if let Err(e) = lights::match_oled(&engine, &openrgb, count) {
+            tracing::warn!("matching the lighting to the OLED: {e:#}");
+        }
+    });
+}
+
+fn hex(c: [u8; 3]) -> String {
+    format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
+}
+
+/// Colours from `file`, or from what's on the OLED, without applying them.
+#[tauri::command]
+async fn oled_palette(
+    state: State<'_, AppState>,
+    file: Option<String>,
+    count: u8,
+) -> Result<Vec<String>, String> {
+    let file = match file {
+        Some(file) => PathBuf::from(file),
+        None => state
+            .engine
+            .config()
+            .oled
+            .map(|o| o.file)
+            .ok_or("Nothing is playing on the OLED")?,
+    };
+    tauri::async_runtime::spawn_blocking(move || palette::from_media(&file, usize::from(count)))
+        .await
+        .map_err(err)?
+        .map(|colors| colors.into_iter().map(hex).collect())
+        .map_err(chain)
+}
+
+#[tauri::command]
+async fn set_oled_match(state: State<'_, AppState>, count: Option<u8>) -> Result<(), String> {
+    let count = count.map(|c| c.clamp(1, 6));
+    state.engine.update_config(|c| c.oled_match = count);
+    let Some(count) = count else {
+        return Ok(());
+    };
+    if state.engine.config().oled.is_none() {
+        return Ok(());
+    }
+    let engine = state.engine.clone();
+    let openrgb = state.openrgb.clone();
+    tauri::async_runtime::spawn_blocking(move || lights::match_oled(&engine, &openrgb, count))
+        .await
+        .map_err(err)?
+        .map(|_| ())
+        .map_err(chain)
+}
+
+#[tauri::command]
+fn set_color_presets(state: State<'_, AppState>, presets: Vec<String>) {
+    let presets: Vec<String> = presets
+        .into_iter()
+        .filter(|p| {
+            p.len() == 7 && p.starts_with('#') && p[1..].chars().all(|c| c.is_ascii_hexdigit())
+        })
+        .take(12)
+        .collect();
+    state.engine.update_config(|c| c.color_presets = presets);
 }
 
 /// Lets the OLED page show the chosen file through the asset protocol; nothing else is readable.
@@ -328,6 +408,13 @@ fn set_oled_link(state: State<'_, AppState>, linked: bool) {
     state
         .engine
         .update_config(|c| c.oled_hide_oledable = !linked);
+}
+
+#[tauri::command]
+fn prepare_oled(app: AppHandle, file: String, fit: String, fps: u32) {
+    let file = PathBuf::from(file);
+    allow_preview(&app, &file);
+    engine::prepare_oled(engine::OledConfig { file, fit, fps });
 }
 
 #[tauri::command]
@@ -688,7 +775,12 @@ fn handle_args(app: &AppHandle, engine: &Arc<Engine>, args: &[String]) -> bool {
         .map_or_else(|| "cover".to_string(), |o| o.fit.clone());
     let fps = current.as_ref().map_or(30, |o| o.fps);
     match engine.set_oled(Some(file.clone()), fit, fps) {
-        Ok(()) => tracing::info!("playing {} on the OLED (from another app)", file.display()),
+        Ok(()) => {
+            tracing::info!("playing {} on the OLED (from another app)", file.display());
+            if let Some(state) = tauri::Manager::try_state::<AppState>(app) {
+                match_oled_in_background(&state.engine, &state.openrgb);
+            }
+        }
         Err(e) => tracing::warn!("--oled {}: {e:#}", file.display()),
     }
     true
@@ -831,6 +923,10 @@ fn main() {
             finish_setup,
             pick_media,
             set_oled,
+            prepare_oled,
+            oled_palette,
+            set_oled_match,
+            set_color_presets,
             stop_oled,
             set_autostart,
             check_update,

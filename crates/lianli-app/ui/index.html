@@ -97,7 +97,6 @@
           <div class="oled-name" id="oled-name">Nothing selected</div>
           <div class="row">
             <button class="btn primary" id="oled-show" hidden>Show on OLED</button>
-            <button class="btn" id="oled-pick">Choose file…</button>
           </div>
           <div class="row">
             <div class="seg" id="oled-fit">
@@ -111,7 +110,14 @@
             </label>
             <button class="btn mini" id="oled-apply">Apply</button>
           </div>
-          <p class="muted small">Shown landscape at 2288 × 1080. Fill crops the edges; Fit adds black bars. A new file is encoded with ffmpeg the first time, so it may take a moment to start.</p>
+          <div class="row oled-match">
+            <label class="check"><input type="checkbox" id="oled-match" /> Match the lighting to each video</label>
+            <select id="oled-match-count" title="How many colours to take from the video">
+              <option value="1">1 colour</option><option value="2">2 colours</option><option value="3">3 colours</option>
+              <option value="4" selected>4 colours</option><option value="5">5 colours</option><option value="6">6 colours</option>
+            </select>
+          </div>
+          <p class="muted small">Shown landscape at 2288 × 1080. Fill crops the edges; Fit adds black bars. Each video is prepared for the screen once (it starts while you preview it), then plays straight away.</p>
         </div>
       </div>
 
@@ -119,6 +125,7 @@
         <h2>Library</h2>
         <input class="text search" id="lib-search" placeholder="Search" />
         <span class="grow"></span>
+        <button class="btn mini" id="oled-pick">Open file…</button>
         <button class="btn mini" id="oled-folders-btn">Folders…</button>
       </div>
       <div class="oled-grid" id="oled-grid"><div class="empty">Loading…</div></div>

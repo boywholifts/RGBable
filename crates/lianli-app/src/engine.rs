@@ -12,7 +12,7 @@ use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -58,6 +58,12 @@ pub struct Config {
     pub custom_effects: Vec<Effect>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openrgb_exe: Option<PathBuf>,
+    /// The quick colours in the effect panel, as #rrggbb. Empty means the built-in set.
+    #[serde(default)]
+    pub color_presets: Vec<String>,
+    /// When set, synced lighting takes this many colours from each new OLED video.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oled_match: Option<u8>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -912,24 +918,52 @@ fn find_wired(vid: u16, pid: u16) -> Result<lianli_devices::detect::DetectedDevi
         .with_context(|| format!("{vid:04x}:{pid:04x} not found"))
 }
 
+static ENCODING: Mutex<()> = parking_lot::const_mutex(());
+static PREPARE_WANTED: AtomicU64 = AtomicU64::new(0);
+
+fn oled_cache_dir() -> PathBuf {
+    std::env::var_os("LOCALAPPDATA")
+        .map(|d| PathBuf::from(d).join("RGBable").join("oled-cache"))
+        .unwrap_or_else(|| std::env::temp_dir().join("rgbable"))
+}
+
+/// Encodes in the background so a later Play starts at once. Only the newest request
+/// is kept: older ones that haven't started yet are skipped.
+pub fn prepare_oled(oled: OledConfig) {
+    let ticket = PREPARE_WANTED.fetch_add(1, Ordering::AcqRel) + 1;
+    thread::spawn(move || {
+        if PREPARE_WANTED.load(Ordering::Acquire) != ticket {
+            return;
+        }
+        if let Err(e) = encode_for_oled(&oled) {
+            warn!("Preparing {} for the OLED: {e:#}", oled.file.display());
+        }
+    });
+}
+
 /// Fit to the 2288x1080 landscape screen, rotate 90 into the panel's
-/// 1080x2288 frame and encode the way the Linux daemon does. Cached in %TEMP%.
+/// 1080x2288 frame and encode the way the Linux daemon does. The panel takes raw
+/// H.264 without B-frames, so files from OLEDable are encoded too, but only once:
+/// the result is kept in %LOCALAPPDATA%\RGBable\oled-cache.
 fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
+    let _one_at_a_time = ENCODING.lock();
     anyhow::ensure!(
         oled.file.is_file(),
         "{} does not exist",
         oled.file.display()
     );
     let fps = oled.fps.clamp(1, 60);
-    let source_modified = std::fs::metadata(&oled.file)?.modified()?;
-    let cache_dir = std::env::temp_dir().join("rgbable");
+    let source = std::fs::metadata(&oled.file)?;
+    let source_modified = source.modified()?;
+    let cache_dir = oled_cache_dir();
     std::fs::create_dir_all(&cache_dir)?;
     let stem = oled
         .file
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "media".into());
-    let output = cache_dir.join(format!("{stem}-{}-{fps}.h264", oled.fit));
+    let output = cache_dir.join(format!("{stem}-{:x}-{}-{fps}.h264", source.len(), oled.fit));
+    let partial = output.with_extension("partial");
     if let Ok(meta) = std::fs::metadata(&output) {
         if meta.modified().is_ok_and(|m| m >= source_modified) && meta.len() > 0 {
             return Ok(output);
@@ -969,18 +1003,20 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
             "yuv420p",
         ])
         .args(["-color_range", "pc", "-an", "-f", "h264"])
-        .arg(&output);
+        .arg(&partial);
     no_window(&mut ffmpeg);
     info!("Encoding {} for the OLED", oled.file.display());
     let result = ffmpeg
         .output()
         .context("running ffmpeg (install it with: winget install Gyan.FFmpeg)")?;
     if !result.status.success() {
+        let _ = std::fs::remove_file(&partial);
         bail!(
             "ffmpeg failed: {}",
             String::from_utf8_lossy(&result.stderr).trim()
         );
     }
+    std::fs::rename(&partial, &output)?;
     Ok(output)
 }
 

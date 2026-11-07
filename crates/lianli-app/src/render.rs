@@ -333,6 +333,27 @@ fn paint(
 
 /// The loop to upload at `shrink` level: L-Connect effects come from the Lian Li renderer and
 /// are thinned out to fit; RGBable effects use longer frames until they fit `budget`.
+/// Devices with L-Connect's own Drizzling (the Strimers) play it instead of the RGBable copy.
+fn native_drizzle(lighting: &Lighting, profile: RgbRenderProfile) -> Lighting {
+    let has_it = lianli_media::rgb::parameters::for_scope(profile, RgbScope::All)
+        .iter()
+        .any(|p| p.mode == lianli_shared::rgb::RgbMode::Drizzling);
+    let swap = |e: &Option<Effect>| {
+        e.clone().map(|e| match e.kind {
+            EffectKind::Drizzle if has_it => Effect {
+                kind: EffectKind::Lianli,
+                mode: Some(lianli_shared::rgb::RgbMode::Drizzling),
+                ..e
+            },
+            _ => e,
+        })
+    };
+    Lighting {
+        inner: swap(&lighting.inner),
+        outer: swap(&lighting.outer),
+    }
+}
+
 pub fn wireless_frames(
     lighting: &Lighting,
     base: &[[u8; 3]],
@@ -342,7 +363,10 @@ pub fn wireless_frames(
     slowest_ms: u32,
     first_ms: u32,
 ) -> Result<Frames> {
-    if let Some(native) = profile.and_then(|p| lianli_frames(lighting, base, p)) {
+    let drizzle = profile.map(|p| native_drizzle(lighting, p));
+    if let Some(native) =
+        profile.and_then(|p| lianli_frames(drizzle.as_ref().unwrap_or(lighting), base, p))
+    {
         let mut step = 1;
         loop {
             let candidate = Frames {
@@ -568,6 +592,38 @@ mod tests {
             &generic_frames(&lighting, &vec![[0; 3]; 116], &[116], Some(profile), 40).frames[3];
         assert_eq!(frame[5], frame[29 + 5]);
         assert_eq!(frame[5], frame[87 + 5]);
+    }
+
+    #[test]
+    fn drizzle_uses_the_strimers_own_drizzling_and_a_copy_on_fans() {
+        let strimer = RgbRenderProfile {
+            family: RgbRenderFamily::Strimer,
+            fan_count: 0,
+            led_count: 116,
+            right_attach: false,
+        };
+        let drizzle = Lighting::whole(Effect {
+            kind: EffectKind::Drizzle,
+            colors: vec![[255, 0, 0], [0, 0, 255]],
+            ..Effect::default()
+        });
+        let native = native_drizzle(&drizzle, strimer);
+        assert_eq!(native.inner.as_ref().unwrap().kind, EffectKind::Lianli);
+        assert_eq!(
+            native.inner.unwrap().mode,
+            Some(lianli_shared::rgb::RgbMode::Drizzling)
+        );
+        assert_eq!(native_drizzle(&drizzle, sl_v4(3)), drizzle);
+        let frames = wireless_frames(
+            &drizzle,
+            &[[0; 3]; 116],
+            &[116],
+            Some(strimer),
+            6 * 1024,
+            640,
+            40,
+        );
+        assert!(frames.unwrap().frames.len() > 1);
     }
 
     #[test]

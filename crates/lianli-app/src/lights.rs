@@ -435,6 +435,37 @@ pub fn set_all(
     Ok(())
 }
 
+/// Recolours the synced lighting with `count` colours from what's on the OLED, keeping the
+/// effect itself. A single static colour becomes a wave when more than one colour is asked for.
+pub fn match_oled(engine: &Engine, openrgb: &OpenRgb, count: u8) -> Result<Vec<[u8; 3]>> {
+    let oled = engine
+        .config()
+        .oled
+        .context("nothing is playing on the OLED")?;
+    let colors = crate::palette::from_media(&oled.file, usize::from(count))?;
+    let current = lights(engine, openrgb)
+        .into_iter()
+        .find(|l| l.sync)
+        .and_then(|l| l.effect)
+        .unwrap_or_default();
+    let kind = match current.kind {
+        EffectKind::Static if colors.len() > 1 => EffectKind::Wave,
+        EffectKind::Custom | EffectKind::Script => EffectKind::Wave,
+        kind => kind,
+    };
+    let effect = Effect {
+        kind,
+        colors: colors.clone(),
+        layers: Vec::new(),
+        script: None,
+        recipe: None,
+        name: None,
+        ..current
+    };
+    set_all(engine, openrgb, effect, true)?;
+    Ok(colors)
+}
+
 pub fn set_group_effect(
     engine: &Engine,
     openrgb: &OpenRgb,

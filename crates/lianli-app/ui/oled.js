@@ -39,6 +39,11 @@ function renderOledStage() {
   });
 }
 
+function prepare() {
+  const file = oled.selected || oled.current;
+  if (file) invoke("prepare_oled", { file, fit: oled.fit, fps: oled.fps }).catch(() => {});
+}
+
 async function playOnOled(file) {
   await call("set_oled", { file, fit: oled.fit, fps: oled.fps }, `Sending ${fileName(file)} to the OLED…`);
   oled.current = file;
@@ -52,9 +57,13 @@ $("#oled-fit").addEventListener("click", (e) => {
   if (!fit) return;
   oled.fit = fit;
   oled.shownKey = "";
+  prepare();
   renderOledStage();
 });
-$("#oled-fps").addEventListener("change", () => (oled.fps = Number($("#oled-fps").value)));
+$("#oled-fps").addEventListener("change", () => {
+  oled.fps = Number($("#oled-fps").value);
+  prepare();
+});
 $("#oled-pick").addEventListener("click", async () => {
   const file = await invoke("pick_media");
   if (file) playOnOled(file);
@@ -64,6 +73,14 @@ $("#oled-apply").addEventListener("click", async () => {
   await call("set_oled", { file: null, fit: oled.fit, fps: oled.fps }, "Updated");
   refresh();
 });
+async function setOledMatch() {
+  const count = $("#oled-match").checked ? Number($("#oled-match-count").value) : null;
+  await call("set_oled_match", { count }, count ? "Lighting now follows the OLED" : "Lighting no longer follows the OLED");
+  refresh();
+}
+$("#oled-match").addEventListener("change", setOledMatch);
+$("#oled-match-count").addEventListener("change", () => $("#oled-match").checked && setOledMatch());
+
 $("#oled-stop").addEventListener("click", async () => {
   await call("stop_oled", {}, "OLED turned off");
   refresh();
@@ -78,6 +95,9 @@ function renderOled(state, initial) {
     oled.fps = state.fps;
     $("#oled-fps").value = String(state.fps);
   }
+  const match = last && last.oled_match;
+  $("#oled-match").checked = !!match;
+  if (match) $("#oled-match-count").value = String(match);
   if (state.file !== oled.current) {
     oled.current = state.file;
     if (oled.selected === oled.current) oled.selected = null;
@@ -124,6 +144,7 @@ function renderLibraryGrid() {
     ]);
     tile.addEventListener("click", () => {
       oled.selected = item.path;
+      prepare();
       renderOledStage();
       $("#page-oled").querySelector(".oled-stage").scrollIntoView({ behavior: "smooth", block: "nearest" });
     });

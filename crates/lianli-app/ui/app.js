@@ -290,6 +290,7 @@ async function refresh() {
   }
   const initial = last === null;
   last = o;
+  if (!editingPresets) PRESETS = o.color_presets.length ? o.color_presets : DEFAULT_PRESETS.slice();
 
   const status = $("#status");
   let text = o.status;
