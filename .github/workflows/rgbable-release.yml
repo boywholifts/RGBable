@@ -1,0 +1,150 @@
+name: RGBable
+
+# Push to main or windows-port: builds the app and installer and publishes a dev pre-release
+# (v<version>-dev.<run>) for the Dev update channel.
+# Push a tag like v0.3.0 (crates/lianli-app/release.ps1 0.3.0 -Tag): publishes a stable release.
+# A tag like v0.3.0-dev.1 is published as a pre-release.
+on:
+  push:
+    branches: [main, windows-port]
+    tags: ['v*']
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/rgbable-release.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: rgbable-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Version
+        shell: pwsh
+        run: |
+          $base = (Select-String -Path crates/lianli-app/Cargo.toml -Pattern '^version = "([^"]+)"').Matches[0].Groups[1].Value
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $ver = $env:GITHUB_REF_NAME.TrimStart('v')
+            if ($ver -notmatch '^\d+\.\d+\.\d+(-dev\.\d+)?$') { throw "Tag $env:GITHUB_REF_NAME is not v1.2.3 or v1.2.3-dev.4" }
+            $pre = $ver.Contains('-')
+          } else {
+            $ver = "$base-dev.$env:GITHUB_RUN_NUMBER"
+            $pre = $true
+          }
+          "APP_VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PRERELEASE=$($pre.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "Building RGBable $ver (pre-release: $pre)"
+
+      - name: Toolchain
+        shell: pwsh
+        run: |
+          rustup show active-toolchain
+          choco install nasm -y --no-progress
+          "$env:ProgramFiles\NASM" | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: rgbable
+
+      - name: Set version
+        shell: pwsh
+        run: ./crates/lianli-app/release.ps1 $env:APP_VERSION -CiOnly
+
+      - name: Build
+        shell: pwsh
+        working-directory: crates/lianli-app
+        run: |
+          npx --yes @tauri-apps/cli@^2 build --no-bundle
+          if ($LASTEXITCODE -ne 0) { throw 'Build failed' }
+
+      - name: Azure login (code signing)
+        if: vars.AZURE_CLIENT_ID != ''
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign the app
+        if: vars.AZURE_CLIENT_ID != ''
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.SIGN_ENDPOINT }}
+          signing-account-name: ${{ vars.SIGN_ACCOUNT }}
+          certificate-profile-name: ${{ vars.SIGN_PROFILE }}
+          files: ${{ github.workspace }}\target\release\rgbable.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Build installer
+        shell: pwsh
+        working-directory: crates/lianli-app
+        run: |
+          npx --yes @tauri-apps/cli@^2 bundle --bundles nsis
+          if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
+          New-Item -ItemType Directory -Force ../../dist | Out-Null
+          Copy-Item ../../target/release/bundle/nsis/*-setup.exe ../../dist/
+          Copy-Item ../../target/release/rgbable.exe "../../dist/RGBable-$env:APP_VERSION-portable.exe"
+          Get-ChildItem ../../dist
+
+      - name: Sign the installer
+        if: vars.AZURE_CLIENT_ID != ''
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.SIGN_ENDPOINT }}
+          signing-account-name: ${{ vars.SIGN_ACCOUNT }}
+          certificate-profile-name: ${{ vars.SIGN_PROFILE }}
+          files-folder: ${{ github.workspace }}\dist
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Release notes
+        shell: pwsh
+        run: |
+          $log = Get-Content crates/lianli-app/CHANGELOG.md -Raw
+          $m = [regex]::Match($log, "(?ms)^## \[$([regex]::Escape($env:APP_VERSION))\][^\n]*\n(.*?)(?=^## \[|\z)")
+          if ($m.Success -and $m.Groups[1].Value.Trim()) { $notes = $m.Groups[1].Value.Trim() }
+          elseif ($env:PRERELEASE -eq 'true') { $notes = "Automatic dev build for testing (Dev update channel). Not a tested release.`n`n$(git log -1 --format=%s)" }
+          else { $notes = "See CHANGELOG.md." }
+          Set-Content -Path release-notes.md -Value $notes -Encoding utf8
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: RGBable-${{ env.APP_VERSION }}
+          path: dist/*.exe
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ env.APP_VERSION }}
+          name: RGBable ${{ env.APP_VERSION }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ env.PRERELEASE == 'true' }}
+          make_latest: ${{ env.PRERELEASE != 'true' }}
+          body_path: release-notes.md
+          files: dist/*.exe
+
+      - name: Keep the newest 5 dev builds
+        if: github.ref_type == 'branch'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $dev = gh release list --limit 100 --json tagName,isPrerelease,createdAt | ConvertFrom-Json |
+            Where-Object { $_.isPrerelease -and $_.tagName -match '-dev\.\d+$' } | Sort-Object createdAt -Descending
+          $dev | Select-Object -Skip 5 | ForEach-Object { gh release delete $_.tagName --yes --cleanup-tag }
