@@ -8,6 +8,7 @@ mod lights;
 mod openrgb;
 mod openrgb_host;
 mod render;
+mod script;
 mod updater;
 
 use anyhow::Context;
@@ -342,6 +343,142 @@ async fn resize_zone(
     blocking(move || lights::resize_zone(&engine, &openrgb, &id, zone, size)).await
 }
 
+#[derive(Serialize)]
+struct Preview {
+    frames: Vec<Vec<[u8; 3]>>,
+    interval_ms: u32,
+}
+
+#[tauri::command]
+async fn preview_effect(effect: Effect) -> Result<Preview, String> {
+    tauri::async_runtime::spawn_blocking(move || render::preview(effect.sanitized()))
+        .await
+        .map_err(err)?
+        .map(|(frames, interval_ms)| Preview {
+            frames,
+            interval_ms,
+        })
+}
+
+#[tauri::command]
+fn script_template() -> &'static str {
+    script::TEMPLATE
+}
+
+#[tauri::command]
+fn custom_effects(state: State<'_, AppState>) -> Vec<Effect> {
+    state.engine.config().custom_effects
+}
+
+#[tauri::command]
+fn save_custom_effect(state: State<'_, AppState>, effect: Effect) -> Result<(), String> {
+    let effect = effect.sanitized();
+    let name = effect
+        .name
+        .clone()
+        .map(|n| n.trim().to_string())
+        .filter(|n| !n.is_empty())
+        .ok_or("give the effect a name")?;
+    if effect.kind == effects::EffectKind::Script {
+        script::check(effect.script.as_deref().unwrap_or(""), &effect.colors)?;
+    }
+    state.engine.update_config(|c| {
+        let effect = Effect {
+            name: Some(name.clone()),
+            ..effect
+        };
+        match c
+            .custom_effects
+            .iter_mut()
+            .find(|e| e.name.as_deref() == Some(&name))
+        {
+            Some(existing) => *existing = effect,
+            None => c.custom_effects.push(effect),
+        }
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_custom_effect(state: State<'_, AppState>, name: String) {
+    state.engine.update_config(|c| {
+        c.custom_effects
+            .retain(|e| e.name.as_deref() != Some(&name))
+    });
+}
+
+#[tauri::command]
+async fn export_custom_effects(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let effects = state.engine.config().custom_effects;
+    if effects.is_empty() {
+        return Err("there are no saved effects to export yet".into());
+    }
+    let Some(path) = app
+        .dialog()
+        .file()
+        .set_title("Export your effects")
+        .set_file_name("my-effects.rgbable.json")
+        .add_filter("RGBable effects", &["json"])
+        .blocking_save_file()
+        .and_then(|p| p.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    let text = serde_json::to_string_pretty(&effects).map_err(err)?;
+    std::fs::write(&path, text).map_err(err)?;
+    Ok(Some(path.to_string_lossy().into_owned()))
+}
+
+#[tauri::command]
+async fn import_custom_effects(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<usize, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(path) = app
+        .dialog()
+        .file()
+        .set_title("Import effects")
+        .add_filter("RGBable effects", &["json"])
+        .blocking_pick_file()
+        .and_then(|p| p.into_path().ok())
+    else {
+        return Ok(0);
+    };
+    let text = std::fs::read_to_string(&path).map_err(err)?;
+    let text = text.trim_start_matches('\u{feff}');
+    let effects: Vec<Effect> = serde_json::from_str::<Vec<Effect>>(text)
+        .or_else(|_| serde_json::from_str::<Effect>(text).map(|e| vec![e]))
+        .map_err(|e| format!("that isn't an RGBable effects file: {e}"))?;
+    let mut imported = 0;
+    for effect in effects.into_iter().map(Effect::sanitized) {
+        let Some(name) = effect.name.clone().filter(|n| !n.trim().is_empty()) else {
+            continue;
+        };
+        if effect.kind == effects::EffectKind::Script
+            && script::check(effect.script.as_deref().unwrap_or(""), &effect.colors).is_err()
+        {
+            continue;
+        }
+        state.engine.update_config(|c| {
+            match c
+                .custom_effects
+                .iter_mut()
+                .find(|e| e.name.as_deref() == Some(&name))
+            {
+                Some(existing) => *existing = effect,
+                None => c.custom_effects.push(effect),
+            }
+        });
+        imported += 1;
+    }
+    Ok(imported)
+}
+
 #[tauri::command]
 fn lianli_effects() -> Vec<render::LianliEffect> {
     render::lianli_effects()
@@ -573,7 +710,14 @@ fn main() {
             set_openrgb_managed,
             locate_openrgb,
             resize_zone,
-            lianli_effects
+            lianli_effects,
+            preview_effect,
+            script_template,
+            custom_effects,
+            save_custom_effect,
+            delete_custom_effect,
+            export_custom_effects,
+            import_custom_effects
         ])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Open RGBable", true, None::<&str>)?;

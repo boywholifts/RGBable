@@ -383,6 +383,37 @@ pub fn still(
     Ok(frames)
 }
 
+/// Frames for the editor's preview: one SL Flex fan, inner ring then outer ring (26 LEDs).
+pub type PreviewFrames = (Vec<Vec<[u8; 3]>>, u32);
+
+pub fn preview(effect: Effect) -> Result<PreviewFrames, String> {
+    if effect.kind == EffectKind::Script {
+        crate::script::check(effect.script.as_deref().unwrap_or(""), &effect.colors)?;
+    }
+    let profile = RgbRenderProfile {
+        family: RgbRenderFamily::SlV4,
+        fan_count: 1,
+        led_count: 52,
+        right_attach: false,
+    };
+    let mut lighting = Lighting::default();
+    lighting.apply(effect, true);
+    let base = vec![[0, 0, 0]; 52];
+    let frames = lianli_frames(&lighting, &base, profile)
+        .unwrap_or_else(|| generic_frames(&lighting, &base, &[52], Some(profile), 40));
+    let step = frames.frames.len().div_ceil(150).max(1);
+    let frames = frames.decimated(step);
+    let interval_ms = (frames.timing.interval_hundredths / 160).max(10);
+    Ok((
+        frames
+            .frames
+            .into_iter()
+            .map(|f| f[..26].to_vec())
+            .collect(),
+        interval_ms,
+    ))
+}
+
 /// An L-Connect effect the editor can offer, with what it accepts on SL Flex fans.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LianliEffect {
@@ -579,6 +610,62 @@ mod tests {
                 info.mode
             );
         }
+    }
+
+    #[test]
+    fn custom_and_script_effects_preview_and_fit() {
+        let layered = Effect {
+            kind: EffectKind::Custom,
+            name: Some("Neon".into()),
+            layers: vec![
+                crate::effects::Layer {
+                    effect: Effect {
+                        kind: EffectKind::RainbowWave,
+                        ..Effect::default()
+                    },
+                    blend: crate::effects::Blend::Over,
+                    opacity: 100,
+                },
+                crate::effects::Layer {
+                    effect: Effect {
+                        kind: EffectKind::Twinkle,
+                        colors: vec![[255, 255, 255]],
+                        ..Effect::default()
+                    },
+                    blend: crate::effects::Blend::Brightest,
+                    opacity: 80,
+                },
+            ],
+            ..Effect::default()
+        };
+        let script = Effect {
+            kind: EffectKind::Script,
+            script: Some(crate::script::TEMPLATE.into()),
+            colors: vec![[255, 0, 128], [0, 200, 255]],
+            ..Effect::default()
+        };
+        for effect in [layered, script] {
+            let (frames, interval) = preview(effect.clone()).unwrap();
+            assert!(frames.len() > 10 && frames[0].len() == 26 && interval >= 10);
+            assert!(frames.iter().any(|f| f.iter().any(|c| *c != [0, 0, 0])));
+            let fitted = wireless_frames(
+                &Lighting::whole(effect),
+                &vec![[0; 3]; 156],
+                &[52, 52, 52],
+                Some(sl_v4(3)),
+                6 * 1024,
+                640,
+                40,
+            )
+            .unwrap();
+            assert!(fitted.compressed_len().unwrap() <= 6 * 1024);
+        }
+        let broken = Effect {
+            kind: EffectKind::Script,
+            script: Some("rgb(1,".into()),
+            ..Effect::default()
+        };
+        assert!(preview(broken).is_err());
     }
 
     #[test]

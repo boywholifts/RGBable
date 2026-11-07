@@ -61,6 +61,15 @@
         <div class="fx-kinds" id="fx-kinds"></div>
         <div class="fx-section">Lian Li effects <span class="muted small">L-Connect's own patterns on Lian Li fans and Strimers; other devices get the closest RGBable effect</span></div>
         <div class="fx-kinds" id="fx-lianli"></div>
+        <div class="fx-section">My effects <span class="muted small">built from layers or written as a script</span>
+          <span class="fx-mine-actions">
+            <button class="btn mini" id="fx-new">+ New effect</button>
+            <button class="btn mini" id="fx-edit" hidden>Edit</button>
+            <button class="btn mini" id="fx-import">Import</button>
+            <button class="btn mini" id="fx-export">Export</button>
+          </span>
+        </div>
+        <div class="fx-kinds" id="fx-mine"></div>
         <div class="fx-row" id="fx-colors-row">
           <span class="fx-label">Colours</span>
           <div class="fx-colors" id="fx-colors"></div>
@@ -76,6 +85,7 @@
           <button class="btn primary" id="fx-apply">Apply</button>
         </div>
         <div class="muted small" id="fx-note"></div>
+        <canvas class="fx-preview" id="fx-preview" width="132" height="132" title="Preview: one SL Flex fan, inner and outer ring"></canvas>
       </div>
 
       <div class="lights-head">
@@ -220,6 +230,44 @@
         <span class="grow"></span>
         <button class="btn" id="wz-skip">Skip</button>
         <button class="btn primary" id="wz-next">Next</button>
+      </div>
+    </div>
+  </div>
+  <div class="overlay" id="builder" hidden>
+    <div class="card wizard builder">
+      <div class="wizard-head">
+        <div>
+          <div class="muted small">Custom effect</div>
+          <input class="text name-input" id="b-name" placeholder="Name your effect" maxlength="40" />
+        </div>
+        <button class="btn" id="b-close">Close</button>
+      </div>
+      <div class="builder-body">
+        <div class="builder-main">
+          <div class="seg" id="b-mode">
+            <button data-mode="custom" class="on">Layers</button>
+            <button data-mode="script">Script</button>
+          </div>
+          <div id="b-layers-pane">
+            <div id="b-layers"></div>
+            <button class="btn mini" id="b-add-layer">+ Add layer</button>
+          </div>
+          <div id="b-script-pane" hidden>
+            <textarea class="code" id="b-script" spellcheck="false"></textarea>
+            <div class="row"><span class="fx-label">Colours</span><div class="fx-colors" id="b-script-colors"></div><button class="btn mini" id="b-script-add-color">+ Colour</button>
+              <label class="field">Speed <input type="range" id="b-script-speed" min="1" max="5" value="3" /></label></div>
+            <div class="script-error" id="b-error"></div>
+          </div>
+        </div>
+        <div class="builder-side">
+          <canvas class="fx-preview big" id="b-preview" width="220" height="220"></canvas>
+          <div class="muted small">Preview: one SL Flex fan</div>
+        </div>
+      </div>
+      <div class="row wizard-foot">
+        <button class="btn" id="b-delete">Delete</button>
+        <span class="grow"></span>
+        <button class="btn primary" id="b-save">Save effect</button>
       </div>
     </div>
   </div>

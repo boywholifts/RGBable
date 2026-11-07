@@ -47,6 +47,9 @@ pub struct Config {
     pub setup_done: bool,
     #[serde(default)]
     pub manage_openrgb: bool,
+    /// Effects the user built or wrote and saved by name.
+    #[serde(default)]
+    pub custom_effects: Vec<Effect>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openrgb_exe: Option<PathBuf>,
 }

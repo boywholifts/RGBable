@@ -62,6 +62,10 @@ const PULSING = ["breathing", "heartbeat", "strobe", "police", "color_cycle"];
 function effectColors(effect) {
   if (effect.kind === "rainbow" || effect.kind === "rainbow_wave") return RAINBOW;
   if (effect.kind === "lianli" && !effect.colors.length) return RAINBOW;
+  if (effect.kind === "custom") {
+    const colors = (effect.layers || []).flatMap((l) => (l.effect.colors.length ? l.effect.colors.map(rgbToHex) : RAINBOW.slice(0, 3)));
+    return colors.length ? colors : RAINBOW;
+  }
   if (effect.kind === "fire") return FIRE_COLORS;
   const colors = effect.colors.map(rgbToHex);
   return colors.length ? colors : ["#8000ff"];
@@ -418,6 +422,7 @@ const lianliInfo = (mode) => LIANLI.find((m) => m.mode === mode);
 function kindLabelOf(effect) {
   if (!effect) return "Static";
   if (effect.kind === "lianli") return modeName(effect.mode || "");
+  if (effect.kind === "custom" || effect.kind === "script") return effect.name || "Custom";
   return kindInfo(effect.kind).label;
 }
 
@@ -433,6 +438,7 @@ function chip(label, on, onclick, disabled) {
 }
 
 function renderKinds() {
+  renderMine();
   $("#fx-kinds").replaceChildren(...KINDS.map((k) =>
     chip(k.label, fx.kind === k.id, () => {
       fx.kind = k.id;
@@ -452,6 +458,8 @@ function renderKinds() {
 
 /// What the colour/speed/direction controls should offer for the chosen effect.
 function controls() {
+  if (fx.kind === "custom") return { colors: 0, speed: false, directions: [], reverse: false, hint: "" };
+  if (fx.kind === "script") return { colors: 0, speed: true, directions: [], reverse: false, hint: "" };
   if (fx.kind === "lianli") {
     const m = lianliInfo(fx.mode) || { max_colors: 4, min_colors: 1, directions: [], speed: true };
     const colors = m.per_fan_colors ? 4 : m.max_colors;
@@ -522,6 +530,7 @@ function renderEditor() {
   if (target === "all") notes.push("Devices with their Sync switch off are left alone.");
   else if (fx.kind !== "static") notes.push("Lian Li fans and Strimers play effects by themselves; RGBable keeps the OLED ring and OpenRGB devices animated while it runs.");
   $("#fx-note").textContent = notes.join(" ");
+  refreshPreview();
 }
 
 document.querySelectorAll("#fx-side button").forEach((b) =>
@@ -532,6 +541,14 @@ document.querySelectorAll("#fx-side button").forEach((b) =>
 );
 
 function currentEffect() {
+  if ((fx.kind === "custom" || fx.kind === "script") && fx.custom) {
+    return {
+      ...fx.custom,
+      speed: fx.kind === "script" ? Number($("#fx-speed").value) : fx.custom.speed,
+      brightness: Number($("#fx-brightness").value),
+      side: fx.side,
+    };
+  }
   const effect = {
     kind: fx.kind,
     colors: fx.colors.map(hexToRgb),
@@ -552,6 +569,7 @@ function loadEffect(effect, color) {
   if (effect) {
     fx.kind = effect.kind;
     fx.mode = effect.mode || null;
+    fx.custom = effect.kind === "custom" || effect.kind === "script" ? effect : null;
     fx.side = effect.side || "both";
     fx.colors = effect.colors.length ? effect.colors.map(rgbToHex) : fx.colors;
     $("#fx-speed").value = effect.speed;
@@ -570,6 +588,307 @@ function loadEffect(effect, color) {
   fx.active = 0;
   renderEditor();
 }
+
+// ---------------------------------------------------------------- preview
+
+/// Plays preview frames (13 inner + 13 outer LEDs) on a canvas as a fan.
+function previewPlayer(canvas) {
+  const player = { frames: [], interval: 40, index: 0, timer: null, seq: 0 };
+  const draw = () => {
+    const ctx = canvas.getContext("2d");
+    const w = canvas.width, h = canvas.height, cx = w / 2, cy = h / 2;
+    ctx.clearRect(0, 0, w, h);
+    const frame = player.frames[player.index] || [];
+    const ring = (offset, radius, size) => {
+      for (let i = 0; i < 13; i++) {
+        const a = -Math.PI / 2 + (i / 13) * Math.PI * 2;
+        const c = frame[offset + i] || [20, 20, 28];
+        const x = cx + Math.cos(a) * radius, y = cy + Math.sin(a) * radius;
+        const color = `rgb(${c[0]},${c[1]},${c[2]})`;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = size * 1.6;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(x, y, size, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    };
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = "#15111d";
+    ctx.beginPath();
+    ctx.arc(cx, cy, w * 0.47, 0, Math.PI * 2);
+    ctx.fill();
+    ring(13, w * 0.4, w * 0.035);
+    ring(0, w * 0.25, w * 0.03);
+  };
+  player.show = (frames, interval) => {
+    player.frames = frames;
+    player.interval = Math.max(15, interval);
+    player.index = 0;
+    clearInterval(player.timer);
+    draw();
+    if (frames.length > 1) {
+      player.timer = setInterval(() => {
+        player.index = (player.index + 1) % player.frames.length;
+        draw();
+      }, player.interval);
+    }
+  };
+  player.load = async (effect, onError) => {
+    const seq = ++player.seq;
+    try {
+      const p = await invoke("preview_effect", { effect });
+      if (seq === player.seq) {
+        player.show(p.frames, p.interval_ms);
+        if (onError) onError("");
+      }
+    } catch (e) {
+      if (seq === player.seq && onError) onError(String(e));
+    }
+  };
+  draw();
+  return player;
+}
+
+const mainPreview = previewPlayer($("#fx-preview"));
+let previewTimer = null;
+function refreshPreview() {
+  clearTimeout(previewTimer);
+  previewTimer = setTimeout(() => mainPreview.load(currentEffect()), 150);
+}
+
+// ---------------------------------------------------------------- my effects
+
+let MINE = [];
+
+async function loadMine() {
+  try {
+    MINE = (await invoke("custom_effects")) || [];
+  } catch (e) {
+    MINE = [];
+  }
+  renderEditor();
+}
+
+function renderMine() {
+  $("#fx-mine").replaceChildren(
+    ...(MINE.length
+      ? MINE.map((e) =>
+          chip(e.name, (fx.kind === "custom" || fx.kind === "script") && fx.custom && fx.custom.name === e.name, () => {
+            fx.kind = e.kind;
+            fx.mode = null;
+            fx.custom = e;
+            $("#fx-brightness").value = e.brightness ?? 100;
+            renderEditor();
+          })
+        )
+      : [el("span", { class: "muted small" }, "Nothing saved yet. Build one with + New effect.")])
+  );
+  $("#fx-edit").hidden = !((fx.kind === "custom" || fx.kind === "script") && fx.custom);
+}
+
+$("#fx-import").addEventListener("click", async () => {
+  const n = await call("import_custom_effects");
+  if (n) toast(`Imported ${n} effect${n === 1 ? "" : "s"}`);
+  loadMine();
+});
+$("#fx-export").addEventListener("click", async () => {
+  const path = await call("export_custom_effects");
+  if (path) toast("Saved to " + path);
+});
+
+// ---------------------------------------------------------------- builder
+
+const LAYER_KINDS = KINDS.filter((k) => k.id !== "static" || true);
+const BLENDS = { over: "Cover", add: "Add", multiply: "Multiply", brightest: "Brightest" };
+const builder = { mode: "custom", layers: [], scriptColors: ["#ff0080", "#00c8ff"], original: null };
+const builderPreview = previewPlayer($("#b-preview"));
+
+function defaultLayer(kind = "rainbow_wave") {
+  const info = kindInfo(kind);
+  return {
+    effect: { kind, colors: (info.defaults || ["#8000ff", "#00e5ff"]).slice(0, Math.max(1, info.colors)).map(hexToRgb), speed: 3, brightness: 100, reverse: false },
+    blend: "over",
+    opacity: 100,
+  };
+}
+
+function builderEffect() {
+  const base = { name: $("#b-name").value.trim(), speed: 3, brightness: 100, reverse: false, colors: [] };
+  if (builder.mode === "script") {
+    return { ...base, kind: "script", script: $("#b-script").value, colors: builder.scriptColors.map(hexToRgb), speed: Number($("#b-script-speed").value) };
+  }
+  return { ...base, kind: "custom", layers: builder.layers };
+}
+
+let builderTimer = null;
+function builderChanged() {
+  clearTimeout(builderTimer);
+  builderTimer = setTimeout(() => builderPreview.load(builderEffect(), (msg) => ($("#b-error").textContent = msg)), 200);
+}
+
+function colorRow(colors, max, onChange) {
+  const row = el("div", { class: "fx-colors" });
+  colors.forEach((hex, i) => {
+    const s = swatch(hexToRgb(hex), () => {});
+    s.classList.add("small");
+    const input = s.querySelector("input");
+    input.addEventListener("input", () => {
+      colors[i] = input.value;
+      onChange(false);
+    });
+    const wrap = el("div", { class: "fx-color" }, s);
+    if (colors.length > 1) {
+      wrap.append(el("button", { class: "remove", title: "Remove colour", onclick: () => { colors.splice(i, 1); onChange(true); } }, "×"));
+    }
+    row.append(wrap);
+  });
+  if (colors.length < max) {
+    row.append(el("button", { class: "btn mini", onclick: () => { colors.push(PRESETS[colors.length % PRESETS.length]); onChange(true); } }, "+"));
+  }
+  return row;
+}
+
+function renderLayers() {
+  const list = $("#b-layers");
+  list.replaceChildren();
+  builder.layers.forEach((layer, index) => {
+    const info = kindInfo(layer.effect.kind);
+    const kind = el("select", {}, KINDS.map((k) => el("option", { value: k.id }, k.label)));
+    kind.value = layer.effect.kind;
+    kind.addEventListener("change", () => {
+      const fresh = defaultLayer(kind.value);
+      layer.effect.kind = kind.value;
+      layer.effect.colors = fresh.effect.colors;
+      renderLayers();
+      builderChanged();
+    });
+    const blend = el("select", {}, Object.entries(BLENDS).map(([v, label]) => el("option", { value: v }, label)));
+    blend.value = layer.blend;
+    blend.addEventListener("change", () => { layer.blend = blend.value; builderChanged(); });
+    const speed = el("input", { type: "range", min: 1, max: 5, value: layer.effect.speed });
+    speed.addEventListener("input", () => { layer.effect.speed = Number(speed.value); builderChanged(); });
+    const opacity = el("input", { type: "range", min: 5, max: 100, step: 5, value: layer.opacity });
+    opacity.addEventListener("input", () => { layer.opacity = Number(opacity.value); builderChanged(); });
+    const reverse = el("input", { type: "checkbox" });
+    reverse.checked = layer.effect.reverse;
+    reverse.addEventListener("change", () => { layer.effect.reverse = reverse.checked; builderChanged(); });
+    const hexes = layer.effect.colors.map(rgbToHex);
+    const colors = info.colors
+      ? colorRow(hexes, info.colors, (structural) => {
+          layer.effect.colors = hexes.map(hexToRgb);
+          if (structural) renderLayers();
+          builderChanged();
+        })
+      : el("span", { class: "muted small" }, "Uses its own colours");
+    const move = (delta) => {
+      const target = index + delta;
+      if (target < 0 || target >= builder.layers.length) return;
+      [builder.layers[index], builder.layers[target]] = [builder.layers[target], builder.layers[index]];
+      renderLayers();
+      builderChanged();
+    };
+    list.append(el("div", { class: "layer" }, [
+      el("div", { class: "layer-head" }, [
+        el("span", { class: "layer-n" }, String(index + 1)),
+        kind,
+        el("label", { class: "field" }, ["Blend", blend]),
+        el("span", { class: "grow" }),
+        el("button", { class: "btn mini", title: "Move up", onclick: () => move(-1) }, "↑"),
+        el("button", { class: "btn mini", title: "Move down", onclick: () => move(1) }, "↓"),
+        el("button", { class: "btn mini", title: "Remove layer", onclick: () => { builder.layers.splice(index, 1); renderLayers(); builderChanged(); } }, "×"),
+      ]),
+      el("div", { class: "layer-body" }, [
+        colors,
+        el("label", { class: "field" }, ["Speed", speed]),
+        el("label", { class: "field" }, ["Opacity", opacity]),
+        ...(info.reverse ? [el("label", { class: "check" }, [reverse, "Reverse"])] : []),
+      ]),
+    ]));
+  });
+  $("#b-add-layer").hidden = builder.layers.length >= 6;
+}
+
+function renderScriptColors() {
+  $("#b-script-colors").replaceChildren(colorRow(builder.scriptColors, 4, (structural) => {
+    if (structural) renderScriptColors();
+    builderChanged();
+  }));
+  $("#b-script-add-color").hidden = true;
+}
+
+function setBuilderMode(mode) {
+  builder.mode = mode;
+  document.querySelectorAll("#b-mode button").forEach((b) => b.classList.toggle("on", b.dataset.mode === mode));
+  $("#b-layers-pane").hidden = mode !== "custom";
+  $("#b-script-pane").hidden = mode !== "script";
+  builderChanged();
+}
+
+async function openBuilder(effect) {
+  builder.original = effect ? effect.name : null;
+  $("#b-name").value = effect ? effect.name : "";
+  builder.layers = effect && effect.kind === "custom" ? JSON.parse(JSON.stringify(effect.layers)) : [defaultLayer("rainbow_wave"), { ...defaultLayer("twinkle"), blend: "brightest" }];
+  builder.scriptColors = effect && effect.kind === "script" && effect.colors.length ? effect.colors.map(rgbToHex) : ["#ff0080", "#00c8ff"];
+  $("#b-script").value = effect && effect.kind === "script" ? effect.script : await invoke("script_template");
+  $("#b-script-speed").value = effect && effect.kind === "script" ? effect.speed : 3;
+  $("#b-delete").hidden = !effect;
+  renderLayers();
+  renderScriptColors();
+  $("#builder").hidden = false;
+  setBuilderMode(effect && effect.kind === "script" ? "script" : "custom");
+}
+
+document.querySelectorAll("#b-mode button").forEach((b) => b.addEventListener("click", () => setBuilderMode(b.dataset.mode)));
+$("#b-add-layer").addEventListener("click", () => {
+  builder.layers.push({ ...defaultLayer("breathing"), blend: "add", opacity: 60 });
+  renderLayers();
+  builderChanged();
+});
+$("#b-script").addEventListener("input", builderChanged);
+$("#b-script").addEventListener("keydown", (e) => {
+  if (e.key === "Tab") {
+    e.preventDefault();
+    const t = e.target, s = t.selectionStart;
+    t.value = t.value.slice(0, s) + "    " + t.value.slice(t.selectionEnd);
+    t.selectionStart = t.selectionEnd = s + 4;
+  }
+});
+$("#b-script-speed").addEventListener("input", builderChanged);
+$("#b-close").addEventListener("click", () => {
+  $("#builder").hidden = true;
+  builderPreview.show([], 40);
+});
+$("#b-save").addEventListener("click", async () => {
+  const effect = builderEffect();
+  if (!effect.name) return toast("Give the effect a name first", true);
+  if (builder.original && builder.original !== effect.name) {
+    await call("delete_custom_effect", { name: builder.original }).catch(() => {});
+  }
+  await call("save_custom_effect", { effect }, `Saved ${effect.name}`);
+  $("#builder").hidden = true;
+  builderPreview.show([], 40);
+  await loadMine();
+  const saved = MINE.find((e) => e.name === effect.name);
+  if (saved) {
+    fx.kind = saved.kind;
+    fx.custom = saved;
+    renderEditor();
+  }
+});
+$("#b-delete").addEventListener("click", async () => {
+  if (!builder.original) return;
+  await call("delete_custom_effect", { name: builder.original }, `Deleted ${builder.original}`);
+  if (fx.custom && fx.custom.name === builder.original) {
+    fx.kind = "static";
+    fx.custom = null;
+  }
+  $("#builder").hidden = true;
+  loadMine();
+});
+$("#fx-new").addEventListener("click", () => openBuilder(null));
+$("#fx-edit").addEventListener("click", () => fx.custom && openBuilder(MINE.find((e) => e.name === fx.custom.name) || fx.custom));
+loadMine();
 
 invoke("lianli_effects").then((list) => {
   LIANLI = list || [];

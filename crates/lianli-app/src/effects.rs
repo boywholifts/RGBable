@@ -26,6 +26,10 @@ pub enum EffectKind {
     StarryNight,
     Aurora,
     Police,
+    /// Layers of other effects blended together (the effect builder).
+    Custom,
+    /// A Rhai script that colours each LED.
+    Script,
     /// One of L-Connect's own effects (`mode`), rendered by the Lian Li device renderer.
     /// Devices that don't have it show the closest RGBable effect.
     Lianli,
@@ -60,7 +64,36 @@ pub struct Effect {
     pub mode: Option<RgbMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub direction: Option<RgbDirection>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<Layer>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script: Option<String>,
+    /// Name of a saved custom effect.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Blend {
+    #[default]
+    Over,
+    Add,
+    Multiply,
+    Brightest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Layer {
+    pub effect: Effect,
+    #[serde(default)]
+    pub blend: Blend,
+    /// Percent, 0 to 100.
+    #[serde(default = "default_brightness")]
+    pub opacity: u8,
+}
+
+pub const MAX_LAYERS: usize = 6;
 
 fn default_speed() -> u8 {
     3
@@ -85,11 +118,48 @@ impl Default for Effect {
             side: Side::Both,
             mode: None,
             direction: None,
+            layers: Vec::new(),
+            script: None,
+            name: None,
         }
     }
 }
 
 impl Effect {
+    /// Each layer loops a whole number of times within the longest layer's loop, so the
+    /// combination still repeats seamlessly.
+    fn layered(&self, zones: &[usize], phase: f32) -> Vec<[u8; 3]> {
+        let leds: usize = zones.iter().sum();
+        let period = self.period_ms() as f32;
+        let mut out = vec![[0f32; 3]; leds];
+        for layer in &self.layers {
+            let effect = layer.effect.generic();
+            let repeats = (period / effect.period_ms().max(1) as f32).round().max(1.0);
+            let frame = effect.frame(zones, (phase * repeats).fract());
+            let opacity = f32::from(layer.opacity.min(100)) / 100.0;
+            for (target, color) in out.iter_mut().zip(frame) {
+                for i in 0..3 {
+                    let c = f32::from(color[i]);
+                    let blended = match layer.blend {
+                        Blend::Over => c,
+                        Blend::Add => target[i] + c,
+                        Blend::Multiply => target[i] * c / 255.0,
+                        Blend::Brightest => target[i].max(c),
+                    };
+                    target[i] += (blended.min(255.0) - target[i]) * opacity;
+                }
+            }
+        }
+        out.into_iter()
+            .map(|c| {
+                scale(
+                    c.map(|v| v.round().clamp(0.0, 255.0) as u8),
+                    self.brightness,
+                )
+            })
+            .collect()
+    }
+
     /// The RGBable effect closest to an L-Connect one, for devices without a Lian Li renderer.
     pub fn generic(&self) -> Effect {
         if self.kind != EffectKind::Lianli {
@@ -133,6 +203,19 @@ impl Effect {
         self.speed = self.speed.clamp(1, 5);
         self.brightness = self.brightness.min(100);
         self.colors.truncate(6);
+        self.layers.truncate(MAX_LAYERS);
+        for layer in &mut self.layers {
+            layer.opacity = layer.opacity.min(100);
+            layer.effect.layers.clear();
+            layer.effect.script = None;
+            if matches!(layer.effect.kind, EffectKind::Custom | EffectKind::Script) {
+                layer.effect.kind = EffectKind::Static;
+            }
+            layer.effect = std::mem::take(&mut layer.effect).sanitized();
+        }
+        if let Some(script) = &mut self.script {
+            script.truncate(crate::script::MAX_SCRIPT_LEN);
+        }
         self
     }
 
@@ -148,6 +231,14 @@ impl Effect {
     pub fn period_ms(&self) -> u32 {
         if self.kind == EffectKind::Lianli {
             return self.generic().period_ms();
+        }
+        if self.kind == EffectKind::Custom {
+            return self
+                .layers
+                .iter()
+                .map(|l| l.effect.period_ms())
+                .max()
+                .unwrap_or(1000);
         }
         let base = match self.kind {
             EffectKind::Static => 1000,
@@ -168,6 +259,8 @@ impl Effect {
             EffectKind::Aurora => 8000,
             EffectKind::Police => 1600,
             EffectKind::Lianli => 3000,
+            EffectKind::Custom => 1000,
+            EffectKind::Script => 4000,
         };
         let factor = [2.0, 1.4, 1.0, 0.7, 0.5][usize::from(self.speed.clamp(1, 5) - 1)];
         (base as f32 * factor) as u32
@@ -178,6 +271,19 @@ impl Effect {
     pub fn frame(&self, zones: &[usize], phase: f32) -> Vec<[u8; 3]> {
         if self.kind == EffectKind::Lianli {
             return self.generic().frame(zones, phase);
+        }
+        if self.kind == EffectKind::Custom {
+            return self.layered(zones, phase);
+        }
+        if self.kind == EffectKind::Script {
+            let source = self.script.as_deref().unwrap_or("");
+            let frame =
+                crate::script::render_frame(source, self.colors(), zones, phase.rem_euclid(1.0))
+                    .unwrap_or_else(|_| vec![[0, 0, 0]; zones.iter().sum()]);
+            return frame
+                .into_iter()
+                .map(|c| scale(c, self.brightness))
+                .collect();
         }
         let phase = phase.rem_euclid(1.0);
         let colors = self.colors();
@@ -215,7 +321,7 @@ impl Effect {
                     EffectKind::StarryNight => starry_night(colors, phase, led_index),
                     EffectKind::Aurora => aurora(colors, phase, p),
                     EffectKind::Police => police(colors, phase, p),
-                    EffectKind::Lianli => colors[0],
+                    EffectKind::Lianli | EffectKind::Custom | EffectKind::Script => colors[0],
                 };
                 out.push(scale(color, self.brightness));
                 led_index += 1;
