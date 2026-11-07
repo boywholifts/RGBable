@@ -96,6 +96,11 @@ fn chain(e: anyhow::Error) -> String {
 }
 
 #[tauri::command(async)]
+fn set_delays(state: State<'_, AppState>, delays: Vec<(String, u32)>) -> Result<(), String> {
+    lights::set_delays(&state.engine, &state.openrgb, &delays).map_err(chain)
+}
+
+#[tauri::command(async)]
 fn set_delay(state: State<'_, AppState>, id: String, delay_ms: u32) -> Result<(), String> {
     lights::set_delay(&state.engine, &state.openrgb, &id, delay_ms).map_err(chain)
 }
@@ -971,6 +976,7 @@ fn main() {
             prepare_oled,
             restart_app,
             set_delay,
+            set_delays,
             oled_palette,
             set_oled_match,
             set_color_presets,

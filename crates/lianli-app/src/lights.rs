@@ -418,6 +418,37 @@ pub fn set_delay(engine: &Engine, openrgb: &OpenRgb, id: &str, delay_ms: u32) ->
 
 pub const MAX_DELAY_MS: u32 = 10_000;
 
+/// Saves a whole sequence at once and resends only the devices whose delay changed.
+pub fn set_delays(engine: &Engine, openrgb: &OpenRgb, delays: &[(String, u32)]) -> Result<()> {
+    let changed: Vec<(String, u32)> = engine.update_config(|c| {
+        delays
+            .iter()
+            .filter_map(|(id, delay)| {
+                let delay = (*delay).min(MAX_DELAY_MS);
+                let entry = c.devices.entry(id.clone()).or_default();
+                (entry.delay_ms != delay).then(|| {
+                    entry.delay_ms = delay;
+                    (id.clone(), delay)
+                })
+            })
+            .collect()
+    });
+    let mut boards = std::collections::BTreeSet::new();
+    for (id, _) in &changed {
+        if id.starts_with(OPENRGB_PREFIX) {
+            boards.insert(split_id(id).0.to_string());
+        } else {
+            engine.relight(id);
+        }
+    }
+    for board in boards {
+        if let Some(device) = openrgb_device(openrgb, &board) {
+            push_device(engine, openrgb, &device)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn set_color(engine: &Engine, openrgb: &OpenRgb, id: &str, color: [u8; 3]) -> Result<()> {
     set_effect(engine, openrgb, id, static_effect(color))
 }

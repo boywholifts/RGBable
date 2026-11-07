@@ -825,9 +825,15 @@ impl Engine {
                 return;
             }
             *last_frame = Instant::now();
-            let elapsed = started.elapsed().as_millis() as u64;
+            let delay = self
+                .config
+                .lock()
+                .devices
+                .get(&ctl.id)
+                .map_or(0, |d| i64::from(d.delay_ms));
+            let behind = started.elapsed().as_millis() as i64 - delay;
             let period = u64::from(effect.period_ms().max(1));
-            let phase = (elapsed % period) as f32 / period as f32;
+            let phase = behind.rem_euclid(period as i64) as f32 / period as f32;
             if let Err(e) = ring.send_rgb_frame(&effect.frame(&ctl.zones, phase)) {
                 warn!("OLED ring: {e:#}");
             }

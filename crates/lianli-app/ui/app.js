@@ -313,6 +313,7 @@ async function refresh() {
   renderLights(o);
   maybeStartWizard(o);
   renderOled(o.oled, initial);
+  renderSequence(o);
   renderMonitor(o);
   renderUpdate(o.update);
   if (initial) {
