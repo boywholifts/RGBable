@@ -1,9 +1,9 @@
-//! Script effects: a few lines of Rhai that give each LED its colour.
+//! Script effects: a few lines of Rhai that give each LED its color.
 //!
 //! The script runs once per LED per frame with these variables:
 //! `t` (0 to 1 through the loop), `pos` (0 to 1 around the fan ring or along the cable),
 //! `led` (index on the device), `zone` (fan or cable number), `count` (LEDs in the zone)
-//! and `colors` (the effect's colours as `[r, g, b]` arrays). It returns `rgb(r, g, b)`,
+//! and `colors` (the effect's colors as `[r, g, b]` arrays). It returns `rgb(r, g, b)`,
 //! `hsv(h, s, v)`, an `[r, g, b]` array or a `0xRRGGBB` number.
 
 use parking_lot::Mutex;
@@ -20,7 +20,7 @@ pub const TEMPLATE: &str = "\
 //   t       how far through the loop, 0 to 1
 //   pos     where the LED is around the fan or along the cable, 0 to 1
 //   led     LED number, zone = fan or cable number, count = LEDs in the zone
-//   colors  your colours: colors[0], colors[1], ...
+//   colors  your colors: colors[0], colors[1], ...
 let wave = sin((t + pos) * TAU) * 0.5 + 0.5;
 mix(colors[0], colors[1], wave)
 ";
@@ -179,8 +179,8 @@ pub fn render_frame(
     t: f32,
 ) -> Result<Vec<[u8; 3]>, String> {
     let ast = compiled(source)?;
-    // Only the user's own colours, so gradients and random picks never bring in new ones;
-    // a single colour is repeated so `colors[1]` still works.
+    // Only the user's own colors, so gradients and random picks never bring in new ones;
+    // a single color is repeated so `colors[1]` still works.
     let chosen: &[[u8; 3]] = if colors.is_empty() {
         &[[255, 255, 255]]
     } else {
@@ -224,7 +224,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn template_renders_a_gradient_between_the_colours() {
+    fn template_renders_a_gradient_between_the_colors() {
         let frame = render_frame(TEMPLATE, &[[255, 0, 0], [0, 0, 255]], &[4], 0.0).unwrap();
         assert_eq!(frame.len(), 4);
         assert_ne!(frame[0], frame[1]);

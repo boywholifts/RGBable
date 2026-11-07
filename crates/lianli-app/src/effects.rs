@@ -29,7 +29,7 @@ pub enum EffectKind {
     Drizzle,
     /// Layers of other effects blended together (the effect builder).
     Custom,
-    /// A Rhai script that colours each LED.
+    /// A Rhai script that colors each LED.
     Script,
     /// One of L-Connect's own effects (`mode`), rendered by the Lian Li device renderer.
     /// Devices that don't have it show the closest RGBable effect.
@@ -399,7 +399,7 @@ fn hue(h: f32) -> [u8; 3] {
     [r, g, b].map(|v: f32| (v * 255.0).round() as u8)
 }
 
-/// Smooth loop through the colours; a single colour fades to black and back.
+/// Smooth loop through the colors; a single color fades to black and back.
 fn gradient(colors: &[[u8; 3]], t: f32) -> [u8; 3] {
     let t = t.rem_euclid(1.0);
     if colors.len() == 1 {
@@ -414,7 +414,7 @@ fn gradient(colors: &[[u8; 3]], t: f32) -> [u8; 3] {
     )
 }
 
-/// One breath per colour.
+/// One breath per color.
 fn breathing(colors: &[[u8; 3]], t: f32) -> [u8; 3] {
     let pos = t * colors.len() as f32;
     let index = pos as usize % colors.len();
@@ -461,7 +461,7 @@ fn bump(x: f32, width: f32) -> f32 {
     }
 }
 
-/// Four quick flashes per colour.
+/// Four quick flashes per color.
 fn strobe(colors: &[[u8; 3]], t: f32) -> [u8; 3] {
     let flashes = t * colors.len() as f32 * 4.0;
     if flashes.fract() < 0.3 {
@@ -471,7 +471,7 @@ fn strobe(colors: &[[u8; 3]], t: f32) -> [u8; 3] {
     }
 }
 
-/// A strong beat, a softer second beat, then rest; one heartbeat per colour.
+/// A strong beat, a softer second beat, then rest; one heartbeat per color.
 fn heartbeat(colors: &[[u8; 3]], t: f32) -> [u8; 3] {
     let pos = t * colors.len() as f32;
     let local = pos.fract();
@@ -504,7 +504,7 @@ fn scanner(color: [u8; 3], t: f32, x: f32) -> [u8; 3] {
 
 const RUNWAY_BLOCKS: f32 = 4.0;
 
-/// Blocks of colour marching along; a single colour alternates with dark gaps.
+/// Blocks of color marching along; a single color alternates with dark gaps.
 fn runway(colors: &[[u8; 3]], t: f32, p: f32) -> [u8; 3] {
     let u = (p * RUNWAY_BLOCKS - t).rem_euclid(1.0);
     if colors.len() == 1 {
@@ -513,7 +513,7 @@ fn runway(colors: &[[u8; 3]], t: f32, p: f32) -> [u8; 3] {
     colors[(u * colors.len() as f32) as usize % colors.len()]
 }
 
-/// Fills with a colour, drains, then the next colour.
+/// Fills with a color, drains, then the next color.
 fn fill(colors: &[[u8; 3]], t: f32, p: f32) -> [u8; 3] {
     let pos = t * colors.len() as f32;
     let local = pos.fract();
@@ -530,7 +530,7 @@ fn fill(colors: &[[u8; 3]], t: f32, p: f32) -> [u8; 3] {
     }
 }
 
-/// Rings spreading out from the middle; each ring takes the next colour.
+/// Rings spreading out from the middle; each ring takes the next color.
 fn ripple(colors: &[[u8; 3]], t: f32, x: f32) -> [u8; 3] {
     let distance = (x - 0.5).abs() * 2.0;
     let rings = t * 2.0;
@@ -541,7 +541,7 @@ fn ripple(colors: &[[u8; 3]], t: f32, x: f32) -> [u8; 3] {
     )
 }
 
-/// A dim base colour with stars twinkling over it.
+/// A dim base color with stars twinkling over it.
 fn starry_night(colors: &[[u8; 3]], t: f32, led: usize) -> [u8; 3] {
     let base = dim(colors[0], 0.25);
     let star = if colors.len() > 1 {
@@ -553,7 +553,7 @@ fn starry_night(colors: &[[u8; 3]], t: f32, led: usize) -> [u8; 3] {
     [0, 1, 2].map(|i| base[i].max(sparkle[i]))
 }
 
-/// Slowly drifting bands of colour.
+/// Slowly drifting bands of color.
 fn aurora(colors: &[[u8; 3]], t: f32, p: f32) -> [u8; 3] {
     let drift = 0.18 * (2.0 * PI * (t + p)).sin() + 0.08 * (2.0 * PI * (2.0 * t - p)).sin();
     let level = 0.55 + 0.45 * (2.0 * PI * (t + 2.0 * p)).sin().abs();
@@ -563,7 +563,7 @@ fn aurora(colors: &[[u8; 3]], t: f32, p: f32) -> [u8; 3] {
 const DRIZZLE_TAIL: [f32; 5] = [1.0, 0.5, 0.125, 0.03, 0.0];
 
 /// L-Connect's Drizzling: pairs of short drops run along each zone with a lane-length gap
-/// after them. Each pair takes the next colour, and zones start at different points.
+/// after them. Each pair takes the next color, and zones start at different points.
 fn drizzle(colors: &[[u8; 3]], t: f32, p: f32, count: usize, zone: usize) -> [u8; 3] {
     let length = count.max(1) as f32;
     let cycle = length * 2.0;

@@ -19,9 +19,9 @@ RGBable is unofficial and not affiliated with Lian Li. It is built on [lian-li-l
 
 - **Lian Li lighting**: wireless UNI FAN SL fans (SL Flex and other SL V4/SL Wireless models) and wireless Strimers through the Lian Li wireless receiver, plus the HydroShift II OLED Curve's ambient ring.
 - **Everything else**: RAM, GPU, motherboard, monitors and other RGB through [OpenRGB](https://openrgb.org) running in the background.
-- **Effects**: 18 effects including breathing, colour cycle, rainbow wave, meteor, fire, aurora, scanner, ripple and starry night, with your colours, speed, brightness and direction. Wireless fans and Strimers store the effect and play it smoothly by themselves; the OLED ring and OpenRGB devices are animated live.
-- **Sync everything**: one colour for the whole build (or one effect), with a per-device switch to leave things like a monitor alone.
-- **Groups**: put devices in groups such as "Front fans" or "Desk", mixing Lian Li and OpenRGB devices, and colour a whole group at once. Drag devices between groups.
+- **Effects**: 18 effects including breathing, color cycle, rainbow wave, meteor, fire, aurora, scanner, ripple and starry night, with your colors, speed, brightness and direction. Wireless fans and Strimers store the effect and play it smoothly by themselves; the OLED ring and OpenRGB devices are animated live.
+- **Sync everything**: one color for the whole build (or one effect), with a per-device switch to leave things like a monitor alone.
+- **Groups**: put devices in groups such as "Front fans" or "Desk", mixing Lian Li and OpenRGB devices, and color a whole group at once. Drag devices between groups.
 - **Identify**: blink any device white to see which one it is.
 - **Setup wizard**: on first launch RGBable blinks each device in turn so you can name it, group it and choose whether Sync everything changes it.
 - **HydroShift OLED screen**: loop a video, GIF or image on the HydroShift II OLED Curve.

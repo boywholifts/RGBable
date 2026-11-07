@@ -156,8 +156,8 @@ function renderRecipe() {
   });
   const pane = $("#b-recipe");
   const rows = [
-    el("div", { class: "recipe-step" }, "1 · Colour"),
-    recipeRow("Colours", pick("color")),
+    el("div", { class: "recipe-step" }, "1 · Color"),
+    recipeRow("Colors", pick("color")),
   ];
   if (r.color !== "rainbow") {
     rows.push(recipeRow("", colorRow(builder.recipeColors, 4, (structural) => {
@@ -231,7 +231,7 @@ function renderLayers() {
           if (structural) renderLayers();
           builderChanged();
         })
-      : el("span", { class: "muted small" }, "Uses its own colours");
+      : el("span", { class: "muted small" }, "Uses its own colors");
     const move = (delta) => {
       const target = index + delta;
       if (target < 0 || target >= builder.layers.length) return;

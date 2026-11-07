@@ -250,7 +250,7 @@ input[type=range] { accent-color: var(--accent); width: 120px; }
 .zone-name { flex: 1; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 input.text.num { width: 64px; padding: 4px 6px; font-size: 13px; }
 
-/* effect preview on colour boxes */
+/* effect preview on color boxes */
 .swatch.fx { background: var(--fx); background-size: 132px 100%; background-repeat: repeat-x; }
 .swatch.fx input { opacity: 0; }
 .swatch.flow { animation: fx-flow var(--fx-time, 3s) linear infinite; }
@@ -406,3 +406,6 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .oled-tile.playing { border-color: var(--accent); }
 .oled-tile-name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .folder-row { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--line); }
+.fx-color.active .swatch { border-color: #fff; box-shadow: 0 0 0 2px var(--accent), 0 0 18px -4px var(--glow, transparent); }
+.fx-color.drop .swatch { transform: scale(1.08); border-color: var(--accent); }
+.preset[draggable=true] { cursor: grab; }

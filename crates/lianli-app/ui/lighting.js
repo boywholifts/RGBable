@@ -111,9 +111,9 @@ function ledCountDialog(l) {
 // ---------------------------------------------------------------- rows
 
 function effectSummary(l) {
-  if (l.outer_effect) return `Inner: ${l.effect ? kindLabelOf(l.effect) : "Colour"} · Outer: ${kindLabelOf(l.outer_effect)}`;
+  if (l.outer_effect) return `Inner: ${l.effect ? kindLabelOf(l.effect) : "Color"} · Outer: ${kindLabelOf(l.outer_effect)}`;
   if (l.effect) return kindLabelOf(l.effect) + (l.effect.side && l.effect.side !== "both" ? ` (${l.effect.side} ring)` : "");
-  return "Colour";
+  return "Color";
 }
 
 function deviceMenu(l, anchor) {
@@ -355,6 +355,7 @@ function openDrawer(target) {
   closeMenu();
   drawer.target = target;
   drawer.open = true;
+  drawer.activeColor = 0;
   const lights = targetLights();
   if (target.type === "group") {
     const g = last.groups.find((x) => x.id === target.id);
@@ -384,13 +385,13 @@ function closeDrawer() {
   }, 200);
 }
 
-/// What the colour, speed and direction controls offer for the chosen effect.
+/// What the color, speed and direction controls offer for the chosen effect.
 function drawerControls() {
   if (drawer.kind === "custom") return { colors: 0, speed: false, directions: [], reverse: false, hint: "" };
   if (drawer.kind === "script") return { colors: 0, speed: true, directions: [], reverse: false, hint: "" };
   if (drawer.kind === "lianli") {
     const m = lianliInfo(drawer.mode) || { max_colors: 4, directions: [], speed: true };
-    return { colors: m.per_fan_colors ? 4 : m.max_colors, speed: m.speed, directions: m.directions, reverse: false, hint: m.per_fan_colors ? "Each fan takes the next colour." : "" };
+    return { colors: m.per_fan_colors ? 4 : m.max_colors, speed: m.speed, directions: m.directions, reverse: false, hint: m.per_fan_colors ? "Each fan takes the next color." : "" };
   }
   const info = kindInfo(drawer.kind);
   return { colors: info.colors, speed: drawer.kind !== "static", directions: [], reverse: !!info.reverse, hint: info.hint || "" };
@@ -480,26 +481,62 @@ function savePresets(list) {
   invoke("set_color_presets", { presets: list }).catch((e) => toast(String(e), true));
 }
 
+function activeColor() {
+  return Math.min(drawer.activeColor || 0, drawer.colors.length - 1);
+}
+
+function useColor(hex, index) {
+  drawer.colors[index] = hex;
+  drawer.activeColor = index;
+  renderDrawer();
+}
+
+/// First click on a color box selects it (presets then replace it); a click on the selected box opens the picker.
+function selectableColors(row) {
+  row.querySelectorAll(".fx-color").forEach((wrap, i) => {
+    const box = wrap.querySelector(".swatch");
+    wrap.classList.toggle("active", i === activeColor());
+    box.addEventListener("click", (e) => {
+      if (i === activeColor()) return;
+      e.preventDefault();
+      drawer.activeColor = i;
+      row.querySelectorAll(".fx-color").forEach((w, j) => w.classList.toggle("active", j === i));
+    });
+    wrap.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      wrap.classList.add("drop");
+    });
+    wrap.addEventListener("dragleave", () => wrap.classList.remove("drop"));
+    wrap.addEventListener("drop", (e) => {
+      e.preventDefault();
+      const hex = e.dataTransfer.getData("text/plain");
+      if (/^#[0-9a-f]{6}$/i.test(hex)) useColor(hex, i);
+    });
+  });
+  return row;
+}
+
 function presetRow() {
   const row = el("div", { class: "presets" });
   if (!editingPresets) {
     for (const hex of PRESETS) {
-      const p = el("button", { class: "preset", title: "Use " + hex });
+      const p = el("button", { class: "preset", title: "Click to use for the selected color, or drag onto a color", draggable: "true" });
       p.style.background = hex;
-      p.addEventListener("click", () => {
-        drawer.colors[drawer.colors.length - 1] = hex;
-        renderDrawer();
+      p.addEventListener("click", () => useColor(hex, activeColor()));
+      p.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/plain", hex);
+        e.dataTransfer.effectAllowed = "copy";
       });
       row.append(p);
     }
-    row.append(el("button", { class: "btn mini ghost", title: "Change these quick colours", onclick: () => { editingPresets = true; renderDrawer(); } }, "Edit"));
+    row.append(el("button", { class: "btn mini ghost", title: "Change these quick colors", onclick: () => { editingPresets = true; renderDrawer(); } }, "Edit"));
     return row;
   }
   const list = PRESETS.slice();
   list.forEach((hex, i) => {
     const input = el("input", { type: "color", value: hex });
     input.addEventListener("change", () => { list[i] = input.value; savePresets(list.slice()); });
-    const box = el("label", { class: "preset editable", title: "Pick a colour" }, input);
+    const box = el("label", { class: "preset editable", title: "Pick a color" }, input);
     box.style.background = hex;
     input.addEventListener("input", () => (box.style.background = input.value));
     const wrap = el("div", { class: "fx-color" }, box);
@@ -509,11 +546,11 @@ function presetRow() {
     row.append(wrap);
   });
   if (list.length < 12) {
-    row.append(el("button", { class: "btn mini", title: "Add the last colour above", onclick: () => { list.push(drawer.colors[drawer.colors.length - 1] || "#ffffff"); savePresets(list); renderDrawer(); } }, "+"));
+    row.append(el("button", { class: "btn mini", title: "Add the last color above", onclick: () => { list.push(drawer.colors[drawer.colors.length - 1] || "#ffffff"); savePresets(list); renderDrawer(); } }, "+"));
   }
   row.append(
-    el("button", { class: "btn mini ghost", title: "Use the colours above as the quick colours", onclick: () => { savePresets(drawer.colors.slice()); renderDrawer(); } }, "Save current"),
-    el("button", { class: "btn mini ghost", title: "Back to the built-in colours", onclick: () => { savePresets([]); PRESETS = DEFAULT_PRESETS.slice(); renderDrawer(); } }, "Reset"),
+    el("button", { class: "btn mini ghost", title: "Use the colors above as the quick colors", onclick: () => { savePresets(drawer.colors.slice()); renderDrawer(); } }, "Save current"),
+    el("button", { class: "btn mini ghost", title: "Back to the built-in colors", onclick: () => { savePresets([]); PRESETS = DEFAULT_PRESETS.slice(); renderDrawer(); } }, "Reset"),
     el("button", { class: "btn mini", onclick: () => { editingPresets = false; renderDrawer(); } }, "Done"),
   );
   return row;
@@ -521,11 +558,11 @@ function presetRow() {
 
 function oledColorsRow(max) {
   const saved = Number(localStorage.getItem("rgbable.oledColors")) || 4;
-  const count = el("select", { title: "How many colours to take" },
-    Array.from({ length: max }, (_, i) => el("option", { value: i + 1 }, `${i + 1} colour${i ? "s" : ""}`)));
+  const count = el("select", { title: "How many colors to take" },
+    Array.from({ length: max }, (_, i) => el("option", { value: i + 1 }, `${i + 1} color${i ? "s" : ""}`)));
   count.value = String(Math.min(saved, max));
   count.addEventListener("change", () => localStorage.setItem("rgbable.oledColors", count.value));
-  const button = el("button", { class: "btn mini", title: "Take the main colours from what's on the OLED" }, "Colours from OLED");
+  const button = el("button", { class: "btn mini", title: "Take the main colors from what's on the OLED" }, "Colors from OLED");
   button.addEventListener("click", async () => {
     button.disabled = true;
     button.textContent = "Reading the video…";
@@ -535,7 +572,7 @@ function oledColorsRow(max) {
     } catch (e) {
       toast(String(e), true);
       button.disabled = false;
-      button.textContent = "Colours from OLED";
+      button.textContent = "Colors from OLED";
     }
   });
   return el("div", { class: "oled-colors" }, [button, count]);
@@ -570,8 +607,8 @@ function renderDrawer() {
   settings.replaceChildren();
   if (c.colors > 0) {
     settings.append(el("div", { class: "setting" }, [
-      el("span", { class: "fx-label" }, "Colours"),
-      colorRow(drawer.colors, c.colors, (structural) => (structural ? renderDrawer() : schedulePreview())),
+      el("span", { class: "fx-label" }, "Colors"),
+      selectableColors(colorRow(drawer.colors, c.colors, (structural) => (structural ? renderDrawer() : schedulePreview()))),
     ]));
     settings.append(el("div", { class: "setting" }, [el("span", { class: "fx-label" }, ""), presetRow()]));
     settings.append(el("div", { class: "setting" }, [el("span", { class: "fx-label" }, ""), oledColorsRow(c.colors)]));

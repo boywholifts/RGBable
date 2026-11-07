@@ -15,7 +15,7 @@ use lianli_shared::rgb::{
 const SL_V4_POSITIONS: usize = 13;
 const SL_V4_SLOTS_PER_FAN: usize = 26;
 
-/// What a device shows on each of its sides; `None` means its plain colour.
+/// What a device shows on each of its sides; `None` means its plain color.
 /// Devices without sides only use `inner`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Lighting {
@@ -286,7 +286,7 @@ fn logical_layout(zones: &[usize], profile: Option<RgbRenderProfile>) -> Logical
 }
 
 /// Builds a physical frame: `color(side, logical_index, physical_index)` gives each slot's
-/// colour, or `None` to keep the device's plain colour there.
+/// color, or `None` to keep the device's plain color there.
 fn paint(
     base: &[[u8; 3]],
     zones: &[usize],
@@ -680,7 +680,7 @@ mod tests {
             assert_eq!(
                 frames.frames.len(),
                 colors * 2 * SL_V4_POSITIONS,
-                "{colors} colours"
+                "{colors} colors"
             );
         }
     }

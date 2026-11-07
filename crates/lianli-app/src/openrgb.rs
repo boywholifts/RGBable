@@ -1,6 +1,6 @@
 //! Minimal OpenRGB SDK client. OpenRGB runs in the background as a server and
 //! keeps its own drivers for RAM, GPU, motherboard and other non-Lian Li
-//! lighting; RGBable lists those devices and sets their colours over the SDK.
+//! lighting; RGBable lists those devices and sets their colors over the SDK.
 //!
 //! Protocol 6 (OpenRGB 1.0) is requested; older servers negotiate down. With
 //! protocol 6 every command is acknowledged with a status code, so failures
@@ -78,7 +78,7 @@ pub struct OpenRgb {
 /// Effects OpenRGB devices play, keyed by controller index. `generation` changes whenever
 /// the set changes, so the animator puts each device back into direct mode.
 /// A run of a device's LEDs that follows one lighting: an effect drawn across `zones`
-/// (LED counts), or a plain colour.
+/// (LED counts), or a plain color.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LedPart {
     pub zones: Vec<usize>,
@@ -212,7 +212,7 @@ impl OpenRgb {
         parse_controller(index, &data, version)
     }
 
-    /// Put the device in its custom/direct mode and paint every LED one colour.
+    /// Put the device in its custom/direct mode and paint every LED one color.
     pub fn set_color(&self, index: u32, color: [u8; 3]) -> Result<()> {
         let leds = self.led_count(index)?;
         self.set_leds(index, &vec![color; leds], true)
@@ -227,7 +227,7 @@ impl OpenRgb {
             .context("unknown OpenRGB device")
     }
 
-    /// Writes one colour per LED; `custom_mode` first switches the device to direct control.
+    /// Writes one color per LED; `custom_mode` first switches the device to direct control.
     pub fn set_leds(&self, index: u32, colors: &[[u8; 3]], custom_mode: bool) -> Result<()> {
         let leds = colors.len();
         let mut guard = self.stream.lock();
@@ -554,11 +554,11 @@ fn read_mode(r: &mut Reader<'_>, version: u32) -> Result<String> {
     if version >= 3 {
         r.skip(4 * 2)?; // brightness min/max
     }
-    r.skip(4 * 3)?; // colours min/max, speed
+    r.skip(4 * 3)?; // colors min/max, speed
     if version >= 3 {
         r.skip(4)?; // brightness
     }
-    r.skip(4 * 2)?; // direction, colour mode
+    r.skip(4 * 2)?; // direction, color mode
     let colors = r.u16()? as usize;
     r.skip(colors * 4)?;
     Ok(name)

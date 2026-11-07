@@ -435,8 +435,8 @@ pub fn set_all(
     Ok(())
 }
 
-/// Recolours the synced lighting with `count` colours from what's on the OLED, keeping the
-/// effect itself. A single static colour becomes a wave when more than one colour is asked for.
+/// Recolors the synced lighting with `count` colors from what's on the OLED, keeping the
+/// effect itself. A single static color becomes a wave when more than one color is asked for.
 pub fn match_oled(engine: &Engine, openrgb: &OpenRgb, count: u8) -> Result<Vec<[u8; 3]>> {
     let oled = engine
         .config()

@@ -58,10 +58,10 @@ pub struct Config {
     pub custom_effects: Vec<Effect>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub openrgb_exe: Option<PathBuf>,
-    /// The quick colours in the effect panel, as #rrggbb. Empty means the built-in set.
+    /// The quick colors in the effect panel, as #rrggbb. Empty means the built-in set.
     #[serde(default)]
     pub color_presets: Vec<String>,
-    /// When set, synced lighting takes this many colours from each new OLED video.
+    /// When set, synced lighting takes this many colors from each new OLED video.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oled_match: Option<u8>,
 }
@@ -291,7 +291,7 @@ impl Engine {
 
         self.build_controllers(&devices, ring);
 
-        // Restore saved colours.
+        // Restore saved colors.
         let config = self.config();
         for ctl in self.controllers.read().iter() {
             let saved = if ctl.id == RING_ID {
@@ -473,7 +473,7 @@ impl Engine {
         Ok(())
     }
 
-    /// A whole-device static effect becomes a plain colour, so the device keeps a single saved colour.
+    /// A whole-device static effect becomes a plain color, so the device keeps a single saved color.
     pub fn set_effect(&self, id: &str, effect: Effect) -> Result<()> {
         if !effect.is_animated() && effect.side == Side::Both {
             return self.set_color(id, effect.frame(&[1], 0.0)[0]);
@@ -528,7 +528,7 @@ impl Engine {
         }
     }
 
-    /// Blinks a device white so the user can tell which one it is, then restores its colour.
+    /// Blinks a device white so the user can tell which one it is, then restores its color.
     pub fn identify(self: &Arc<Self>, id: &str) -> Result<()> {
         let ctl = self
             .controllers
@@ -625,7 +625,7 @@ impl Engine {
     /// Wireless lighting goes out one device at a time and is confirmed through the
     /// receiver's status polls (about every 500 ms). An upload the device didn't take is
     /// resent, and a device in motherboard-sync mode is switched out of it first.
-    /// The ring is USB: static colours are sent once, effects are streamed.
+    /// The ring is USB: static colors are sent once, effects are streamed.
     fn rgb_writer(self: &Arc<Self>, wireless: &WirelessController) {
         const SPACING: Duration = Duration::from_millis(150);
         const CONFIRM_WAIT: Duration = Duration::from_millis(1500);
@@ -1032,7 +1032,7 @@ const UPLOAD_BUDGET: usize = 6 * 1024;
 /// At this level an effect is shown as a still frame.
 const MAX_SHRINK: u8 = 3;
 
-/// Static colours go up as one frame; effects as a loop the device plays by itself, drawn
+/// Static colors go up as one frame; effects as a loop the device plays by itself, drawn
 /// on the device's real layout and made smaller until it fits the size budget.
 fn prepare_lighting(
     wireless: &WirelessController,

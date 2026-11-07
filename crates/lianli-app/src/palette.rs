@@ -1,4 +1,4 @@
-//! Picks the main colours of a video or image, for lighting that matches the OLED.
+//! Picks the main colors of a video or image, for lighting that matches the OLED.
 
 use anyhow::{bail, Context, Result};
 use std::path::Path;
@@ -7,7 +7,7 @@ const WIDTH: usize = 48;
 const HEIGHT: usize = 27;
 const FRAMES: usize = 16;
 
-/// Up to `count` vivid colours from `file`, the most present first.
+/// Up to `count` vivid colors from `file`, the most present first.
 pub fn from_media(file: &Path, count: usize) -> Result<Vec<[u8; 3]>> {
     let pixels = sample(file)?;
     Ok(pick(&pixels, count.clamp(1, 8)))
@@ -55,7 +55,7 @@ fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
 
 /// K-means over the pixels that would show on LEDs (near-black and grey ones are
 /// dropped, since OLED videos are mostly dark). Clusters are ranked by size and
-/// colourfulness, then brightened to full, because dim colours look muddy on LEDs.
+/// colorfulness, then brightened to full, because dim colors look muddy on LEDs.
 pub fn pick(pixels: &[[u8; 3]], count: usize) -> Vec<[u8; 3]> {
     let mut points: Vec<[f32; 3]> = pixels
         .iter()
@@ -72,7 +72,7 @@ pub fn pick(pixels: &[[u8; 3]], count: usize) -> Vec<[u8; 3]> {
         return vec![[255, 255, 255]];
     }
 
-    // farthest-point start, so small but distinct colours get a cluster
+    // farthest-point start, so small but distinct colors get a cluster
     let mut centres = vec![points[points.len() / 2]];
     while centres.len() < count.min(points.len()) {
         let far = points
@@ -140,7 +140,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn finds_the_bright_colours_in_a_dark_frame() {
+    fn finds_the_bright_colors_in_a_dark_frame() {
         let mut pixels = vec![[5, 5, 8]; 1000];
         pixels.extend(vec![[200, 0, 120]; 80]);
         pixels.extend(vec![[0, 150, 160]; 40]);

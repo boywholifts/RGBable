@@ -3,7 +3,7 @@
 const KINDS = [
   { id: "static", label: "Static", colors: 1 },
   { id: "breathing", label: "Breathing", colors: 4 },
-  { id: "color_cycle", label: "Colour cycle", colors: 4 },
+  { id: "color_cycle", label: "Color cycle", colors: 4 },
   { id: "rainbow", label: "Rainbow", colors: 0 },
   { id: "rainbow_wave", label: "Rainbow wave", colors: 0, reverse: true },
   { id: "wave", label: "Wave", colors: 4, reverse: true },
@@ -16,7 +16,7 @@ const KINDS = [
   { id: "runway", label: "Runway", colors: 4, reverse: true },
   { id: "fill", label: "Fill", colors: 4, reverse: true },
   { id: "ripple", label: "Ripple", colors: 4 },
-  { id: "starry_night", label: "Starry night", colors: 2, hint: "The first colour is the sky, the second the stars.", defaults: ["#2a0aa0", "#ffffff"] },
+  { id: "starry_night", label: "Starry night", colors: 2, hint: "The first color is the sky, the second the stars.", defaults: ["#2a0aa0", "#ffffff"] },
   { id: "aurora", label: "Aurora", colors: 4, reverse: true, defaults: ["#00ffa0", "#8000ff", "#00a0ff"] },
   { id: "police", label: "Police", colors: 2, defaults: ["#ff0000", "#0040ff"] },
   { id: "drizzle", label: "Drizzle", colors: 6, reverse: true, hint: "Lian Li's Drizzling. Strimers play their built-in version.", defaults: ["#00e5ff", "#8000ff", "#ff2040"] },
@@ -34,13 +34,13 @@ const kindInfo = (id) => KINDS.find((k) => k.id === id) || KINDS[0];
 let LIANLI = [];
 let MINE = [];
 const DIRECTIONS = { Clockwise: "Clockwise", CounterClockwise: "Counter-clockwise", Up: "Up", Down: "Down", Spread: "Spread out", Gather: "Gather in" };
-const MODE_NAMES = { RainbowMorph: "Rainbow morph", ColorCycle: "Colour cycle", ElectricCurrent: "Electric current", ShuttleRun: "Shuttle run", GradientRibbon: "Gradient ribbon", PingPong: "Ping-pong" };
+const MODE_NAMES = { RainbowMorph: "Rainbow morph", ColorCycle: "Color cycle", ElectricCurrent: "Electric current", ShuttleRun: "Shuttle run", GradientRibbon: "Gradient ribbon", PingPong: "Ping-pong" };
 const modeName = (mode) => MODE_NAMES[mode] || mode.replace(/([a-z])([A-Z])/g, "$1 $2");
 const lianliInfo = (mode) => LIANLI.find((m) => m.mode === mode);
 const isCustom = (effect) => !!effect && (effect.kind === "custom" || effect.kind === "script");
 
 function kindLabelOf(effect) {
-  if (!effect) return "Colour";
+  if (!effect) return "Color";
   if (effect.kind === "lianli") return modeName(effect.mode || "");
   if (isCustom(effect)) return effect.name || "Custom";
   return kindInfo(effect.kind).label;
@@ -67,11 +67,11 @@ function effectColors(effect) {
   return colors.length ? colors : ["#8000ff"];
 }
 
-/// A colour box. With an effect it shows the effect's colours moving; picking a colour sets a plain colour.
+/// A color box. With an effect it shows the effect's colors moving; picking a color sets a plain color.
 function swatch(color, onPick, effect) {
   const input = el("input", { type: "color", value: rgbToHex(color) });
   const animated = effect && effect.kind !== "static";
-  const label = el("label", { class: "swatch", title: animated ? `${kindLabelOf(effect)}: pick a colour to replace it` : "Pick a colour" }, input);
+  const label = el("label", { class: "swatch", title: animated ? `${kindLabelOf(effect)}: pick a color to replace it` : "Pick a color" }, input);
   label.style.setProperty("--glow", rgbToHex(color));
   if (animated) {
     const colors = effectColors(effect);
@@ -89,7 +89,7 @@ function swatch(color, onPick, effect) {
   return label;
 }
 
-/// Editable list of colour boxes; `onChange(structural)` is told whether boxes were added or removed.
+/// Editable list of color boxes; `onChange(structural)` is told whether boxes were added or removed.
 function colorRow(colors, max, onChange) {
   const row = el("div", { class: "fx-colors" });
   colors.forEach((hex, i) => {
@@ -102,12 +102,12 @@ function colorRow(colors, max, onChange) {
     });
     const wrap = el("div", { class: "fx-color" }, s);
     if (colors.length > 1) {
-      wrap.append(el("button", { class: "remove", title: "Remove colour", onclick: () => { colors.splice(i, 1); onChange(true); } }, "×"));
+      wrap.append(el("button", { class: "remove", title: "Remove color", onclick: () => { colors.splice(i, 1); onChange(true); } }, "×"));
     }
     row.append(wrap);
   });
   if (colors.length < max) {
-    row.append(el("button", { class: "btn mini", title: "Add a colour", onclick: () => { colors.push(PRESETS[colors.length % PRESETS.length]); onChange(true); } }, "+"));
+    row.append(el("button", { class: "btn mini", title: "Add a color", onclick: () => { colors.push(PRESETS[colors.length % PRESETS.length]); onChange(true); } }, "+"));
   }
   return row;
 }

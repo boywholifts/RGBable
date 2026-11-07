@@ -82,7 +82,7 @@ function showWizardStep() {
     el("label", { class: "field-col" }, [el("span", {}, "Name"), name]),
     el("label", { class: "field-col" }, [el("span", {}, "Group"), group]),
     el("label", { class: "toggle-row" }, [
-      el("div", {}, [el("div", {}, "Include in Sync everything"), el("div", { class: "muted small" }, "Turn off for things like monitors you don't want recoloured.")]),
+      el("div", {}, [el("div", {}, "Include in Sync everything"), el("div", { class: "muted small" }, "Turn off for things like monitors you don't want recolored.")]),
       sync,
     ])
   );

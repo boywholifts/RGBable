@@ -269,7 +269,7 @@ fn hex(c: [u8; 3]) -> String {
     format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])
 }
 
-/// Colours from `file`, or from what's on the OLED, without applying them.
+/// Colors from `file`, or from what's on the OLED, without applying them.
 #[tauri::command]
 async fn oled_palette(
     state: State<'_, AppState>,
