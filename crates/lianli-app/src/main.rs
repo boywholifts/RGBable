@@ -1054,9 +1054,44 @@ fn connect_openrgb_in_background(engine: Arc<Engine>, openrgb: Arc<OpenRgb>, sta
         for _ in 0..12 {
             if openrgb.connect(config.openrgb_port).is_ok() {
                 lights::after_openrgb_connect(&engine, &openrgb);
+                watch_openrgb_devices(&engine, &openrgb);
                 return;
             }
             std::thread::sleep(std::time::Duration::from_secs(5));
         }
     });
+}
+
+/// Picks up devices OpenRGB finds after RGBable connected: quickly while OpenRGB is still
+/// detecting at startup, then twice a minute for devices plugged in later. Runs for the
+/// life of the app.
+fn watch_openrgb_devices(engine: &Arc<Engine>, openrgb: &Arc<OpenRgb>) {
+    static WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if WATCHING.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return;
+    }
+    let started = std::time::Instant::now();
+    loop {
+        let wait = if started.elapsed() < std::time::Duration::from_secs(90) {
+            3
+        } else {
+            30
+        };
+        std::thread::sleep(std::time::Duration::from_secs(wait));
+        let changed = match openrgb.device_list_changed() {
+            Ok(changed) => changed,
+            Err(_) => continue,
+        };
+        if !changed {
+            continue;
+        }
+        let port = engine.config().openrgb_port;
+        match openrgb.connect(port) {
+            Ok(()) => {
+                tracing::info!("OpenRGB's device list changed; reloaded it");
+                lights::after_openrgb_connect(engine, openrgb);
+            }
+            Err(e) => tracing::warn!("reloading OpenRGB devices: {e:#}"),
+        }
+    }
 }

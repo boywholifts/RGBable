@@ -72,6 +72,7 @@ pub struct OpenRgb {
     port: RwLock<Option<u16>>,
     status: RwLock<String>,
     devices: RwLock<Vec<OrgbDevice>>,
+    listed_ids: RwLock<Vec<u32>>,
     animations: Mutex<Animations>,
 }
 
@@ -123,6 +124,7 @@ impl OpenRgb {
             port: RwLock::new(None),
             status: RwLock::new("Not connected".into()),
             devices: RwLock::new(Vec::new()),
+            listed_ids: RwLock::new(Vec::new()),
             animations: Mutex::new(Animations::default()),
         }
     }
@@ -146,7 +148,7 @@ impl OpenRgb {
         for port in ports {
             match Self::open(port) {
                 Ok((mut stream, version)) => match list_devices(&mut stream, version) {
-                    Ok(devices) if !devices.is_empty() => {
+                    Ok((ids, devices)) if !devices.is_empty() => {
                         info!(
                             "OpenRGB on port {port}: {} device(s), protocol {version}",
                             devices.len()
@@ -154,6 +156,7 @@ impl OpenRgb {
                         *self.status.write() = format!("Connected to OpenRGB on port {port}");
                         *self.port.write() = Some(port);
                         *self.devices.write() = devices;
+                        *self.listed_ids.write() = ids;
                         *self.stream.lock() = Some((stream, version));
                         return Ok(());
                     }
@@ -193,6 +196,20 @@ impl OpenRgb {
             .get(..4)
             .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
         Ok((stream, server.min(CLIENT_PROTOCOL)))
+    }
+
+    /// True when OpenRGB now lists different controllers than were read at connect. OpenRGB
+    /// starts its server before detection finishes, and devices can be plugged in later.
+    pub fn device_list_changed(&self) -> Result<bool> {
+        let mut guard = self.stream.lock();
+        let (stream, version) = guard.as_mut().context("not connected to OpenRGB")?;
+        let version = *version;
+        send(stream, 0, PKT_REQUEST_CONTROLLER_COUNT, &[])?;
+        let reply = expect(stream, PKT_REQUEST_CONTROLLER_COUNT)?;
+        let ids = controller_ids(&reply, version);
+        drop(guard);
+        let known = self.listed_ids.read().clone();
+        Ok(ids != known)
     }
 
     /// Re-read one controller from the server (to verify what it applied).
@@ -391,24 +408,28 @@ fn expect(stream: &mut TcpStream, id: u32) -> Result<Vec<u8>> {
     }
 }
 
-fn list_devices(stream: &mut TcpStream, version: u32) -> Result<Vec<OrgbDevice>> {
-    send(stream, 0, PKT_REQUEST_CONTROLLER_COUNT, &[])?;
-    let reply = expect(stream, PKT_REQUEST_CONTROLLER_COUNT)?;
+/// Protocol 6 addresses controllers by ID (listed after the count), older ones by index.
+fn controller_ids(reply: &[u8], version: u32) -> Vec<u32> {
     let count = reply
         .get(..4)
         .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()))
         .min(256);
-    // Protocol 6 addresses controllers by ID (listed after the count), older by index.
-    let ids: Vec<u32> = if version >= 6 {
+    if version >= 6 {
         (0..count as usize)
             .filter_map(|i| reply.get(4 + i * 4..8 + i * 4))
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
             .collect()
     } else {
         (0..count).collect()
-    };
+    }
+}
+
+fn list_devices(stream: &mut TcpStream, version: u32) -> Result<(Vec<u32>, Vec<OrgbDevice>)> {
+    send(stream, 0, PKT_REQUEST_CONTROLLER_COUNT, &[])?;
+    let reply = expect(stream, PKT_REQUEST_CONTROLLER_COUNT)?;
+    let ids = controller_ids(&reply, version);
     let mut devices = Vec::new();
-    for index in ids {
+    for &index in &ids {
         let request: Vec<u8> = if version >= 6 {
             Vec::new()
         } else {
@@ -421,7 +442,7 @@ fn list_devices(stream: &mut TcpStream, version: u32) -> Result<Vec<OrgbDevice>>
             Err(e) => warn!("OpenRGB device {index}: {e:#}"),
         }
     }
-    Ok(devices)
+    Ok((ids, devices))
 }
 
 fn kind_name(kind: u32) -> &'static str {
