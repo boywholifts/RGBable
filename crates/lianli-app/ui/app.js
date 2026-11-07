@@ -323,7 +323,16 @@ async function refresh() {
 }
 
 refresh();
-setInterval(refresh, 1500);
+let refreshing = false;
+setInterval(async () => {
+  if (refreshing || document.hidden) return;
+  refreshing = true;
+  try {
+    await refresh();
+  } finally {
+    refreshing = false;
+  }
+}, 1500);
 $("#ram-hint-link").addEventListener("click", (e) => {
   e.preventDefault();
   document.querySelector('.nav[data-page="settings"]').click();

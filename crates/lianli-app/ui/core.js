@@ -52,6 +52,7 @@ document.querySelectorAll(".nav").forEach((b) =>
   b.addEventListener("click", () => {
     document.querySelectorAll(".nav").forEach((n) => n.classList.toggle("active", n === b));
     document.querySelectorAll(".page").forEach((p) => p.classList.toggle("active", p.id === "page-" + b.dataset.page));
+    document.dispatchEvent(new CustomEvent("page-changed", { detail: b.dataset.page }));
   })
 );
 

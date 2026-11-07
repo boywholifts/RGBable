@@ -108,6 +108,24 @@ function ledCountDialog(l) {
   ], [el("button", { class: "btn", onclick: closeDialog }, "Done")]);
 }
 
+function delayDialog(l) {
+  const value = el("span", { class: "muted small" });
+  const slider = el("input", { type: "range", min: 0, max: 5000, step: 100, value: l.delay_ms || 0 });
+  const show = () => (value.textContent = Number(slider.value) ? `${(Number(slider.value) / 1000).toFixed(1)} s behind` : "In step");
+  show();
+  slider.addEventListener("input", show);
+  const save = el("button", { class: "btn primary" }, "Save");
+  save.addEventListener("click", async () => {
+    closeDialog();
+    await call("set_delay", { id: l.id, delayMs: Number(slider.value) }, `${l.name}: ${value.textContent.toLowerCase()}`);
+    rerender();
+  });
+  openDialog(`Start delay · ${l.name}`, [
+    el("p", { class: "muted small" }, "Runs this device's effect behind the others, so identical devices (two RAM sticks, a row of fans) don't move in step. Good with Drizzle, Meteor and Wave."),
+    el("label", { class: "setting" }, [el("span", { class: "fx-label" }, "Delay"), slider, value]),
+  ], [el("button", { class: "btn", onclick: closeDialog }, "Cancel"), save]);
+}
+
 // ---------------------------------------------------------------- rows
 
 function effectSummary(l) {
@@ -124,6 +142,7 @@ function deviceMenu(l, anchor) {
     { label: "Identify (blink)", onClick: () => call("identify", { id: l.id }, `Blinking ${l.name}`) },
     { label: "Include in Sync everything", checked: l.sync, onClick: () => call("set_sync", { id: l.id, sync: !l.sync }).then(rerender) },
   ];
+  items.push({ label: l.delay_ms ? `Start delay (${(l.delay_ms / 1000).toFixed(1)} s)…` : "Start delay…", onClick: () => delayDialog(l) });
   if (l.zones && l.zones.length) items.push({ label: "LED count…", onClick: () => ledCountDialog(l) });
   items.push("-", { header: "Move to group" });
   items.push({ label: "No group", checked: !l.group, onClick: () => call("move_to_group", { id: l.id, group: null }).then(rerender) });

@@ -28,6 +28,7 @@ pub struct LightView {
     pub group: Option<String>,
     /// OpenRGB zones whose LED count the user can set (addressable headers).
     pub zones: Vec<ZoneView>,
+    pub delay_ms: u32,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -93,6 +94,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 effect: d.effect,
                 outer_effect: d.outer_effect,
                 sides: d.sides,
+                delay_ms: 0,
                 zones: Vec::new(),
                 sync: saved.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &d.id),
@@ -140,6 +142,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 effect: device_effect.clone(),
                 outer_effect: None,
                 sides: false,
+                delay_ms: 0,
                 zones: device
                     .zones
                     .iter()
@@ -177,12 +180,16 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 },
                 outer_effect: None,
                 sides: false,
+                delay_ms: 0,
                 zones: vec![zone_view(index, zone)],
                 sync: own.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &header),
                 id: header,
             });
         }
+    }
+    for light in &mut list {
+        light.delay_ms = config.devices.get(&light.id).map_or(0, |d| d.delay_ms);
     }
     list
 }
@@ -245,6 +252,7 @@ fn has_lighting(config: &Config, id: &str) -> bool {
 /// lighting once it has one, and the motherboard's until then.
 fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
     let device_id = openrgb_id(device);
+    let board_delay = config.devices.get(&device_id).map_or(0, |d| d.delay_ms);
     let mut runs: Vec<(String, Vec<usize>)> = Vec::new();
     let zoned: usize = device.zones.iter().map(|z| z.leds).sum();
     if zoned == device.leds {
@@ -273,6 +281,10 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
                     .and_then(|s| s.color)
                     .or(device.first_color)
                     .unwrap_or([0, 0, 0]),
+                delay_ms: saved
+                    .map(|s| s.delay_ms)
+                    .filter(|&d| d > 0)
+                    .unwrap_or(board_delay),
             }
         })
         .collect()
@@ -392,6 +404,19 @@ pub fn set_effect(engine: &Engine, openrgb: &OpenRgb, id: &str, effect: Effect) 
     });
     push_device(engine, openrgb, &device)
 }
+
+pub fn set_delay(engine: &Engine, openrgb: &OpenRgb, id: &str, delay_ms: u32) -> Result<()> {
+    let delay_ms = delay_ms.min(MAX_DELAY_MS);
+    engine.update_config(|c| c.devices.entry(id.to_string()).or_default().delay_ms = delay_ms);
+    if !id.starts_with(OPENRGB_PREFIX) {
+        engine.relight(id);
+        return Ok(());
+    }
+    let device = openrgb_device(openrgb, id).context("that OpenRGB device is not connected")?;
+    push_device(engine, openrgb, &device)
+}
+
+pub const MAX_DELAY_MS: u32 = 10_000;
 
 pub fn set_color(engine: &Engine, openrgb: &OpenRgb, id: &str, color: [u8; 3]) -> Result<()> {
     set_effect(engine, openrgb, id, static_effect(color))
@@ -678,6 +703,24 @@ mod tests {
         let frame = compose(&device_parts(&config, &device), 0);
         assert_eq!(frame[..4], [[255, 0, 0]; 4]);
         assert_eq!(frame[4..], [[0, 0, 255]; 8]);
+    }
+
+    #[test]
+    fn a_delayed_device_shows_what_the_others_showed_earlier() {
+        let device = board();
+        let board_id = openrgb_id(&device);
+        let effect = Effect {
+            kind: EffectKind::Meteor,
+            colors: vec![[255, 0, 0]],
+            ..Effect::default()
+        };
+        let mut config = Config::default();
+        config.devices.entry(board_id.clone()).or_default().effect = Some(effect);
+        let in_step = device_parts(&config, &device);
+        config.devices.get_mut(&board_id).unwrap().delay_ms = 700;
+        let delayed = device_parts(&config, &device);
+        assert_eq!(compose(&delayed, 1000), compose(&in_step, 300));
+        assert_ne!(compose(&delayed, 1000), compose(&in_step, 1000));
     }
 
     #[test]

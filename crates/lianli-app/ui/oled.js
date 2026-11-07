@@ -22,6 +22,7 @@ function showOnScreen(path) {
   media.style.objectFit = oled.fit;
   media.addEventListener("error", () => screen.replaceChildren(el("div", { class: "oled-empty" }, "Can't preview this file here, but the OLED can still play it")));
   screen.replaceChildren(media);
+  syncPreviewPlayback();
 }
 
 function renderOledStage() {
@@ -213,3 +214,14 @@ document.querySelector('.nav[data-page="oled"]').addEventListener("click", () =>
   libraryRetries = 0;
   loadOledLibrary();
 });
+
+// The preview can be a 4K video; decoding it off-screen slows the whole app down.
+function syncPreviewPlayback() {
+  const video = $("#oled-screen video");
+  if (!video) return;
+  const visible = $("#page-oled").classList.contains("active") && !document.hidden;
+  if (visible) video.play().catch(() => {});
+  else video.pause();
+}
+document.addEventListener("page-changed", syncPreviewPlayback);
+document.addEventListener("visibilitychange", syncPreviewPlayback);

@@ -57,33 +57,50 @@ fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
 
-#[tauri::command]
-fn overview(state: State<'_, AppState>) -> Overview {
-    Overview {
-        status: state.engine.status(),
-        lconnect_running: engine::lconnect_running(),
+/// Runs off the UI thread: it takes locks the lighting threads also hold.
+#[tauri::command(async)]
+fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
+    let config = state.engine.config();
+    let status = state.engine.status();
+    Ok(Overview {
+        lconnect_running: status != "Ready" && engine::lconnect_running(),
+        status,
         devices: state.engine.devices(),
         telemetry: state.engine.telemetry(),
         oled: state.engine.oled(),
         openrgb: state.openrgb.view(),
-        autostart: autostart_enabled(),
+        autostart: autostart_cached(),
         data_dir: data_dir().to_string_lossy().into_owned(),
         lights: lights::lights(&state.engine, &state.openrgb),
         groups: lights::groups(&state.engine),
-        setup_done: state.engine.config().setup_done,
+        setup_done: config.setup_done,
         update: state.updater.view(),
-        update_channel: state.engine.config().update_channel,
-        manage_openrgb: state.engine.config().manage_openrgb,
-        color_presets: state.engine.config().color_presets,
-        oled_match: state.engine.config().oled_match,
-    }
+        update_channel: config.update_channel,
+        manage_openrgb: config.manage_openrgb,
+        color_presets: config.color_presets,
+        oled_match: config.oled_match,
+    })
+}
+
+static AUTOSTART: std::sync::OnceLock<std::sync::atomic::AtomicBool> = std::sync::OnceLock::new();
+
+/// The registry is read once (it spawns `reg`), then tracked as the user changes it.
+fn autostart_cached() -> bool {
+    AUTOSTART
+        .get_or_init(|| std::sync::atomic::AtomicBool::new(autostart_enabled()))
+        .load(std::sync::atomic::Ordering::Acquire)
 }
 
 fn chain(e: anyhow::Error) -> String {
     format!("{e:#}")
 }
 
-#[tauri::command]
+#[tauri::command(async)]
+fn set_delay(state: State<'_, AppState>, id: String, delay_ms: u32) -> Result<(), String> {
+    lights::set_delay(&state.engine, &state.openrgb, &id, delay_ms).map_err(chain)
+}
+
+#[tauri::command(async)]
 fn set_color(state: State<'_, AppState>, id: String, color: [u8; 3]) -> Result<(), String> {
     lights::set_color(&state.engine, &state.openrgb, &id, color).map_err(chain)
 }
@@ -104,12 +121,12 @@ async fn set_all(
     .map_err(chain)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_effect(state: State<'_, AppState>, id: String, effect: Effect) -> Result<(), String> {
     lights::set_effect(&state.engine, &state.openrgb, &id, effect).map_err(chain)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_group_effect(
     state: State<'_, AppState>,
     group: String,
@@ -125,7 +142,7 @@ fn default_name(state: &AppState, id: &str) -> Option<String> {
         .map(|l| l.default_name)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn rename(state: State<'_, AppState>, id: String, name: String) {
     let default = default_name(&state, &id);
     state
@@ -133,47 +150,47 @@ fn rename(state: State<'_, AppState>, id: String, name: String) {
         .update_config(|c| lights::set_name(c, &id, &name, default.as_deref()));
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn identify(state: State<'_, AppState>, id: String) -> Result<(), String> {
     lights::identify(&state.engine, &state.openrgb, &id).map_err(chain)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_sync(state: State<'_, AppState>, id: String, sync: bool) {
     state
         .engine
         .update_config(|c| lights::set_sync(c, &id, sync));
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn create_group(state: State<'_, AppState>, name: String) -> String {
     state
         .engine
         .update_config(|c| lights::create_group(c, &name))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn rename_group(state: State<'_, AppState>, group: String, name: String) {
     state
         .engine
         .update_config(|c| lights::rename_group(c, &group, &name));
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_group(state: State<'_, AppState>, group: String) {
     state
         .engine
         .update_config(|c| lights::delete_group(c, &group));
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn move_to_group(state: State<'_, AppState>, id: String, group: Option<String>) {
     state
         .engine
         .update_config(|c| lights::move_to_group(c, &id, group.as_deref()));
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_group_color(
     state: State<'_, AppState>,
     group: String,
@@ -188,7 +205,7 @@ fn set_group_color(
     .map_err(chain)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn finish_setup(state: State<'_, AppState>, entries: Vec<SetupEntry>) {
     let defaults: Vec<(String, String)> = lights::lights(&state.engine, &state.openrgb)
         .into_iter()
@@ -231,7 +248,7 @@ async fn pick_media(app: AppHandle) -> Option<String> {
         .map(|path| path.to_string_lossy().into_owned())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_oled(
     app: AppHandle,
     state: State<'_, AppState>,
@@ -311,7 +328,7 @@ async fn set_oled_match(state: State<'_, AppState>, count: Option<u8>) -> Result
         .map_err(chain)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_color_presets(state: State<'_, AppState>, presets: Vec<String>) {
     let presets: Vec<String> = presets
         .into_iter()
@@ -395,7 +412,7 @@ async fn add_oled_folder(app: AppHandle, state: State<'_, AppState>) -> Result<b
     Ok(true)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn remove_oled_folder(state: State<'_, AppState>, path: String) {
     let path = PathBuf::from(path);
     state
@@ -403,14 +420,14 @@ fn remove_oled_folder(state: State<'_, AppState>, path: String) {
         .update_config(|c| c.oled_folders.retain(|p| p != &path));
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_oled_link(state: State<'_, AppState>, linked: bool) {
     state
         .engine
         .update_config(|c| c.oled_hide_oledable = !linked);
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn prepare_oled(app: AppHandle, file: String, fit: String, fps: u32) {
     let file = PathBuf::from(file);
     allow_preview(&app, &file);
@@ -441,14 +458,18 @@ fn restart(app: &AppHandle) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn stop_oled(state: State<'_, AppState>) {
     state.engine.stop_oled();
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn set_autostart(enabled: bool) -> Result<(), String> {
-    set_autostart_impl(enabled).map_err(|e| format!("{e:#}"))
+    set_autostart_impl(enabled).map_err(|e| format!("{e:#}"))?;
+    AUTOSTART
+        .get_or_init(|| std::sync::atomic::AtomicBool::new(enabled))
+        .store(enabled, std::sync::atomic::Ordering::Release);
+    Ok(())
 }
 
 #[derive(Serialize)]
@@ -563,17 +584,17 @@ async fn preview_effect(effect: Effect) -> Result<Preview, String> {
         })
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn script_template() -> &'static str {
     script::TEMPLATE
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn custom_effects(state: State<'_, AppState>) -> Vec<Effect> {
     state.engine.config().custom_effects
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn save_custom_effect(state: State<'_, AppState>, effect: Effect) -> Result<(), String> {
     let effect = effect.sanitized();
     let name = effect
@@ -602,7 +623,7 @@ fn save_custom_effect(state: State<'_, AppState>, effect: Effect) -> Result<(), 
     Ok(())
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn delete_custom_effect(state: State<'_, AppState>, name: String) {
     state.engine.update_config(|c| {
         c.custom_effects
@@ -682,7 +703,7 @@ async fn import_custom_effects(
     Ok(imported)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 fn lianli_effects() -> Vec<render::LianliEffect> {
     render::lianli_effects()
 }
@@ -949,6 +970,7 @@ fn main() {
             set_oled,
             prepare_oled,
             restart_app,
+            set_delay,
             oled_palette,
             set_oled_match,
             set_color_presets,

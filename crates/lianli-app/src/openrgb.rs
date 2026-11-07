@@ -85,6 +85,7 @@ pub struct LedPart {
     pub zones: Vec<usize>,
     pub effect: Option<Effect>,
     pub color: [u8; 3],
+    pub delay_ms: u32,
 }
 
 impl LedPart {
@@ -100,7 +101,8 @@ pub fn compose(parts: &[LedPart], elapsed_ms: u64) -> Vec<[u8; 3]> {
         match part.effect.as_ref().filter(|e| e.is_animated()) {
             Some(effect) => {
                 let period = u64::from(effect.period_ms().max(1));
-                let phase = (elapsed_ms % period) as f32 / period as f32;
+                let behind = elapsed_ms as i64 - i64::from(part.delay_ms);
+                let phase = behind.rem_euclid(period as i64) as f32 / period as f32;
                 frame.extend(effect.frame(&part.zones, phase));
             }
             None => frame.extend(std::iter::repeat_n(part.color, part.leds())),

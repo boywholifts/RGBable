@@ -82,6 +82,13 @@ pub struct DeviceConfig {
     /// OpenRGB addressable zone sizes the user set, by zone index.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub zone_sizes: BTreeMap<usize, usize>,
+    /// How far behind the others this device runs its effect, so identical devices don't move in step.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub delay_ms: u32,
+}
+
+fn is_zero(value: &u32) -> bool {
+    *value == 0
 }
 
 impl DeviceConfig {
@@ -499,6 +506,13 @@ impl Engine {
         Ok(())
     }
 
+    /// Sends a wireless device its lighting again (after a setting such as its delay changed).
+    pub fn relight(&self, id: &str) {
+        if let Some(ctl) = self.controllers.read().iter().find(|c| c.id == id) {
+            ctl.dirty.store(true, Ordering::Release);
+        }
+    }
+
     pub fn set_all_effect(&self, effect: &Effect) {
         let config = self.config();
         let ids: Vec<String> = self
@@ -734,7 +748,8 @@ impl Engine {
                             shrink.remove(&mac);
                         }
                         let level = shrink.get(&mac).copied().unwrap_or(0);
-                        (prepare_lighting(wireless, ctl, &mac, level), 0)
+                        let delay = self.config().devices.get(&ctl.id).map_or(0, |d| d.delay_ms);
+                        (prepare_lighting(wireless, ctl, &mac, level, delay), 0)
                     }
                 };
                 let result = upload.and_then(|u| wireless.send_rgb_upload(&mac, &u, 4).map(|()| u));
@@ -1039,6 +1054,7 @@ fn prepare_lighting(
     ctl: &Controller,
     mac: &[u8; 6],
     shrink: u8,
+    delay_ms: u32,
 ) -> Result<WirelessRgbUpload> {
     let lighting = ctl.lighting.lock().clone();
     let base = ctl.colors.lock().clone();
@@ -1065,5 +1081,6 @@ fn prepare_lighting(
         frames.frames.len(),
         frames.compressed_len().unwrap_or(0)
     );
+    let frames = frames.delayed(delay_ms);
     wireless.prepare_rgb_animation(mac, &frames.frames, frames.timing)
 }

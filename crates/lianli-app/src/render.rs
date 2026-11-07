@@ -81,6 +81,17 @@ impl Frames {
         Ok(lianli_devices::tinyuz::compress(&raw)?.len())
     }
 
+    /// Starts the loop `delay_ms` behind, by playing its last frames first.
+    pub fn delayed(mut self, delay_ms: u32) -> Self {
+        let frame_ms = (self.timing.interval_hundredths / 160).max(1);
+        let len = self.frames.len();
+        if len > 1 {
+            let shift = (delay_ms / frame_ms) as usize % len;
+            self.frames.rotate_right(shift);
+        }
+        self
+    }
+
     /// Keeps every `step`-th frame and stretches the timing to match.
     fn decimated(self, step: usize) -> Self {
         if step <= 1 || self.frames.len() < 2 * step {
