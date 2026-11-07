@@ -1968,3 +1968,63 @@ mod response_tests {
         assert!(validate_discovery_response(&[0x10, 1, 0, 0], 1).is_err());
     }
 }
+
+/// One wireless device record as reported by the RX dongle, with its raw bytes.
+#[derive(Debug, Clone)]
+pub struct SnapshotRecord {
+    pub raw: [u8; 42],
+    pub device: Option<DiscoveredDevice>,
+    pub master: Option<([u8; 6], u8)>,
+}
+
+/// Read-only, one-shot query of the wireless device list.
+///
+/// Opens only the RX dongle and sends the same GetDev request the normal
+/// polling loop sends, with no motherboard RPM attached. It never opens the
+/// TX dongle, changes channels, binds, or resets anything. L-Connect must be
+/// closed, because WinUSB devices can be opened by only one program at a time.
+pub fn read_only_snapshot() -> Result<Vec<SnapshotRecord>> {
+    let mut rx = super::transport::open_any(&RX_IDS).context("opening wireless RX dongle")?;
+    rx.detach_and_configure_with_cancel("RX", || false)
+        .context("claiming wireless RX dongle")?;
+    rx.read_flush();
+
+    let mut pages = 1u8;
+    for _ in 0..2 {
+        let mut cmd = [0u8; 64];
+        cmd[0] = USB_CMD_SEND_RF;
+        cmd[1] = pages;
+        let mut response = vec![0u8; usize::from(pages) * 512];
+        rx.read_flush();
+        rx.write(&cmd, USB_TIMEOUT).context("sending GetDev query")?;
+        let len = rx.read_silence_checked(
+            &mut response,
+            Duration::from_millis(100),
+            Duration::from_millis(10),
+        )?;
+        let response = &response[..len];
+        validate_discovery_response(response, pages)?;
+        let needed = discovery_page_count(response[1]);
+        if needed > pages {
+            pages = needed.min(26);
+            continue;
+        }
+        let count = usize::from(response[1]).min(usize::from(pages) * 10);
+        let mut records = Vec::with_capacity(count);
+        for idx in 0..count {
+            let offset = 4 + idx * 42;
+            let Some(chunk) = response.get(offset..offset + 42) else { break };
+            let mut raw = [0u8; 42];
+            raw.copy_from_slice(chunk);
+            let master = parse_master_record(chunk);
+            let device = if master.is_none() {
+                parse_device_record(chunk, idx as u8)
+            } else {
+                None
+            };
+            records.push(SnapshotRecord { raw, device, master });
+        }
+        return Ok(records);
+    }
+    anyhow::bail!("wireless device list kept growing between queries")
+}

@@ -21,7 +21,7 @@ pub use aio::pump_rpm_to_timer;
 pub use bind::bind_transmitted;
 pub use clock_sync::{build_payload, SensorSnapshot};
 pub use controller::WirelessController;
-pub use discovery::DiscoveredDevice;
+pub use discovery::{read_only_snapshot, DiscoveredDevice, SnapshotRecord};
 pub use fan_type::WirelessFanType;
 pub use recovery::{Dongle, DonglePresence, RecoveryAttempt, RecoveryLadder, RecoveryPlan};
 pub use rgb::WirelessRgbUpload;
