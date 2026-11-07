@@ -75,7 +75,7 @@ function openDialog(title, body, actions) {
       el("div", { class: "row dialog-actions" }, [el("span", { class: "grow" }), ...actions]),
     ]),
   ]);
-  overlay.addEventListener("click", (e) => e.target === overlay && closeDialog());
+  closeOnBackdrop(overlay, closeDialog);
   document.body.append(overlay);
   const first = overlay.querySelector("input, select, textarea");
   if (first) setTimeout(() => first.focus(), 0);
@@ -655,7 +655,7 @@ function schedulePreview() {
 
 $("#d-close").addEventListener("click", closeDrawer);
 $("#d-cancel").addEventListener("click", closeDrawer);
-$("#drawer-bg").addEventListener("click", closeDrawer);
+closeOnBackdrop($("#drawer-bg"), closeDrawer);
 $("#d-apply").addEventListener("click", async () => {
   const effect = drawerEffect();
   const t = drawer.target;

@@ -55,3 +55,14 @@ document.querySelectorAll(".nav").forEach((b) =>
   })
 );
 
+
+/// Closes on a click that both starts and ends on the backdrop itself, so selecting text in a
+/// dialog and letting go outside it doesn't close it.
+function closeOnBackdrop(backdrop, close) {
+  let pressed = false;
+  backdrop.addEventListener("mousedown", (e) => (pressed = e.target === backdrop));
+  backdrop.addEventListener("click", (e) => {
+    if (pressed && e.target === backdrop) close();
+    pressed = false;
+  });
+}
