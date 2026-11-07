@@ -55,11 +55,34 @@ document.querySelectorAll(".nav").forEach((b) =>
 
 // ---------------------------------------------------------------- lighting
 
-function swatch(color, onPick) {
+const RAINBOW = ["#ff0000", "#ffff00", "#00ff00", "#00ffff", "#0000ff", "#ff00ff"];
+const FIRE_COLORS = ["#c81400", "#ff6e00", "#ffc828"];
+const PULSING = ["breathing", "heartbeat", "strobe", "police", "color_cycle"];
+
+function effectColors(effect) {
+  if (effect.kind === "rainbow" || effect.kind === "rainbow_wave") return RAINBOW;
+  if (effect.kind === "fire") return FIRE_COLORS;
+  const colors = effect.colors.map(rgbToHex);
+  return colors.length ? colors : ["#8000ff"];
+}
+
+// Shows an animated effect on the colour box; picking a colour still sets a plain colour.
+function swatch(color, onPick, effect) {
   const input = el("input", { type: "color", value: rgbToHex(color) });
-  const label = el("label", { class: "swatch" }, input);
+  const label = el("label", { class: "swatch", title: effect && effect.kind !== "static" ? `${kindLabelOf(effect)}: pick a colour to replace it` : "Pick a colour" }, input);
   label.style.setProperty("--glow", rgbToHex(color));
-  input.addEventListener("input", () => label.style.setProperty("--glow", input.value));
+  if (effect && effect.kind !== "static") {
+    const colors = effectColors(effect);
+    input.value = colors[0];
+    label.classList.add("fx", PULSING.includes(effect.kind) ? "pulse" : "flow");
+    label.style.setProperty("--fx", `linear-gradient(90deg, ${[...colors, colors[0]].join(", ")})`);
+    label.style.setProperty("--glow", colors[0]);
+    label.style.setProperty("--fx-time", `${[6, 4.2, 3, 2.1, 1.5][(effect.speed || 3) - 1]}s`);
+  }
+  input.addEventListener("input", () => {
+    label.classList.remove("fx", "pulse", "flow");
+    label.style.setProperty("--glow", input.value);
+  });
   input.addEventListener("change", () => onPick(hexToRgb(input.value)));
   return label;
 }
@@ -88,7 +111,7 @@ function lightCard(l, groups) {
   );
 
   const card = el("div", { class: "card device", draggable: "true", "data-id": l.id }, [
-    swatch(l.color, (rgb) => call("set_color", { id: l.id, color: rgb }, `${name.value} updated`)),
+    swatch(l.color, (rgb) => call("set_color", { id: l.id, color: rgb }, `${name.value} updated`).then(rerender), l.effect),
     el("div", { class: "info" }, [
       name,
       meta,
@@ -147,7 +170,7 @@ function groupSection(g, members, groups) {
   title.addEventListener("change", () => call("rename_group", { group: g.id, name: title.value }).then(rerender));
   title.addEventListener("keydown", (e) => e.key === "Enter" && title.blur());
   const head = el("div", { class: "group-head" }, [
-    swatch(g.color, (rgb) => call("set_group_color", { group: g.id, color: rgb }, `${g.name} updated`).finally(rerender)),
+    swatch(g.color, (rgb) => call("set_group_color", { group: g.id, color: rgb }, `${g.name} updated`).finally(rerender), g.effect),
     title,
     el("span", { class: "muted small" }, members.length === 1 ? "1 device" : `${members.length} devices`),
     ...(g.effect ? [el("span", { class: "tag fx" }, kindLabelOf(g.effect))] : []),

@@ -18,6 +18,7 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 
 ### Fixed
 
+- Device and group colour boxes showed the last plain colour while an effect was running; they now show the effect.
 - Update now failed with "Windows cannot find '\\'"; the installer is now started through a batch file and RGBable reopens from its install folder.
 - Apply to all sometimes left wireless fans or Strimers unchanged: uploads are now confirmed and resent, and devices are taken out of motherboard-sync mode first.
 - One OpenRGB error no longer stops Apply to all for the remaining OpenRGB devices.
