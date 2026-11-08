@@ -387,6 +387,10 @@ pub fn clock_ms() -> u64 {
         .as_millis() as u64
 }
 
+/// Longest loop sent to a wireless device. Lian Li's own effects stay well under this;
+/// fans dropped off the radio while running loops of several hundred frames.
+const MAX_WIRELESS_FRAMES: usize = 360;
+
 /// About how long a wireless device takes from the upload being prepared to playing it.
 const UPLOAD_LATENCY_MS: u64 = 300;
 
@@ -476,9 +480,9 @@ pub fn wireless_frames(
     let mut interval = first_ms;
     loop {
         let frames = generic_frames(lighting, base, zones, profile, interval);
-        if frames.frames.len() == 1 || frames.compressed_len()? <= budget || interval >= slowest_ms
-        {
-            if frames.frames.len() > 1 && frames.compressed_len()? > budget {
+        let fits = frames.frames.len() <= MAX_WIRELESS_FRAMES && frames.compressed_len()? <= budget;
+        if frames.frames.len() == 1 || fits || interval >= slowest_ms {
+            if frames.frames.len() > 1 && !fits {
                 return still(lighting, base, zones, profile).context("effect too large");
             }
             return Ok(frames);
