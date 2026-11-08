@@ -184,6 +184,21 @@ pub fn create_task(exe: &Path) -> Result<()> {
     Ok(())
 }
 
+/// A scheduled task in RGBable's task folder that runs `exe` as administrator, started on demand.
+pub fn create_helper_task(name: &str, exe: &Path, argument: &str) -> Result<()> {
+    let script = format!(
+        "$action = New-ScheduledTaskAction -Execute {exe} -Argument {argument}\r\n\
+         $principal = New-ScheduledTaskPrincipal -UserId {user} -LogonType Interactive -RunLevel Highest\r\n\
+         $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew\r\n\
+         Register-ScheduledTask -TaskName {name} -TaskPath '\\RGBable\\' -Action $action -Principal $principal -Settings $settings -Force | Out-Null\r\n",
+        exe = ps_quote(&exe.to_string_lossy()),
+        argument = ps_quote(argument),
+        user = ps_quote(&current_user()),
+        name = ps_quote(name),
+    );
+    run_elevated_script("helper-task.ps1", &script)
+}
+
 pub fn remove_task() -> Result<()> {
     if task_state().is_none() {
         return Ok(());

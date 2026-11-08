@@ -517,3 +517,6 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 @font-face { font-family: "w-techmono"; src: url("fonts/ShareTechMono-Regular.ttf"); font-weight: 100 900; font-variation-settings: "wght" 400; }
 @font-face { font-family: "w-monoton"; src: url("fonts/Monoton-Regular.ttf"); font-weight: 100 900; font-variation-settings: "wght" 400; }
 @font-face { font-family: "w-pixel"; src: url("fonts/PressStart2P-Regular.ttf"); font-weight: 100 900; font-variation-settings: "wght" 400; }
+.cpu-setup { display: flex; align-items: center; gap: 14px; margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: rgba(139, 61, 255, .12); }
+.cpu-setup[hidden] { display: none; }
+.cpu-setup span { flex: 1; }

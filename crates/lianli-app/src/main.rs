@@ -2,6 +2,7 @@
 // No console window in release builds.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod cpu_temp;
 mod effects;
 mod engine;
 mod fans;
@@ -572,15 +573,25 @@ fn widget_fonts(app: AppHandle) -> Vec<WidgetFont> {
     own.chain(lconnect).collect()
 }
 
+#[tauri::command(async)]
+fn cpu_temp_status() -> cpu_temp::Status {
+    cpu_temp::status()
+}
+
+#[tauri::command(async)]
+fn setup_cpu_temp() -> Result<(), String> {
+    cpu_temp::setup().map_err(chain)
+}
+
 /// Live widget values for the screen editor's preview.
 #[tauri::command(async)]
-fn oled_readings(state: State<'_, AppState>) -> oled_modules::Readings {
+fn oled_readings(state: State<'_, AppState>, cpu: bool) -> oled_modules::Readings {
     static GPU: std::sync::OnceLock<parking_lot::Mutex<oled_modules::Gpu>> =
         std::sync::OnceLock::new();
     let mut gpu = GPU
         .get_or_init(|| parking_lot::Mutex::new(oled_modules::Gpu::new()))
         .lock();
-    state.engine.readings(Some(&mut gpu))
+    state.engine.readings(Some(&mut gpu), cpu)
 }
 
 #[tauri::command(async)]
@@ -1083,6 +1094,12 @@ fn main() {
     std::panic::set_hook(Box::new(|panic| error!("panic: {panic}")));
 
     let config_path = dir.join("config.json");
+    if std::env::args().any(|a| a == cpu_temp::HELPER_ARG) {
+        if let Err(e) = cpu_temp::run_helper(&dir) {
+            error!("CPU temperature helper: {e:#}");
+        }
+        return;
+    }
     info!("RGBable starting, data in {}", dir.display());
     let engine = Engine::new(config_path);
     render::WARMTH.store(engine.config().warmth, std::sync::atomic::Ordering::Relaxed);
@@ -1154,6 +1171,8 @@ fn main() {
             set_oled_modules,
             oled_readings,
             widget_fonts,
+            cpu_temp_status,
+            setup_cpu_temp,
             set_all_fan_modes,
             set_pump_mode,
             select_fan_profile,

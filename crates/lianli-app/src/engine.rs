@@ -38,7 +38,7 @@ pub struct Config {
     pub oled_ring: Option<[u8; 3]>,
     #[serde(default)]
     pub oled: Option<OledConfig>,
-    /// Widgets drawn over each screen video, by the video's path.
+    /// Widgets drawn over the screen videos, by video path; `SHARED_WIDGETS` for the rest.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub oled_modules: BTreeMap<String, Vec<OledModule>>,
     /// OpenRGB SDK server to read RAM / GPU / motherboard lighting from.
@@ -85,7 +85,19 @@ pub struct Config {
     pub fan_profile: usize,
 }
 
+/// The `oled_modules` key of the layout every video without its own uses.
+pub const SHARED_WIDGETS: &str = "*";
+
 impl Config {
+    /// A video's own widgets, or the shared layout.
+    pub fn widgets_for(&self, file: &str) -> Vec<OledModule> {
+        self.oled_modules
+            .get(file)
+            .or_else(|| self.oled_modules.get(SHARED_WIDGETS))
+            .cloned()
+            .unwrap_or_default()
+    }
+
     pub fn active_fan_profile(&self) -> Option<&FanProfile> {
         self.fan_profiles.get(self.fan_profile)
     }
@@ -1247,7 +1259,8 @@ impl Engine {
     }
 
     /// What the screen's widgets show right now.
-    pub fn readings(&self, gpu: Option<&mut oled_modules::Gpu>) -> Readings {
+    /// `cpu` asks for the CPU temperature too, which starts its administrator helper.
+    pub fn readings(&self, gpu: Option<&mut oled_modules::Gpu>, cpu: bool) -> Readings {
         let telemetry = self.telemetry.read().clone();
         let rpms: Vec<u32> = self
             .wireless
@@ -1265,6 +1278,9 @@ impl Engine {
         let (gpu_temp_c, gpu_load) = gpu.map_or((None, None), |g| g.read());
         Readings {
             coolant_c: telemetry.coolant_c,
+            cpu_temp_c: cpu
+                .then(|| crate::cpu_temp::read(self.config_path.parent()?))
+                .flatten(),
             pump_rpm: telemetry.pump_rpm,
             gpu_temp_c,
             gpu_load,
@@ -1284,9 +1300,11 @@ impl Engine {
             } else {
                 c.oled_modules.insert(file.clone(), modules);
             }
-            c.oled
-                .as_ref()
-                .is_some_and(|o| o.file.to_string_lossy() == file.as_str())
+            c.oled.as_ref().is_some_and(|o| {
+                let playing = o.file.to_string_lossy();
+                playing == file.as_str()
+                    || file == SHARED_WIDGETS && !c.oled_modules.contains_key(playing.as_ref())
+            })
         });
         if playing {
             self.restart_oled();
@@ -1294,13 +1312,7 @@ impl Engine {
     }
 
     fn oled_loop(&self, oled: &OledConfig, stop: &AtomicBool) {
-        let modules = self
-            .config
-            .lock()
-            .oled_modules
-            .get(oled.file.to_string_lossy().as_ref())
-            .cloned()
-            .unwrap_or_default();
+        let modules = self.config.lock().widgets_for(&oled.file.to_string_lossy());
         if !modules.is_empty() {
             return self.oled_live_loop(oled, &modules, stop);
         }
@@ -1384,9 +1396,10 @@ impl Engine {
             .iter()
             .any(|m| m.kind.uses_gpu())
             .then(oled_modules::Gpu::new);
+        let cpu = modules.iter().any(|m| m.kind.uses_cpu());
         let mut next = Instant::now();
         while !stop.load(Ordering::Acquire) {
-            let readings = self.readings(gpu.as_mut());
+            let readings = self.readings(gpu.as_mut(), cpu);
             let frame = oled_modules::render(modules, &readings, chrono::Local::now());
             if into
                 .write_all(&oled_modules::rotate_clockwise(&frame))

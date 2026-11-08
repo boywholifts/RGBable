@@ -172,16 +172,19 @@
               <option value="clock">Clock</option>
               <option value="date">Date</option>
               <option value="coolant">Coolant temperature</option>
+              <option value="cpu_temp">CPU temperature</option>
               <option value="pump">Pump speed</option>
               <option value="gpu_temp">GPU temperature</option>
               <option value="gpu_load">GPU load</option>
               <option value="fans">Fan speed</option>
               <option value="text">Text</option>
             </select>
+            <label class="check" title="Off: these widgets show on every video that doesn't have its own"><input type="checkbox" id="widgets-own" /> Only this video</label>
             <button class="btn" id="widgets-discard" disabled>Discard</button>
             <button class="btn primary" id="widgets-apply" disabled>Apply</button>
           </div>
         </div>
+        <div class="cpu-setup" id="cpu-setup" hidden></div>
         <div class="readout-list" id="readout-list"></div>
       </div>
 

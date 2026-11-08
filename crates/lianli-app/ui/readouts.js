@@ -4,6 +4,7 @@ const READOUT_KINDS = {
   clock: { name: "Clock", label: "" },
   date: { name: "Date", label: "" },
   coolant: { name: "Coolant temperature", label: "COOLANT" },
+  cpu_temp: { name: "CPU temperature", label: "CPU" },
   pump: { name: "Pump speed", label: "PUMP" },
   gpu_temp: { name: "GPU temperature", label: "GPU" },
   gpu_load: { name: "GPU load", label: "GPU LOAD" },
@@ -14,7 +15,8 @@ const READOUT_KINDS = {
 /// Snapping reach, in thousandths of the preview.
 const SNAP = 14;
 
-const readouts = { file: null, modules: [], saved: "[]", values: {}, active: -1, open: new Set(), dragging: false, fonts: null };
+const SHARED = "*";
+const readouts = { file: null, own: false, savedOwn: false, modules: [], saved: "[]", values: {}, active: -1, open: new Set(), dragging: false, fonts: null, cpu: null };
 
 const withDefaults = (m) => ({ font: "", opacity: 100, shadow: true, caption_scale: 38, label: "", text: "", hour12: false, ...m });
 
@@ -29,6 +31,7 @@ function readoutValue(m) {
     }
     case "date": return now.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }).replace(",", "");
     case "coolant": return dash(v.coolant_c, (c) => `${c}°C`);
+    case "cpu_temp": return dash(v.cpu_temp_c, (c) => `${c}°C`);
     case "pump": return dash(v.pump_rpm, (r) => `${r} RPM`);
     case "gpu_temp": return dash(v.gpu_temp_c, (c) => `${c}°C`);
     case "gpu_load": return dash(v.gpu_load, (p) => `${p}%`);
@@ -59,7 +62,7 @@ async function loadWidgetFonts() {
   return readouts.fonts;
 }
 
-const widgetsDirty = () => JSON.stringify(readouts.modules) !== readouts.saved;
+const widgetsDirty = () => JSON.stringify(readouts.modules) !== readouts.saved || readouts.own !== readouts.savedOwn;
 
 function updateWidgetActions() {
   $("#widgets-apply").disabled = !readouts.file || !widgetsDirty();
@@ -74,8 +77,11 @@ function syncReadouts(path) {
   readouts.active = -1;
   readouts.open.clear();
   const saved = (last && last.oled && last.oled.modules) || {};
-  readouts.modules = (saved[path] || []).map(withDefaults);
+  readouts.own = !!(path && saved[path]);
+  readouts.savedOwn = readouts.own;
+  readouts.modules = (saved[path] || saved[SHARED] || []).map(withDefaults);
   readouts.saved = JSON.stringify(readouts.modules);
+  $("#widgets-own").checked = readouts.own;
   drawReadouts();
 }
 
@@ -87,16 +93,26 @@ async function applyWidgets() {
   const file = readouts.file;
   if (!file) return;
   const modules = structuredClone(readouts.modules);
-  await call("set_oled_modules", { file, modules }, file === oled.current ? "Widgets sent to the screen" : "Widgets saved for this video");
+  const key = readouts.own ? file : SHARED;
+  // a video going back to the shared layout drops its own
+  if (!readouts.own && readouts.savedOwn) await invoke("set_oled_modules", { file, modules: [] });
+  const done = file === oled.current ? "Widgets sent to the screen" : readouts.own ? "Widgets saved for this video" : "Widgets saved for every video";
+  await call("set_oled_modules", { file: key, modules }, done);
   readouts.saved = JSON.stringify(modules);
+  readouts.savedOwn = readouts.own;
   if (last && last.oled) {
-    last.oled.modules = { ...(last.oled.modules || {}), [file]: modules };
-    if (!modules.length) delete last.oled.modules[file];
+    const all = { ...(last.oled.modules || {}) };
+    if (!readouts.own) delete all[file];
+    all[key] = modules;
+    if (!modules.length) delete all[key];
+    last.oled.modules = all;
   }
   updateWidgetActions();
 }
 
 function discardWidgets() {
+  readouts.own = readouts.savedOwn;
+  $("#widgets-own").checked = readouts.own;
   readouts.modules = JSON.parse(readouts.saved);
   readouts.active = -1;
   drawReadouts();
@@ -104,8 +120,46 @@ function discardWidgets() {
 
 const hexOf = (rgb) => "#" + rgb.map((c) => c.toString(16).padStart(2, "0")).join("");
 
+async function drawCpuSetup() {
+  const box = $("#cpu-setup");
+  const wanted = readouts.modules.some((m) => m.kind === "cpu_temp");
+  if (!wanted) return (box.hidden = true);
+  if (!readouts.cpu) {
+    try {
+      readouts.cpu = await invoke("cpu_temp_status");
+    } catch {
+      return;
+    }
+  }
+  const s = readouts.cpu;
+  box.hidden = s.task && s.pawnio;
+  if (box.hidden) return;
+  if (!s.supported) {
+    box.replaceChildren(el("span", { class: "muted small" }, "CPU temperature is only supported on Intel CPUs for now."));
+    return;
+  }
+  const button = el("button", { class: "btn primary" }, "Set up CPU temperature");
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    button.textContent = "Waiting for the administrator prompt…";
+    try {
+      await call("setup_cpu_temp", {}, "CPU temperature is set up");
+      readouts.cpu = null;
+    } finally {
+      button.disabled = false;
+      button.textContent = "Set up CPU temperature";
+      drawCpuSetup();
+    }
+  });
+  box.replaceChildren(
+    el("span", { class: "muted small" }, "Windows only lets administrators read the CPU temperature. One administrator prompt sets up a small helper (and PawnIO, the driver OpenRGB uses, if it's missing); after that it works on its own."),
+    button,
+  );
+}
+
 function drawReadouts() {
   $("#readout-add").disabled = !readouts.file;
+  drawCpuSetup();
   drawWidgetLayer();
   drawWidgetList();
   updateWidgetActions();
@@ -324,6 +378,10 @@ $("#readout-add").addEventListener("change", (e) => {
   drawReadouts();
 });
 $("#widgets-apply").addEventListener("click", applyWidgets);
+$("#widgets-own").addEventListener("change", (e) => {
+  readouts.own = e.target.checked;
+  updateWidgetActions();
+});
 $("#widgets-discard").addEventListener("click", discardWidgets);
 
 // Live values for the preview, only while the screen page is open and has widgets.
@@ -332,7 +390,7 @@ setInterval(async () => {
   loadWidgetFonts();
   if (!readouts.modules.length) return;
   try {
-    readouts.values = await invoke("oled_readings");
+    readouts.values = await invoke("oled_readings", { cpu: readouts.modules.some((m) => m.kind === "cpu_temp") });
   } catch {
     return;
   }

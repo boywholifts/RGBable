@@ -19,6 +19,7 @@ pub enum ModuleKind {
     Clock,
     Date,
     Coolant,
+    CpuTemp,
     Pump,
     GpuTemp,
     GpuLoad,
@@ -29,6 +30,10 @@ pub enum ModuleKind {
 impl ModuleKind {
     pub fn uses_gpu(self) -> bool {
         matches!(self, Self::GpuTemp | Self::GpuLoad)
+    }
+
+    pub fn uses_cpu(self) -> bool {
+        self == Self::CpuTemp
     }
 }
 
@@ -191,6 +196,7 @@ fn collect_fonts(dir: &Path, depth: u8, found: &mut Vec<PathBuf>) {
 #[derive(Debug, Clone, Copy, Default, Serialize)]
 pub struct Readings {
     pub coolant_c: Option<u8>,
+    pub cpu_temp_c: Option<u32>,
     pub pump_rpm: Option<u16>,
     pub gpu_temp_c: Option<u32>,
     pub gpu_load: Option<u32>,
@@ -208,6 +214,7 @@ pub fn value(
         ModuleKind::Clock => now.format("%H:%M").to_string(),
         ModuleKind::Date => now.format("%a %b %-d").to_string(),
         ModuleKind::Coolant => or_dash(readings.coolant_c.map(|c| format!("{c}°C"))),
+        ModuleKind::CpuTemp => or_dash(readings.cpu_temp_c.map(|c| format!("{c}°C"))),
         ModuleKind::Pump => or_dash(readings.pump_rpm.map(|r| format!("{r} RPM"))),
         ModuleKind::GpuTemp => or_dash(readings.gpu_temp_c.map(|c| format!("{c}°C"))),
         ModuleKind::GpuLoad => or_dash(readings.gpu_load.map(|p| format!("{p}%"))),
