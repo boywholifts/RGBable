@@ -237,16 +237,17 @@ function groupSection(key, title, members, g) {
     saveCollapsed();
     rerender();
   });
+  const look = groupLook(members, g);
   const head = el("div", { class: "group-head" }, [toggle]);
   if (g) {
-    const box = swatch(g.color, (rgb) => call("set_group_color", { group: g.id, color: rgb }, `${g.name} updated`).finally(rerender), g.effect);
+    const box = swatch(look.color, (rgb) => call("set_group_color", { group: g.id, color: rgb }, `${g.name} updated`).finally(rerender), look.effect);
     box.addEventListener("click", (e) => e.stopPropagation());
     head.append(box);
   }
   head.append(
     el("div", { class: "row-text" }, [
       el("div", { class: "group-title" }, title),
-      el("div", { class: "row-sub" }, `${members.length} device${members.length === 1 ? "" : "s"}${g && g.effect ? " · " + kindLabelOf(g.effect) : ""}`),
+      el("div", { class: "row-sub" }, `${members.length} device${members.length === 1 ? "" : "s"}${g ? " · " + look.label : ""}`),
     ])
   );
   if (g) {
@@ -274,6 +275,18 @@ function groupSection(key, title, members, g) {
 }
 
 /// The effect shared by every synced device, or null when they differ.
+/// What a group's header shows: what its devices are actually running, not the effect the
+/// group was last given, since devices can be changed on their own or by Everything.
+function groupLook(members, g) {
+  if (!g) return {};
+  const key = (l) => JSON.stringify([l.effect || null, l.outer_effect || null, l.effect ? null : l.color]);
+  const same = members.length && members.every((l) => key(l) === key(members[0]));
+  if (!members.length) return { color: g.color, effect: g.effect, label: g.effect ? kindLabelOf(g.effect) : "Color" };
+  if (!same) return { color: g.color, effect: { kind: "rainbow", colors: [], speed: 2 }, label: "Mixed" };
+  const l = members[0];
+  return { color: l.color, effect: l.effect || l.outer_effect, label: effectSummary(l) };
+}
+
 function commonEffect(lights) {
   const synced = lights.filter((l) => l.sync);
   if (!synced.length) return null;

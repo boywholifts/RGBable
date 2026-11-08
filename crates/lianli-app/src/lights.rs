@@ -515,6 +515,16 @@ pub fn set_all(
 ) -> Result<()> {
     let effect = effect.sanitized();
     engine.set_all_effect(&effect);
+    engine.update_config(|c| {
+        for g in &mut c.groups {
+            if effect.is_animated() {
+                g.effect = Some(effect.clone());
+            } else {
+                g.effect = None;
+                g.color = Some(effect.frame(&[1], 0.0)[0]);
+            }
+        }
+    });
     if !include_openrgb {
         return Ok(());
     }
