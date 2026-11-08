@@ -1066,6 +1066,7 @@ async fn install_update(app: AppHandle, state: State<'_, AppState>) -> Result<()
         .await
         .map_err(err)?
         .map_err(|e| format!("{e:#}"))?;
+    cpu_temp::release_helper(&data_dir());
     if let Err(e) = updater::launch_installer(&setup) {
         let message = format!("{e:#}");
         state.updater.failed(&message);

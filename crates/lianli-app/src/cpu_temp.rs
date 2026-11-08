@@ -126,6 +126,11 @@ pub fn setup() -> Result<()> {
 }
 
 /// The administrator helper: reads the temperature each second until RGBable stops asking.
+/// Lets the elevated helper exit within a second, so it doesn't hold rgbable.exe open.
+pub fn release_helper(dir: &Path) {
+    let _ = std::fs::remove_file(wanted_file(dir));
+}
+
 pub fn run_helper(dir: &Path) -> Result<()> {
     let msr = msr::IntelMsr::open()?;
     let target = msr.temperature_target()?;

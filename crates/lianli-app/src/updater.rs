@@ -284,12 +284,22 @@ pub fn relaunch_after_exit() -> Result<()> {
     Ok(())
 }
 
+/// The setup can't replace rgbable.exe while any copy of it runs (the elevated CPU
+/// temperature helper included), and a silent setup fails quietly when it can't. So the
+/// script waits, up to a minute, for every copy to exit first.
 pub fn launch_installer(setup: &std::path::Path) -> Result<()> {
     let exe = std::env::current_exe()?;
     let script = setup.with_extension("cmd");
     let body = format!(
         "@echo off\r\n\
-         ping -n 3 127.0.0.1 >nul\r\n\
+         set /a tries=0\r\n\
+         :wait\r\n\
+         ping -n 2 127.0.0.1 >nul\r\n\
+         tasklist /FI \"IMAGENAME eq rgbable.exe\" /NH | find /I \"rgbable.exe\" >nul\r\n\
+         if errorlevel 1 goto install\r\n\
+         set /a tries+=1\r\n\
+         if %tries% lss 60 goto wait\r\n\
+         :install\r\n\
          start \"\" /wait \"{setup}\" /S\r\n\
          set \"APP=%LOCALAPPDATA%\\RGBable\\rgbable.exe\"\r\n\
          if not exist \"%APP%\" set \"APP={exe}\"\r\n\
