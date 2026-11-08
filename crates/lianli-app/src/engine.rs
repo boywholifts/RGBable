@@ -352,6 +352,7 @@ impl Engine {
         // every fan its speed every second crowded out lighting uploads on the radio.
         let mut last_sent: BTreeMap<[u8; 6], Instant> = BTreeMap::new();
         loop {
+            master_clock(wireless);
             let board = wireless.motherboard_pwm();
             let coolant = self.last_coolant.read().map(|(c, at)| (c, at.elapsed()));
             let profile = self.config.lock().active_fan_profile().cloned();
@@ -1426,7 +1427,10 @@ fn master_clock(wireless: &WirelessController) -> Option<(u32, Instant)> {
     let mut reading = READING.lock();
     if reading.is_none_or(|(_, at)| at.elapsed() >= REREAD) {
         match wireless.read_rgb_clock() {
-            Ok(clock) if clock.0 != 0 => *reading = Some(clock),
+            Ok(clock) if clock.0 != 0 => {
+                render::note_master_clock(clock.0, clock.1);
+                *reading = Some(clock);
+            }
             Ok(_) => {}
             Err(e) => debug!("reading the RF master clock: {e:#}"),
         }

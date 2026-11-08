@@ -454,6 +454,24 @@ pub fn set_reverse(engine: &Engine, openrgb: &OpenRgb, id: &str, reverse: bool) 
     Ok(())
 }
 
+pub fn set_speed(engine: &Engine, openrgb: &OpenRgb, id: &str, speed: u8) -> Result<()> {
+    let light = lights(engine, openrgb)
+        .into_iter()
+        .find(|l| l.id == id)
+        .with_context(|| format!("no device {id}"))?;
+    let effects = [light.effect, light.outer_effect];
+    anyhow::ensure!(
+        effects.iter().flatten().any(Effect::is_animated),
+        "{} has a plain color, so there is no speed to change",
+        light.name
+    );
+    let speed = speed.clamp(1, 5);
+    for effect in effects.into_iter().flatten() {
+        set_effect(engine, openrgb, id, Effect { speed, ..effect })?;
+    }
+    Ok(())
+}
+
 /// One device's place in a sequence: its start delay, and its span when effects run
 /// through the devices as one strip.
 #[derive(Debug, Clone, Deserialize)]

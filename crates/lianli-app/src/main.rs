@@ -137,6 +137,11 @@ fn set_reverse(state: State<'_, AppState>, id: String, reverse: bool) -> Result<
 }
 
 #[tauri::command(async)]
+fn set_speed(state: State<'_, AppState>, id: String, speed: u8) -> Result<(), String> {
+    lights::set_speed(&state.engine, &state.openrgb, &id, speed).map_err(chain)
+}
+
+#[tauri::command(async)]
 fn set_delay(state: State<'_, AppState>, id: String, delay_ms: u32) -> Result<(), String> {
     lights::set_delay(&state.engine, &state.openrgb, &id, delay_ms).map_err(chain)
 }
@@ -1096,6 +1101,7 @@ fn main() {
             delete_fan_profile,
             set_clean_transitions,
             set_reverse,
+            set_speed,
             oled_palette,
             set_oled_match,
             match_oled_now,

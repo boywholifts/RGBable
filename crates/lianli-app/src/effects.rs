@@ -462,8 +462,12 @@ impl Effect {
 /// How much longer a loop gets when a device is one part of a flow or one of several turns.
 /// In proportion (a whole strip of 15 devices taking 15 loops) it crawled, so it grows with
 /// the square root instead and the effect moves faster through each device.
+/// How much longer an effect's loop gets when it is one of several devices' shares. Shares
+/// are equal slots rounded to thousandths (66 or 67 of 1000 for 15 devices), so the slot
+/// count is what decides: every device then has the very same loop length and stays in step.
 fn stretch(share: f32) -> f32 {
-    share.sqrt()
+    let slots = (1.0 / share.max(0.001)).round().max(1.0);
+    (1.0 / slots).sqrt()
 }
 
 fn scale(color: [u8; 3], percent: u8) -> [u8; 3] {
@@ -711,6 +715,26 @@ mod tests {
             reverse: false,
             ..Effect::default()
         }
+    }
+
+    #[test]
+    fn every_device_in_a_flow_gets_the_same_loop_length() {
+        let devices = 15u16;
+        let periods: std::collections::BTreeSet<u32> = (0..devices)
+            .map(|n| {
+                let start = (f32::from(n) * 1000.0 / f32::from(devices)).round() as u16;
+                let end = (f32::from(n + 1) * 1000.0 / f32::from(devices)).round() as u16;
+                Effect {
+                    span: Some(Span {
+                        start,
+                        len: end - start,
+                    }),
+                    ..effect(EffectKind::Meteor, &[[255, 0, 0]])
+                }
+                .period_ms()
+            })
+            .collect();
+        assert_eq!(periods.len(), 1, "{periods:?}");
     }
 
     const ALL: [EffectKind; 19] = [

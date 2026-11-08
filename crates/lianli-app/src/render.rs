@@ -228,6 +228,17 @@ fn repeats(effect: &Effect, period_ms: u32) -> f32 {
 }
 
 /// RGBable's own effects, drawn on the device's real layout.
+/// The frame count nearest `count`, not above it, that splits `period_ms` into whole playback
+/// intervals. Otherwise the interval is rounded and the loop runs a little long or short, which
+/// adds up over many loops to devices drifting out of step with each other.
+fn whole_interval_count(period_ms: u32, count: usize) -> usize {
+    let ticks = u64::from(period_ms) * 160;
+    (count.max(2) / 2..=count.max(2))
+        .rev()
+        .find(|&n| ticks % n as u64 == 0)
+        .unwrap_or(count)
+}
+
 fn generic_frames(
     lighting: &Lighting,
     base: &[[u8; 3]],
@@ -272,7 +283,7 @@ fn generic_frames(
             let skip = (interval_ms as f32 / step_ms).round().max(1.0) as usize;
             (steps / skip).max(2)
         }
-        None => (period / interval_ms.max(1)).max(2) as usize,
+        None => whole_interval_count(period, (period / interval_ms.max(1)).max(2) as usize),
     };
     let frames = (0..count)
         .map(|n| {
@@ -399,8 +410,39 @@ pub fn clock_ms() -> i64 {
 }
 
 pub fn clock_ms_at(at: Instant) -> i64 {
+    since_epoch_ms(at) - ORIGIN_MS.load(Ordering::Relaxed) - DRIFT_MS.load(Ordering::Relaxed)
+}
+
+fn since_epoch_ms(at: Instant) -> i64 {
     let epoch = *EPOCH.get_or_init(Instant::now);
-    at.saturating_duration_since(epoch).as_millis() as i64 - ORIGIN_MS.load(Ordering::Relaxed)
+    at.saturating_duration_since(epoch).as_millis() as i64
+}
+
+/// How far the PC's clock has run ahead of the dongle's RF master clock since `MASTER_BASE`.
+/// Wireless loops play on the master clock, so `clock_ms` follows it too; otherwise the
+/// OpenRGB devices and the ring slowly slide away from the wireless ones.
+static DRIFT_MS: AtomicI64 = AtomicI64::new(0);
+static MASTER_BASE: std::sync::Mutex<Option<(u32, i64)>> = std::sync::Mutex::new(None);
+
+/// Takes a reading of the master clock (in 0.625 ms ticks) made at `at`.
+pub fn note_master_clock(ticks: u32, at: Instant) {
+    let host = since_epoch_ms(at);
+    let Ok(mut base) = MASTER_BASE.lock() else {
+        return;
+    };
+    match *base {
+        Some((base_ticks, base_host)) => {
+            let master = i64::from(ticks.wrapping_sub(base_ticks)) * 5 / 8;
+            let drift = host - base_host - master;
+            if drift.abs() < 2000 {
+                DRIFT_MS.store(drift, Ordering::Relaxed);
+            } else {
+                // the dongle restarted or the clock wrapped: start over from here
+                *base = Some((ticks, host - DRIFT_MS.load(Ordering::Relaxed)));
+            }
+        }
+        None => *base = Some((ticks, host)),
+    }
 }
 
 /// Starts every effect over from its beginning `lead_ms` from now.
@@ -622,6 +664,21 @@ mod tests {
     fn playing(frames: &Frames, ticks: u32) -> u8 {
         let index = u64::from(ticks) * 100 / u64::from(frames.timing.interval_hundredths);
         frames.frames[(index % frames.frames.len() as u64) as usize][0][0]
+    }
+
+    #[test]
+    fn loops_last_exactly_one_period() {
+        for (period, count) in [(9295, 232), (2400, 60), (9342, 233), (7777, 194)] {
+            let n = whole_interval_count(period, count);
+            assert!(n <= count && n >= count / 2);
+            if n != count || u64::from(period) * 160 % count as u64 == 0 {
+                assert_eq!(
+                    u64::from(period) * 160 % n as u64,
+                    0,
+                    "{period} {count} -> {n}"
+                );
+            }
+        }
     }
 
     #[test]

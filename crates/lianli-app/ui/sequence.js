@@ -12,6 +12,8 @@ const isAnimated = (l) => [l.effect, l.outer_effect].some((e) => e && e.kind !==
 const multiZone = (l) => /fans$/.test(l.kind) || l.kind === "Strimer" || (l.zones && l.zones.length > 1);
 const partial = (span) => span && span.len < 1000;
 
+const SPEEDS = [[1, "Slowest"], [2, "Slow"], [3, "Normal"], [4, "Fast"], [5, "Fastest"]];
+
 function seqLights(o) {
   const lights = o.lights.filter((l) => seq.group === "all" || l.group === seq.group);
   return lights
@@ -23,6 +25,7 @@ function seqLights(o) {
       animated: isAnimated(l),
       delay: l.delay_ms || 0,
       reversed: [l.effect, l.outer_effect].some((e) => e && e.reverse && e.kind !== "static"),
+      speed: [l.effect, l.outer_effect].find((e) => e && e.kind !== "static")?.speed || 3,
       across: !!l.span && l.span.len >= 1000,
       slot: partial(l.span) ? l.span.start : partial(l.turn) ? l.turn.start : null,
       flow: partial(l.span),
@@ -144,6 +147,17 @@ function drawSequence() {
       drawSequence();
     });
 
+    const speed = el("select", { class: "seq-speed", title: seq.mode === "flow" || seq.mode === "turns" ? "Effect speed. Devices at different speeds won't line up in a flow or turns." : "Effect speed" },
+      SPEEDS.map(([value, label]) => el("option", { value: String(value) }, label)));
+    speed.value = String(item.speed);
+    speed.disabled = !item.animated;
+    speed.addEventListener("click", (e) => e.stopPropagation());
+    speed.addEventListener("change", async () => {
+      const value = Number(speed.value);
+      await call("set_speed", { id: item.id, speed: value }, `${item.name}: ${SPEEDS[value - 1][1].toLowerCase()}`);
+      item.speed = value;
+    });
+
     const flowing = seq.mode === "flow";
     const across = el("button", {
       class: "icon-btn switchable" + (item.across || flowing ? " on" : ""),
@@ -187,8 +201,9 @@ function drawSequence() {
         el("div", { class: "row-name" }, item.name),
         el("div", { class: "row-sub" }, item.animated ? item.sub : "Plain color, nothing to move"),
       ]),
-      track,
+      seq.mode === "flow" ? el("div", { class: "seq-spacer" }) : track,
       el("label", { class: "seq-delay", title: "Start delay" }, [input, el("span", { class: "muted small" }, "ms")]),
+      speed,
       across,
       reverse,
       more,
