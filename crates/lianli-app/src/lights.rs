@@ -654,6 +654,37 @@ fn recolor_from_oled(
     Ok((colors, matched))
 }
 
+/// A device that joins a group takes on what the group's other devices are running (or the
+/// group's own lighting when it was empty).
+pub fn adopt_group_lighting(
+    engine: &Engine,
+    openrgb: &OpenRgb,
+    id: &str,
+    group: &str,
+) -> Result<()> {
+    let config = engine.config();
+    let Some(g) = config.groups.iter().find(|g| g.id == group) else {
+        bail!("no such group")
+    };
+    let all = lights(engine, openrgb);
+    let neighbour = all.iter().find(|l| l.id != id && g.members.contains(&l.id));
+    let effects: Vec<Effect> = match neighbour {
+        Some(l) => match [l.effect.clone(), l.outer_effect.clone()] {
+            [None, None] => l.color.map(static_effect).into_iter().collect(),
+            effects => effects.into_iter().flatten().collect(),
+        },
+        None => match (&g.effect, g.color) {
+            (Some(effect), _) => vec![effect.clone()],
+            (None, Some(color)) => vec![static_effect(color)],
+            (None, None) => Vec::new(),
+        },
+    };
+    for effect in effects {
+        set_effect(engine, openrgb, id, effect)?;
+    }
+    Ok(())
+}
+
 pub fn set_group_effect(
     engine: &Engine,
     openrgb: &OpenRgb,

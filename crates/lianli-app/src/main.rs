@@ -206,10 +206,20 @@ fn delete_group(state: State<'_, AppState>, group: String) {
 }
 
 #[tauri::command(async)]
-fn move_to_group(state: State<'_, AppState>, id: String, group: Option<String>) {
+fn move_to_group(
+    state: State<'_, AppState>,
+    id: String,
+    group: Option<String>,
+) -> Result<(), String> {
     state
         .engine
         .update_config(|c| lights::move_to_group(c, &id, group.as_deref()));
+    match group {
+        Some(group) => {
+            lights::adopt_group_lighting(&state.engine, &state.openrgb, &id, &group).map_err(chain)
+        }
+        None => Ok(()),
+    }
 }
 
 #[tauri::command(async)]
