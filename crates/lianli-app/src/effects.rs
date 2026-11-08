@@ -805,7 +805,10 @@ mod tests {
             ..across.clone()
         };
         assert_eq!(first.period_ms(), second.period_ms());
-        assert_eq!(first.period_ms(), (across.period_ms() as f32 / stretch(0.5)) as u32);
+        assert_eq!(
+            first.period_ms(),
+            (across.period_ms() as f32 / stretch(0.5)) as u32
+        );
         assert!(lit(&first.frame(&[20], 0.3)) && !lit(&second.frame(&[20], 0.3)));
         assert!(!lit(&first.frame(&[20], 0.8)) && lit(&second.frame(&[20], 0.8)));
     }
@@ -824,7 +827,10 @@ mod tests {
             }),
             ..breathing.clone()
         };
-        assert_eq!(first.period_ms(), (breathing.period_ms() as f32 / stretch(0.5)) as u32);
+        assert_eq!(
+            first.period_ms(),
+            (breathing.period_ms() as f32 / stretch(0.5)) as u32
+        );
         assert_eq!(first.frame(&[1], 0.25), breathing.frame(&[1], 0.5));
         assert_eq!(second.frame(&[1], 0.25), vec![[0, 0, 0]]);
         assert_eq!(second.frame(&[1], 0.75), breathing.frame(&[1], 0.5));

@@ -525,6 +525,12 @@ pub fn set_all(
     include_openrgb: bool,
 ) -> Result<()> {
     let effect = effect.sanitized();
+    let targets: Vec<String> = lights(engine, openrgb)
+        .into_iter()
+        .filter(|l| l.sync && (include_openrgb || l.source != "openrgb"))
+        .map(|l| l.id)
+        .collect();
+    go_dark(engine, openrgb, &targets);
     engine.set_all_effect(&effect);
     engine.update_config(|c| {
         for g in &mut c.groups {
@@ -685,6 +691,27 @@ pub fn adopt_group_lighting(
     Ok(())
 }
 
+/// With clean transitions on, the devices about to change go dark first and the new
+/// lighting starts on all of them together, instead of each switching as it is reached.
+fn go_dark(engine: &Engine, openrgb: &OpenRgb, ids: &[String]) {
+    if engine.config().instant_changes {
+        return;
+    }
+    let mut boards = std::collections::BTreeSet::new();
+    for id in ids.iter().filter(|id| id.starts_with(OPENRGB_PREFIX)) {
+        boards.insert(split_id(id).0.to_string());
+    }
+    for board in boards {
+        if let Some(device) = openrgb_device(openrgb, &board) {
+            openrgb.stop_animation(device.index);
+            if let Err(e) = openrgb.set_color(device.index, [0, 0, 0]) {
+                warn!("{}: {e:#}", device.name);
+            }
+        }
+    }
+    engine.blank_and_wait(ids, std::time::Duration::from_secs(5));
+}
+
 pub fn set_group_effect(
     engine: &Engine,
     openrgb: &OpenRgb,
@@ -705,6 +732,7 @@ pub fn set_group_effect(
     let Some(members) = members else {
         bail!("no such group")
     };
+    go_dark(engine, openrgb, &members);
     let mut first_error = None;
     for id in members {
         if let Err(e) = set_effect(engine, openrgb, &id, effect.clone()) {

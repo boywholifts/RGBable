@@ -53,6 +53,7 @@ struct Overview {
     oled_match: Option<u8>,
     oled_match_status: String,
     warmth: i8,
+    clean_transitions: bool,
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -83,6 +84,7 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
         oled_match: config.oled_match,
         oled_match_status: lights::OLED_MATCH_STATUS.lock().clone(),
         warmth: config.warmth,
+        clean_transitions: !config.instant_changes,
     })
 }
 
@@ -505,6 +507,11 @@ fn restart(app: &AppHandle) -> anyhow::Result<()> {
 #[tauri::command(async)]
 fn stop_oled(state: State<'_, AppState>) {
     state.engine.stop_oled();
+}
+
+#[tauri::command(async)]
+fn set_clean_transitions(state: State<'_, AppState>, enabled: bool) {
+    state.engine.update_config(|c| c.instant_changes = !enabled);
 }
 
 #[tauri::command(async)]
@@ -1028,6 +1035,7 @@ fn main() {
             set_sequence,
             set_across,
             set_warmth,
+            set_clean_transitions,
             set_reverse,
             oled_palette,
             set_oled_match,

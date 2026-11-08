@@ -444,3 +444,9 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .seq-marker.dragging { cursor: grabbing; transition: none; }
 .color-chip { display: inline-block; width: 16px; height: 16px; border-radius: 5px; margin: 0 3px; vertical-align: -3px; border: 1px solid rgba(255,255,255,.2); }
 .seq-actions { position: sticky; bottom: 0; z-index: 5; margin: 0 -6px; padding: 12px 6px; background: linear-gradient(to top, var(--bg) 70%, transparent); }
+#page-sequence:not([data-mode="delays"]) .delays-only { display: none; }
+#page-sequence[data-mode="together"] .timing-only,
+#page-sequence[data-mode="together"] .seq-track,
+#page-sequence[data-mode="together"] .seq-delay { display: none; }
+#page-sequence[data-mode="together"] .seq-row .row-text { flex: 1; width: auto; }
+#page-sequence:not([data-mode="delays"]) .seq-delay { visibility: hidden; }

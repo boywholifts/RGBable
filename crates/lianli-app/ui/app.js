@@ -319,6 +319,7 @@ async function refresh() {
   if (initial) {
     $("#autostart").checked = o.autostart;
     $("#warmth").value = String(o.warmth || 0);
+    $("#clean-transitions").checked = o.clean_transitions;
     $("#warmth-value").textContent = warmthLabel(o.warmth || 0);
     $("#data-dir").textContent = o.data_dir;
     $("#update-channel").value = o.update_channel;
@@ -355,3 +356,4 @@ function setWarmth(value) {
 }
 $("#warmth").addEventListener("input", (e) => setWarmth(Number(e.target.value)));
 $("#warmth-reset").addEventListener("click", () => setWarmth(0));
+$("#clean-transitions").addEventListener("change", (e) => invoke("set_clean_transitions", { enabled: e.target.checked }).catch((err) => toast(String(err), true)));

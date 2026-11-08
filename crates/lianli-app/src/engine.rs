@@ -64,6 +64,10 @@ pub struct Config {
     /// When set, synced lighting takes this many colors from each new OLED video.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oled_match: Option<u8>,
+    /// Skip going dark before Everything or a group changes lighting (devices then switch
+    /// one by one as they are reached).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub instant_changes: bool,
     /// White balance, -50 (cooler) to 50 (warmer).
     #[serde(default, skip_serializing_if = "is_zero_i8")]
     pub warmth: i8,
@@ -208,6 +212,8 @@ struct Controller {
     colors: Mutex<Vec<[u8; 3]>>,
     dirty: AtomicBool,
     identifying: AtomicBool,
+    /// The device has confirmed (or was given up on for) its latest lighting.
+    settled: AtomicBool,
 }
 
 impl Controller {
@@ -394,6 +400,7 @@ impl Engine {
                 colors: Mutex::new(vec![[0, 0, 0]; leds]),
                 dirty: AtomicBool::new(false),
                 identifying: AtomicBool::new(false),
+                settled: AtomicBool::new(true),
             }));
         }
         if let Some(ring) = ring {
@@ -410,6 +417,7 @@ impl Engine {
                 colors: Mutex::new(vec![[0, 0, 0]; RING_LEDS]),
                 dirty: AtomicBool::new(false),
                 identifying: AtomicBool::new(false),
+                settled: AtomicBool::new(true),
             }));
         }
         *self.controllers.write() = list;
@@ -517,6 +525,35 @@ impl Engine {
             entry.outer_effect = outer;
         });
         Ok(())
+    }
+
+    /// Turns devices off without touching their saved lighting, then waits (at most
+    /// `timeout`) until the wireless ones have confirmed it, so a new effect can start on
+    /// all of them from dark instead of replacing the old one device by device.
+    pub fn blank_and_wait(&self, ids: &[String], timeout: Duration) {
+        let targets: Vec<Arc<Controller>> = self
+            .controllers
+            .read()
+            .iter()
+            .filter(|c| ids.contains(&c.id))
+            .cloned()
+            .collect();
+        for ctl in &targets {
+            *ctl.lighting.lock() = Lighting::default();
+            ctl.settled.store(false, Ordering::Release);
+            ctl.set_all([0, 0, 0]);
+        }
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            let done = targets.iter().all(|c| {
+                matches!(c.target, Target::Ring(_))
+                    || (c.settled.load(Ordering::Acquire) && !c.dirty.load(Ordering::Acquire))
+            });
+            if done {
+                return;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
     }
 
     /// Sends every Lian Li device its lighting again (after the white balance changed).
@@ -714,6 +751,7 @@ impl Engine {
                         if wireless.rgb_upload_applied(&mac, upload.effect_index()) {
                             let upload = upload.clone();
                             states.insert(mac, State::Settled { upload, strikes: 0 });
+                            ctl.settled.store(true, Ordering::Release);
                             None
                         } else if sent.elapsed() < CONFIRM_WAIT {
                             None
@@ -732,6 +770,7 @@ impl Engine {
                             warn!("{}: lighting not confirmed after {sends} sends, checking again later", ctl.id);
                             let upload = upload.clone();
                             states.insert(mac, State::Settled { upload, strikes: 0 });
+                            ctl.settled.store(true, Ordering::Release);
                             None
                         } else {
                             Some((Some(upload.clone()), *sends))
@@ -761,6 +800,7 @@ impl Engine {
                     Some((Some(upload), sends)) if !dirty => (Ok(upload), sends),
                     _ => {
                         ctl.dirty.store(false, Ordering::Release);
+                        ctl.settled.store(false, Ordering::Release);
                         // A missed confirmation can be radio trouble rather than size, so a
                         // new effect starts at full size instead of inheriting a still frame.
                         if dirty {

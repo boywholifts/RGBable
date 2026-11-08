@@ -65,11 +65,12 @@
       <header class="page-head">
         <div>
           <h1>Devices</h1>
-          <p class="muted">Every device in the order its effect starts, top first. Drag rows to reorder them, and set each one's delay and direction; ⋯ has rename, LED count and groups.</p>
+          <p class="muted">Every device in one list: choose how their effects are timed against each other, drag rows to set the order, and flip directions. ⋯ has rename, LED count and groups.</p>
         </div>
       </header>
       <div class="card seq-bar">
         <div class="seg" id="seq-mode" title="How the devices are timed against each other">
+          <button data-mode="together">Together</button>
           <button data-mode="delays">Delays</button>
           <button data-mode="flow">Flow through</button>
           <button data-mode="turns">Take turns</button>
@@ -77,20 +78,20 @@
         <label class="field">Show
           <select id="seq-group"></select>
         </label>
-        <label class="field">Spacing
+        <label class="field timing-only delays-only">Spacing
           <input type="number" class="text num" id="seq-step" min="0" max="5000" step="50" value="300" /> ms
         </label>
-        <label class="check"><input type="checkbox" id="seq-auto" checked /> Space evenly as I reorder</label>
+        <label class="check delays-only"><input type="checkbox" id="seq-auto" checked /> Space evenly as I reorder</label>
         <span class="grow"></span>
-        <button class="btn mini" id="seq-even">Space evenly</button>
-        <button class="btn mini" id="seq-reverse">Reverse order</button>
-        <button class="btn mini" id="seq-reset">All at once</button>
-        <button class="btn mini" id="seq-preview" title="Flash each row when its effect would start">Preview</button>
+        <button class="btn mini delays-only" id="seq-even">Space evenly</button>
+        <button class="btn mini timing-only" id="seq-reverse">Reverse order</button>
+        <button class="btn mini delays-only" id="seq-reset">All at once</button>
+        <button class="btn mini timing-only" id="seq-preview" title="Flash each row when its effect would start">Preview</button>
       </div>
       <p class="muted small seq-hint" id="seq-mode-hint"></p>
       <div class="seq-list" id="seq-list"><div class="empty">Loading…</div></div>
       <div class="row seq-actions">
-        <span class="muted small">Delays longer than an effect's loop wrap around, so keep them under the loop length for a clean cascade.</span>
+        <span class="muted small delays-only">Delays longer than an effect's loop wrap around, so keep them under the loop length for a clean cascade.</span>
         <span class="grow"></span>
         <button class="btn" id="seq-discard" hidden>Discard</button>
         <button class="btn primary" id="seq-save" disabled>Save</button>
@@ -245,6 +246,15 @@
           <button class="btn primary" id="update-install2" hidden>Update now</button>
           <span class="muted small" id="update-status"></span>
         </div>
+      </div>
+      <div class="card">
+        <label class="toggle-row">
+          <div>
+            <div class="card-title">Go dark before changing lighting</div>
+            <div class="muted small">When Everything or a group gets a new effect, its devices turn off first and the new effect starts on all of them together, instead of each switching as it's reached. Takes a second or two longer.</div>
+          </div>
+          <input type="checkbox" class="toggle" id="clean-transitions" />
+        </label>
       </div>
       <div class="card">
         <div class="card-title">White balance</div>
