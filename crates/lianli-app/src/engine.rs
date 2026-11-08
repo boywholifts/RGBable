@@ -294,11 +294,39 @@ impl Engine {
             .expect("spawn engine thread");
     }
 
+    /// Pairs devices RGBable already knows (they are in the config) that have reset and
+    /// paired with no dongle at all, as fans do after a crash. Devices paired with another
+    /// dongle, or unpaired by the user, are left alone.
+    fn repair_pairing(&self, wireless: &WirelessController) {
+        let known: Vec<String> = self.config().devices.keys().cloned().collect();
+        let mut repaired = 0;
+        for device in wireless.unbound_devices() {
+            let id = device.mac_str();
+            if device.master_mac != [0; 6]
+                || !known.contains(&id)
+                || wireless.is_manually_unbound(&device.mac)
+            {
+                continue;
+            }
+            match wireless.bind_device(&device.mac) {
+                Ok(()) => {
+                    info!("{id}: lost its pairing, paired it with this dongle again");
+                    repaired += 1;
+                }
+                Err(e) => warn!("{id}: pairing again failed: {e:#}"),
+            }
+        }
+        if repaired > 0 {
+            thread::sleep(Duration::from_secs(2));
+        }
+    }
+
     fn bring_up(self: &Arc<Self>) -> Result<()> {
         self.wait_for_lconnect();
 
         self.set_status("Connecting to the wireless dongle");
         let wireless = Arc::new(connect_wireless());
+        self.repair_pairing(&wireless);
         let devices = wireless.devices();
         info!("{} wireless device(s) online", devices.len());
         *self.wireless.write() = Some(wireless.clone());
