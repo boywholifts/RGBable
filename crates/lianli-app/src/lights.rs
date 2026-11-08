@@ -122,7 +122,12 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 .zones
                 .iter()
                 .enumerate()
-                .filter(|(_, z)| is_header(z))
+                // a header set to 0 LEDs stays listed once it has a name or lighting of its
+                // own, so it can be given LEDs again where it was turned off
+                .filter(|(index, z)| {
+                    is_header(z)
+                        || z.resizable() && config.devices.contains_key(&header_id(&id, *index))
+                })
                 .collect()
         } else {
             Vec::new()
@@ -173,7 +178,14 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                     .unwrap_or_else(|| default_name.clone()),
                 default_name,
                 kind: "header".to_string(),
-                detail: format!("{} LEDs on {}, {}", zone.leds, device_name, zone.name),
+                detail: if zone.leds == 0 {
+                    format!(
+                        "No LEDs set on {}, {}: set its LED count",
+                        device_name, zone.name
+                    )
+                } else {
+                    format!("{} LEDs on {}, {}", zone.leds, device_name, zone.name)
+                },
                 color: if lit {
                     own.and_then(|s| s.color)
                 } else {
