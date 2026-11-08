@@ -145,6 +145,10 @@ function deviceMenu(l, anchor) {
   const animated = [l.effect, l.outer_effect].some((e) => e && e.kind !== "static");
   const reversed = [l.effect, l.outer_effect].some((e) => e && e.reverse && e.kind !== "static");
   if (animated) items.push({ label: "Reverse direction", checked: reversed, onClick: () => call("set_reverse", { id: l.id, reverse: !reversed }, reversed ? `${l.name}: normal direction` : `${l.name}: reversed`).then(rerender) });
+  if (animated && multiZone(l) && !(l.span && l.span.len < 1000)) {
+    const across = !!l.span;
+    items.push({ label: "Run across all its fans", checked: across, onClick: () => call("set_across", { id: l.id, across: !across }, across ? `${l.name}: effect on each fan` : `${l.name}: effect across its fans`).then(rerender) });
+  }
   items.push({ label: l.delay_ms ? `Start delay (${(l.delay_ms / 1000).toFixed(1)} s)…` : "Start delay…", onClick: () => delayDialog(l) });
   if (l.zones && l.zones.length) items.push({ label: "LED count…", onClick: () => ledCountDialog(l) });
   items.push("-", { header: "Move to group" });
@@ -165,6 +169,8 @@ function rowBadges(l) {
   const badges = [];
   const reversed = [l.effect, l.outer_effect].some((e) => e && e.reverse && e.kind !== "static");
   if (reversed) badges.push(el("span", { class: "badge", title: "Effect runs in reverse" }, icon("reverse")));
+  if (l.span && l.span.len < 1000) badges.push(el("span", { class: "badge", title: "Part of a chain: moving effects flow through it from the device before" }, icon("chain")));
+  else if (l.span) badges.push(el("span", { class: "badge", title: "Moving effects run across all its fans" }, icon("across")));
   if (l.delay_ms) badges.push(el("span", { class: "badge", title: `Starts ${(l.delay_ms / 1000).toFixed(1)} s behind` }, [icon("clock"), `${(l.delay_ms / 1000).toFixed(1)}s`]));
   if (!l.sync) badges.push(el("span", { class: "tag off", title: "Sync everything leaves this device alone" }, "Not synced"));
   return badges;

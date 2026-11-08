@@ -46,6 +46,29 @@ pub enum Side {
     Outer,
 }
 
+/// A device's place on one long strip, in thousandths: a whole device that runs an effect
+/// across all its fans is 0..1000, the second of four chained devices 250..500.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Span {
+    pub start: u16,
+    pub len: u16,
+}
+
+impl Span {
+    pub const WHOLE: Self = Self {
+        start: 0,
+        len: 1000,
+    };
+
+    fn start(self) -> f32 {
+        f32::from(self.start.min(999)) / 1000.0
+    }
+
+    fn len(self) -> f32 {
+        f32::from(self.len.clamp(1, 1000)) / 1000.0
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Effect {
     pub kind: EffectKind,
@@ -72,6 +95,9 @@ pub struct Effect {
     /// The recipe-builder settings a script was generated from, as JSON, so it can be reopened.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recipe: Option<String>,
+    /// Where this device sits on a strip that runs across its fans or through several devices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<Span>,
     /// Name of a saved custom effect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -126,6 +152,7 @@ impl Default for Effect {
             script: None,
             recipe: None,
             name: None,
+            span: None,
         }
     }
 }
@@ -201,6 +228,25 @@ impl Effect {
         }
     }
 
+    /// The span, for effects that move along the LEDs; effects that change every LED at once
+    /// (breathing, strobe) look the same on any span, so they ignore it.
+    pub fn travel_span(&self) -> Option<Span> {
+        let moves = matches!(
+            self.generic().kind,
+            EffectKind::RainbowWave
+                | EffectKind::Wave
+                | EffectKind::Meteor
+                | EffectKind::Scanner
+                | EffectKind::Runway
+                | EffectKind::Fill
+                | EffectKind::Ripple
+                | EffectKind::Aurora
+                | EffectKind::Police
+                | EffectKind::Drizzle
+        );
+        self.span.filter(|_| moves)
+    }
+
     pub fn is_animated(&self) -> bool {
         self.kind != EffectKind::Static
     }
@@ -242,7 +288,13 @@ impl Effect {
     pub fn steps(&self, zones: &[usize]) -> Option<usize> {
         match self.generic().kind {
             EffectKind::Drizzle => {
-                let longest = zones.iter().copied().max().unwrap_or(1).max(1);
+                let longest = match self.travel_span() {
+                    Some(span) => {
+                        (zones.iter().sum::<usize>() as f32 / span.len()).round() as usize
+                    }
+                    None => zones.iter().copied().max().unwrap_or(1),
+                }
+                .max(1);
                 Some(self.colors().len() * 2 * longest)
             }
             _ => None,
@@ -286,7 +338,7 @@ impl Effect {
             EffectKind::Script => 4000,
         };
         let factor = [2.0, 1.4, 1.0, 0.7, 0.5][usize::from(self.speed.clamp(1, 5) - 1)];
-        (base as f32 * factor) as u32
+        (base as f32 * factor / self.travel_span().map_or(1.0, Span::len)) as u32
     }
 
     /// The LEDs at `phase` (0..1 through the loop). `zones` are the LED counts of each
@@ -310,20 +362,32 @@ impl Effect {
         }
         let phase = phase.rem_euclid(1.0);
         let colors = self.colors();
+        let span = self.travel_span();
+        let whole_device = [zones.iter().sum::<usize>()];
+        let zones = if span.is_some() {
+            &whole_device[..]
+        } else {
+            zones
+        };
+        let (start, len) = span.map_or((0.0, 1.0), |s| (s.start(), s.len()));
         let mut out = Vec::with_capacity(zones.iter().sum());
         let mut led_index = 0usize;
         for (zone, &count) in zones.iter().enumerate() {
             let coarse = matches!(self.kind, EffectKind::Fire | EffectKind::Aurora);
+            let strip_leds = (count as f32 / len).round().max(1.0) as usize;
             for i in 0..count {
                 let i = if coarse { i - i % COARSE_BLOCK } else { i };
-                let end_to_end = if count > 1 {
-                    i as f32 / (count - 1) as f32
-                } else {
-                    0.5
-                };
-                let mut p = i as f32 / count.max(1) as f32;
+                let mut end_to_end = start
+                    + len
+                        * if count > 1 {
+                            i as f32 / (count - 1) as f32
+                        } else {
+                            0.5
+                        };
+                let mut p = start + len * i as f32 / count.max(1) as f32;
                 if self.reverse {
                     p = 1.0 - p;
+                    end_to_end = 1.0 - end_to_end;
                 }
                 let color = match self.kind {
                     EffectKind::Static => colors[0],
@@ -344,7 +408,7 @@ impl Effect {
                     EffectKind::StarryNight => starry_night(colors, phase, led_index),
                     EffectKind::Aurora => aurora(colors, phase, p),
                     EffectKind::Police => police(colors, phase, p),
-                    EffectKind::Drizzle => drizzle(colors, phase, p, count, zone),
+                    EffectKind::Drizzle => drizzle(colors, phase, p, strip_leds, zone),
                     EffectKind::Lianli | EffectKind::Custom | EffectKind::Script => colors[0],
                 };
                 out.push(scale(color, self.brightness));
@@ -675,6 +739,41 @@ mod tests {
         let breath = effect(EffectKind::Breathing, &[[0, 255, 0]]);
         assert_eq!(breath.frame(&[1], 0.0), vec![[0, 0, 0]]);
         assert_eq!(breath.frame(&[1], 0.5), vec![[0, 255, 0]]);
+    }
+
+    #[test]
+    fn a_spanned_meteor_travels_from_one_fan_and_device_into_the_next() {
+        let lit = |frame: &[[u8; 3]]| frame.iter().any(|c| c[0] > 100);
+        let across = Effect {
+            span: Some(Span::WHOLE),
+            ..effect(EffectKind::Meteor, &[[255, 0, 0]])
+        };
+        let frame = across.frame(&[13, 13, 13], 0.2);
+        assert!(
+            lit(&frame[..13]) && !lit(&frame[26..]),
+            "only the first fan near the start"
+        );
+        let frame = across.frame(&[13, 13, 13], 0.9);
+        assert!(
+            lit(&frame[26..]) && !lit(&frame[..10]),
+            "the last fan near the end"
+        );
+
+        let first = Effect {
+            span: Some(Span { start: 0, len: 500 }),
+            ..across.clone()
+        };
+        let second = Effect {
+            span: Some(Span {
+                start: 500,
+                len: 500,
+            }),
+            ..across.clone()
+        };
+        assert_eq!(first.period_ms(), second.period_ms());
+        assert_eq!(first.period_ms(), across.period_ms() * 2);
+        assert!(lit(&first.frame(&[20], 0.3)) && !lit(&second.frame(&[20], 0.3)));
+        assert!(!lit(&first.frame(&[20], 0.8)) && lit(&second.frame(&[20], 0.8)));
     }
 
     #[test]

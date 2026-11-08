@@ -64,6 +64,9 @@ pub struct Config {
     /// When set, synced lighting takes this many colors from each new OLED video.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oled_match: Option<u8>,
+    /// White balance, -50 (cooler) to 50 (warmer).
+    #[serde(default, skip_serializing_if = "is_zero_i8")]
+    pub warmth: i8,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -85,6 +88,13 @@ pub struct DeviceConfig {
     /// How far behind the others this device runs its effect, so identical devices don't move in step.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub delay_ms: u32,
+    /// Runs moving effects across the device's fans, or through a chain of devices.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub span: Option<crate::effects::Span>,
+}
+
+fn is_zero_i8(value: &i8) -> bool {
+    *value == 0
 }
 
 fn is_zero(value: &u32) -> bool {
@@ -506,6 +516,13 @@ impl Engine {
         Ok(())
     }
 
+    /// Sends every Lian Li device its lighting again (after the white balance changed).
+    pub fn relight_all(&self) {
+        for ctl in self.controllers.read().iter() {
+            ctl.dirty.store(true, Ordering::Release);
+        }
+    }
+
     /// Sends a wireless device its lighting again (after a setting such as its delay changed).
     pub fn relight(&self, id: &str) {
         if let Some(ctl) = self.controllers.read().iter().find(|c| c.id == id) {
@@ -748,8 +765,12 @@ impl Engine {
                             shrink.remove(&mac);
                         }
                         let level = shrink.get(&mac).copied().unwrap_or(0);
-                        let delay = self.config().devices.get(&ctl.id).map_or(0, |d| d.delay_ms);
-                        (prepare_lighting(wireless, ctl, &mac, level, delay), 0)
+                        let (delay, span) = self
+                            .config()
+                            .devices
+                            .get(&ctl.id)
+                            .map_or((0, None), |d| (d.delay_ms, d.span));
+                        (prepare_lighting(wireless, ctl, &mac, level, delay, span), 0)
                     }
                 };
                 let result = upload.and_then(|u| wireless.send_rgb_upload(&mac, &u, 4).map(|()| u));
@@ -825,20 +846,24 @@ impl Engine {
                 return;
             }
             *last_frame = Instant::now();
-            let delay = self
+            let (delay, span) = self
                 .config
                 .lock()
                 .devices
                 .get(&ctl.id)
-                .map_or(0, |d| i64::from(d.delay_ms));
+                .map_or((0, None), |d| (i64::from(d.delay_ms), d.span));
+            let effect = Effect { span, ..effect };
             let behind = started.elapsed().as_millis() as i64 - delay;
             let period = u64::from(effect.period_ms().max(1));
             let phase = behind.rem_euclid(period as i64) as f32 / period as f32;
-            if let Err(e) = ring.send_rgb_frame(&effect.frame(&ctl.zones, phase)) {
+            let mut frame = effect.frame(&ctl.zones, phase);
+            render::balance_all(&mut frame);
+            if let Err(e) = ring.send_rgb_frame(&frame) {
                 warn!("OLED ring: {e:#}");
             }
         } else if ctl.dirty.swap(false, Ordering::AcqRel) {
-            let colors = ctl.colors.lock().clone();
+            let mut colors = ctl.colors.lock().clone();
+            render::balance_all(&mut colors);
             if let Err(e) = ring.send_rgb_frame(&colors) {
                 warn!("OLED ring: {e:#}");
             }
@@ -1061,10 +1086,19 @@ fn prepare_lighting(
     mac: &[u8; 6],
     shrink: u8,
     delay_ms: u32,
+    span: Option<crate::effects::Span>,
 ) -> Result<WirelessRgbUpload> {
-    let lighting = ctl.lighting.lock().clone();
+    let mut lighting = ctl.lighting.lock().clone();
+    for effect in [&mut lighting.inner, &mut lighting.outer]
+        .into_iter()
+        .flatten()
+    {
+        effect.span = span;
+    }
     let base = ctl.colors.lock().clone();
     if lighting.is_static() || ctl.identifying.load(Ordering::Acquire) {
+        let mut base = base;
+        render::balance_all(&mut base);
         return wireless.prepare_rgb_upload(mac, &[base], 5000);
     }
     let frames = if shrink < MAX_SHRINK {
@@ -1088,5 +1122,9 @@ fn prepare_lighting(
         frames.compressed_len().unwrap_or(0)
     );
     let frames = frames.delayed(delay_ms);
+    let mut frames = frames;
+    for frame in &mut frames.frames {
+        render::balance_all(frame);
+    }
     wireless.prepare_rgb_animation(mac, &frames.frames, frames.timing)
 }

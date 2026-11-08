@@ -1,7 +1,12 @@
 // Devices page: every device in the order its effect starts, top first, with its delay,
-// direction and the same ⋯ menu as the Lighting page.
+// direction, whether moving effects run across its fans, and the same ⋯ menu as the
+// Lighting page. "Flow through" chains the devices into one strip, so a meteor or wave
+// travels from the first device into the next.
 
-const seq = { group: "all", items: [], dirty: false, step: 300, auto: true, key: "" };
+const seq = { group: "all", items: [], dirty: false, step: 300, auto: true, chain: false, key: "" };
+
+const isAnimated = (l) => [l.effect, l.outer_effect].some((e) => e && e.kind !== "static");
+const multiZone = (l) => /fans$/.test(l.kind) || l.kind === "Strimer" || (l.zones && l.zones.length > 1);
 
 function seqLights(o) {
   const lights = o.lights.filter((l) => seq.group === "all" || l.group === seq.group);
@@ -11,20 +16,29 @@ function seqLights(o) {
       name: l.name,
       sub: `${l.kind === "header" ? "ARGB header" : l.kind} · ${effectSummary(l)}`,
       color: l.color ? rgbToHex(l.color) : "#444",
-      effect: l.effect || l.outer_effect,
-      animated: [l.effect, l.outer_effect].some((e) => e && e.kind !== "static"),
+      animated: isAnimated(l),
       delay: l.delay_ms || 0,
       reversed: [l.effect, l.outer_effect].some((e) => e && e.reverse && e.kind !== "static"),
+      across: !!l.span && l.span.len >= 1000,
+      chainStart: l.span && l.span.len < 1000 ? l.span.start : null,
+      multi: multiZone(l),
       light: l,
     }))
-    .sort((a, b) => b.animated - a.animated || a.delay - b.delay || a.name.localeCompare(b.name));
+    .sort((a, b) =>
+      b.animated - a.animated ||
+      (a.chainStart ?? 0) - (b.chainStart ?? 0) ||
+      a.delay - b.delay ||
+      a.name.localeCompare(b.name)
+    );
 }
 
 function renderSequence(o, force) {
-  const key = JSON.stringify([o.lights.map((l) => [l.id, l.name, l.delay_ms, l.effect, l.group]), o.groups, seq.group]);
+  const key = JSON.stringify([o.lights.map((l) => [l.id, l.name, l.delay_ms, l.span, l.effect, l.outer_effect, l.group]), o.groups, seq.group]);
   if (!force && (seq.dirty || key === seq.key || document.querySelector(".seq-row.dragging"))) return;
   seq.key = key;
   seq.items = seqLights(o);
+  seq.chain = seq.items.some((i) => i.chainStart !== null);
+  $("#seq-chain").checked = seq.chain;
   seq.dirty = false;
   const pick = $("#seq-group");
   pick.replaceChildren(
@@ -37,7 +51,7 @@ function renderSequence(o, force) {
 
 function spaceEvenly() {
   let n = 0;
-  for (const item of seq.items) item.delay = item.animated ? n++ * seq.step : 0;
+  for (const item of seq.items) item.delay = item.animated && !seq.chain ? n++ * seq.step : 0;
 }
 
 function changed() {
@@ -45,9 +59,22 @@ function changed() {
   drawSequence();
 }
 
+/// Spans for the chain: the moving devices share one strip in list order.
+function chainSpans() {
+  const moving = seq.items.filter((i) => i.animated);
+  const spans = new Map();
+  moving.forEach((item, n) => {
+    const start = Math.round((n * 1000) / moving.length);
+    const end = Math.round(((n + 1) * 1000) / moving.length);
+    spans.set(item.id, { start, len: end - start });
+  });
+  return spans;
+}
+
 function drawSequence() {
   const list = $("#seq-list");
-  const span = Math.max(3000, ...seq.items.map((i) => i.delay + 1000));
+  const range = Math.max(3000, ...seq.items.map((i) => i.delay + 1000));
+  const spans = seq.chain ? chainSpans() : new Map();
   $("#seq-save").disabled = !seq.dirty;
   $("#seq-discard").hidden = !seq.dirty;
   if (!seq.items.length) {
@@ -57,7 +84,12 @@ function drawSequence() {
   let dragged = null;
   list.replaceChildren(...seq.items.map((item, index) => {
     const input = el("input", { type: "number", class: "text num", min: 0, max: 10000, step: 50, value: item.delay });
-    input.disabled = !item.animated;
+    input.disabled = !item.animated || seq.chain;
+    input.addEventListener("change", () => {
+      item.delay = Math.max(0, Math.min(10000, Math.round(Number(input.value) || 0)));
+      changed();
+    });
+
     const reverse = el("button", { class: "icon-btn toggle" + (item.reversed ? " on" : ""), title: item.reversed ? "Reversed: click for the normal direction" : "Reverse the direction" }, icon("reverse"));
     reverse.disabled = !item.animated;
     reverse.addEventListener("click", async (e) => {
@@ -66,28 +98,50 @@ function drawSequence() {
       item.reversed = !item.reversed;
       drawSequence();
     });
+
+    const across = el("button", {
+      class: "icon-btn toggle" + (item.across || seq.chain ? " on" : ""),
+      title: seq.chain ? "Flowing through the devices" : item.across ? "Runs across all its fans: click to run on each fan" : "Run moving effects across all its fans instead of on each one",
+    }, icon("across"));
+    across.disabled = !item.animated || !item.multi || seq.chain;
+    across.addEventListener("click", (e) => {
+      e.stopPropagation();
+      item.across = !item.across;
+      changed();
+    });
+
     const more = el("button", { class: "icon-btn", title: "Rename, LED count, group and more" }, "⋯");
     more.addEventListener("click", (e) => {
       e.stopPropagation();
       deviceMenu(item.light, more);
     });
-    input.addEventListener("change", () => {
-      item.delay = Math.max(0, Math.min(10000, Math.round(Number(input.value) || 0)));
-      changed();
-    });
-    const marker = el("div", { class: "seq-marker" });
-    marker.style.left = `${(item.delay / span) * 100}%`;
-    marker.style.background = item.color;
-    marker.style.boxShadow = `0 0 10px ${item.color}`;
-    const row = el("div", { class: "seq-row" + (item.animated ? "" : " still"), draggable: "true", "data-index": index }, [
+
+    const track = el("div", { class: "seq-track" });
+    const span = spans.get(item.id);
+    if (span) {
+      const segment = el("div", { class: "seq-segment", title: `Its part of the strip: ${span.start / 10}–${(span.start + span.len) / 10}%` });
+      segment.style.left = `${span.start / 10}%`;
+      segment.style.width = `${span.len / 10}%`;
+      segment.style.background = item.color;
+      track.append(segment);
+    } else {
+      const marker = el("div", { class: "seq-marker", title: `${(item.delay / 1000).toFixed(2)} s` });
+      marker.style.left = `${(item.delay / range) * 100}%`;
+      marker.style.background = item.color;
+      marker.style.boxShadow = `0 0 10px ${item.color}`;
+      track.append(marker);
+    }
+
+    const row = el("div", { class: "seq-row" + (item.animated ? "" : " still"), draggable: "true" }, [
       el("span", { class: "seq-handle", title: "Drag to change the order" }, "⋮⋮"),
       el("span", { class: "seq-order" }, String(index + 1)),
       el("div", { class: "row-text" }, [
         el("div", { class: "row-name" }, item.name),
-        el("div", { class: "row-sub" }, item.animated ? item.sub : "Plain color, nothing to delay"),
+        el("div", { class: "row-sub" }, item.animated ? item.sub : "Plain color, nothing to move"),
       ]),
-      el("div", { class: "seq-track", title: `${(item.delay / 1000).toFixed(2)} s` }, marker),
+      track,
       el("label", { class: "seq-delay", title: "Start delay" }, [input, el("span", { class: "muted small" }, "ms")]),
+      across,
       reverse,
       more,
     ]);
@@ -115,16 +169,19 @@ function drawSequence() {
   }));
 }
 
-/// Flashes each row when its effect would start, to check the order before saving.
+/// Flashes each row when its effect would start (in a chain, as the effect reaches it),
+/// to check the order before saving.
 function previewSequence() {
+  const moving = seq.items.filter((i) => i.animated);
   document.querySelectorAll(".seq-row").forEach((row, i) => {
     const item = seq.items[i];
     if (!item.animated) return;
+    const at = seq.chain ? moving.indexOf(item) * 400 : item.delay;
     setTimeout(() => {
       row.classList.remove("flash");
       void row.offsetWidth;
       row.classList.add("flash");
-    }, item.delay);
+    }, at);
   });
 }
 
@@ -136,7 +193,7 @@ $("#seq-group").addEventListener("change", (e) => {
   };
   if (!seq.dirty) return show();
   e.target.value = seq.group;
-  openDialog("Unsaved sequence", el("p", { class: "muted small" }, "Save the delays you changed before showing other devices?"), [
+  openDialog("Unsaved changes", el("p", { class: "muted small" }, "Save the changes on this page before showing other devices?"), [
     el("button", { class: "btn", onclick: () => { closeDialog(); show(); } }, "Discard"),
     el("button", { class: "btn primary", onclick: async () => { closeDialog(); await saveSequence(); show(); } }, "Save"),
   ]);
@@ -155,6 +212,11 @@ $("#seq-auto").addEventListener("change", (e) => {
     changed();
   }
 });
+$("#seq-chain").addEventListener("change", (e) => {
+  seq.chain = e.target.checked;
+  spaceEvenly();
+  changed();
+});
 $("#seq-even").addEventListener("click", () => {
   spaceEvenly();
   changed();
@@ -170,8 +232,15 @@ $("#seq-reset").addEventListener("click", () => {
 });
 $("#seq-preview").addEventListener("click", previewSequence);
 $("#seq-discard").addEventListener("click", () => last && renderSequence(last, true));
+
 async function saveSequence() {
-  await call("set_delays", { delays: seq.items.map((i) => [i.id, i.delay]) }, "Sequence saved");
+  const spans = seq.chain ? chainSpans() : new Map();
+  const entries = seq.items.map((i) => ({
+    id: i.id,
+    delay_ms: seq.chain ? 0 : i.delay,
+    span: spans.get(i.id) || (i.across ? { start: 0, len: 1000 } : null),
+  }));
+  await call("set_sequence", { entries }, "Saved");
   seq.dirty = false;
   await refresh();
 }

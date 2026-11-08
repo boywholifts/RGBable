@@ -76,6 +76,7 @@
           <input type="number" class="text num" id="seq-step" min="0" max="5000" step="50" value="300" /> ms
         </label>
         <label class="check"><input type="checkbox" id="seq-auto" checked /> Space evenly as I reorder</label>
+        <label class="check" title="Moving effects (meteor, wave, drizzle…) travel through the devices in this order as one long strip, instead of each device running its own"><input type="checkbox" id="seq-chain" /> Flow through in this order</label>
         <span class="grow"></span>
         <button class="btn mini" id="seq-even">Space evenly</button>
         <button class="btn mini" id="seq-reverse">Reverse order</button>
@@ -87,7 +88,7 @@
         <span class="muted small">Delays longer than an effect's loop wrap around, so keep them under the loop length for a clean cascade.</span>
         <span class="grow"></span>
         <button class="btn" id="seq-discard" hidden>Discard</button>
-        <button class="btn primary" id="seq-save" disabled>Save sequence</button>
+        <button class="btn primary" id="seq-save" disabled>Save</button>
       </div>
     </section>
 
@@ -139,7 +140,6 @@
                 <option>24</option><option selected>30</option><option>60</option>
               </select>
             </label>
-            <button class="btn mini" id="oled-apply">Apply</button>
           </div>
           <div class="row oled-match">
             <label class="check"><input type="checkbox" id="oled-match" /> Match the lighting to each video</label>
@@ -147,7 +147,9 @@
               <option value="1">1 color</option><option value="2">2 colors</option><option value="3">3 colors</option>
               <option value="4" selected>4 colors</option><option value="5">5 colors</option><option value="6">6 colors</option>
             </select>
+            <button class="btn mini" id="oled-match-now" title="Take the colors from the video now">Match now</button>
           </div>
+          <div class="muted small" id="oled-match-status"></div>
           <p class="muted small">Shown landscape at 2288 × 1080. Fill crops the edges; Fit adds black bars. Each video is prepared for the screen once (it starts while you preview it), then plays straight away.</p>
         </div>
       </div>
@@ -237,6 +239,17 @@
           <button class="btn" id="update-check">Check now</button>
           <button class="btn primary" id="update-install2" hidden>Update now</button>
           <span class="muted small" id="update-status"></span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">White balance</div>
+        <p class="muted small">LEDs make pure white look slightly blue. Warm it up until white looks white to you; it applies to every device and effect.</p>
+        <div class="row warmth-row">
+          <span class="muted small">Cooler</span>
+          <input type="range" id="warmth" min="-50" max="50" step="5" value="0" />
+          <span class="muted small">Warmer</span>
+          <span class="muted small" id="warmth-value">Neutral</span>
+          <button class="btn mini" id="warmth-reset">Reset</button>
         </div>
       </div>
       <div class="card">

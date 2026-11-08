@@ -108,6 +108,7 @@ pub fn compose(parts: &[LedPart], elapsed_ms: u64) -> Vec<[u8; 3]> {
             None => frame.extend(std::iter::repeat_n(part.color, part.leds())),
         }
     }
+    crate::render::balance_all(&mut frame);
     frame
 }
 

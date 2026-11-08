@@ -51,6 +51,8 @@ struct Overview {
     manage_openrgb: bool,
     color_presets: Vec<String>,
     oled_match: Option<u8>,
+    oled_match_status: String,
+    warmth: i8,
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -79,6 +81,8 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
         manage_openrgb: config.manage_openrgb,
         color_presets: config.color_presets,
         oled_match: config.oled_match,
+        oled_match_status: lights::OLED_MATCH_STATUS.lock().clone(),
+        warmth: config.warmth,
     })
 }
 
@@ -96,8 +100,16 @@ fn chain(e: anyhow::Error) -> String {
 }
 
 #[tauri::command(async)]
-fn set_delays(state: State<'_, AppState>, delays: Vec<(String, u32)>) -> Result<(), String> {
-    lights::set_delays(&state.engine, &state.openrgb, &delays).map_err(chain)
+fn set_sequence(
+    state: State<'_, AppState>,
+    entries: Vec<lights::SequenceEntry>,
+) -> Result<(), String> {
+    lights::set_sequence(&state.engine, &state.openrgb, &entries).map_err(chain)
+}
+
+#[tauri::command(async)]
+fn set_across(state: State<'_, AppState>, id: String, across: bool) -> Result<(), String> {
+    lights::set_across(&state.engine, &state.openrgb, &id, across).map_err(chain)
 }
 
 #[tauri::command(async)]
@@ -320,6 +332,18 @@ async fn oled_palette(
 }
 
 #[tauri::command]
+async fn match_oled_now(state: State<'_, AppState>, count: u8) -> Result<(), String> {
+    let (engine, openrgb) = (state.engine.clone(), state.openrgb.clone());
+    tauri::async_runtime::spawn_blocking(move || {
+        lights::match_oled(&engine, &openrgb, count.clamp(1, 6))
+    })
+    .await
+    .map_err(err)?
+    .map(|_| ())
+    .map_err(chain)
+}
+
+#[tauri::command]
 async fn set_oled_match(state: State<'_, AppState>, count: Option<u8>) -> Result<(), String> {
     let count = count.map(|c| c.clamp(1, 6));
     state.engine.update_config(|c| c.oled_match = count);
@@ -471,6 +495,15 @@ fn restart(app: &AppHandle) -> anyhow::Result<()> {
 #[tauri::command(async)]
 fn stop_oled(state: State<'_, AppState>) {
     state.engine.stop_oled();
+}
+
+#[tauri::command(async)]
+fn set_warmth(state: State<'_, AppState>, warmth: i8) {
+    let warmth = warmth.clamp(-50, 50);
+    state.engine.update_config(|c| c.warmth = warmth);
+    render::WARMTH.store(warmth, std::sync::atomic::Ordering::Relaxed);
+    state.engine.relight_all();
+    lights::sync_openrgb_effects(&state.engine, &state.openrgb);
 }
 
 #[tauri::command(async)]
@@ -921,6 +954,7 @@ fn main() {
     let config_path = dir.join("config.json");
     info!("RGBable starting, data in {}", dir.display());
     let engine = Engine::new(config_path);
+    render::WARMTH.store(engine.config().warmth, std::sync::atomic::Ordering::Relaxed);
     engine.start();
 
     let openrgb = Arc::new(OpenRgb::new());
@@ -981,10 +1015,13 @@ fn main() {
             prepare_oled,
             restart_app,
             set_delay,
-            set_delays,
+            set_sequence,
+            set_across,
+            set_warmth,
             set_reverse,
             oled_palette,
             set_oled_match,
+            match_oled_now,
             set_color_presets,
             stop_oled,
             set_autostart,

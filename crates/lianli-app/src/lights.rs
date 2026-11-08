@@ -29,6 +29,7 @@ pub struct LightView {
     /// OpenRGB zones whose LED count the user can set (addressable headers).
     pub zones: Vec<ZoneView>,
     pub delay_ms: u32,
+    pub span: Option<crate::effects::Span>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -95,6 +96,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 outer_effect: d.outer_effect,
                 sides: d.sides,
                 delay_ms: 0,
+                span: None,
                 zones: Vec::new(),
                 sync: saved.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &d.id),
@@ -143,6 +145,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 outer_effect: None,
                 sides: false,
                 delay_ms: 0,
+                span: None,
                 zones: device
                     .zones
                     .iter()
@@ -181,6 +184,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 outer_effect: None,
                 sides: false,
                 delay_ms: 0,
+                span: None,
                 zones: vec![zone_view(index, zone)],
                 sync: own.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &header),
@@ -189,7 +193,9 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
         }
     }
     for light in &mut list {
-        light.delay_ms = config.devices.get(&light.id).map_or(0, |d| d.delay_ms);
+        let saved = config.devices.get(&light.id);
+        light.delay_ms = saved.map_or(0, |d| d.delay_ms);
+        light.span = saved.and_then(|d| d.span);
     }
     list
 }
@@ -253,6 +259,7 @@ fn has_lighting(config: &Config, id: &str) -> bool {
 fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
     let device_id = openrgb_id(device);
     let board_delay = config.devices.get(&device_id).map_or(0, |d| d.delay_ms);
+    let board_span = config.devices.get(&device_id).and_then(|d| d.span);
     let mut runs: Vec<(String, Vec<usize>)> = Vec::new();
     let zoned: usize = device.zones.iter().map(|z| z.leds).sum();
     if zoned == device.leds {
@@ -276,7 +283,10 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
             let saved = config.devices.get(&source);
             LedPart {
                 zones,
-                effect: saved.and_then(|s| s.effect.clone()),
+                effect: saved.and_then(|s| s.effect.clone()).map(|e| Effect {
+                    span: saved.and_then(|s| s.span).or(board_span),
+                    ..e
+                }),
                 color: saved
                     .and_then(|s| s.color)
                     .or(device.first_color)
@@ -437,23 +447,47 @@ pub fn set_reverse(engine: &Engine, openrgb: &OpenRgb, id: &str, reverse: bool) 
     Ok(())
 }
 
-/// Saves a whole sequence at once and resends only the devices whose delay changed.
-pub fn set_delays(engine: &Engine, openrgb: &OpenRgb, delays: &[(String, u32)]) -> Result<()> {
-    let changed: Vec<(String, u32)> = engine.update_config(|c| {
-        delays
+/// One device's place in a sequence: its start delay, and its span when effects run
+/// through the devices as one strip.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SequenceEntry {
+    pub id: String,
+    #[serde(default)]
+    pub delay_ms: u32,
+    #[serde(default)]
+    pub span: Option<crate::effects::Span>,
+}
+
+/// Saves a whole sequence at once and resends only the devices that changed.
+pub fn set_sequence(engine: &Engine, openrgb: &OpenRgb, entries: &[SequenceEntry]) -> Result<()> {
+    let changed: Vec<String> = engine.update_config(|c| {
+        entries
             .iter()
-            .filter_map(|(id, delay)| {
-                let delay = (*delay).min(MAX_DELAY_MS);
-                let entry = c.devices.entry(id.clone()).or_default();
-                (entry.delay_ms != delay).then(|| {
-                    entry.delay_ms = delay;
-                    (id.clone(), delay)
-                })
+            .filter_map(|e| {
+                let delay = e.delay_ms.min(MAX_DELAY_MS);
+                let entry = c.devices.entry(e.id.clone()).or_default();
+                let different = entry.delay_ms != delay || entry.span != e.span;
+                entry.delay_ms = delay;
+                entry.span = e.span;
+                different.then(|| e.id.clone())
             })
             .collect()
     });
+    relight_all(engine, openrgb, &changed)
+}
+
+/// Runs moving effects across all of a device's fans (or LEDs) instead of on each fan.
+pub fn set_across(engine: &Engine, openrgb: &OpenRgb, id: &str, across: bool) -> Result<()> {
+    engine.update_config(|c| {
+        c.devices.entry(id.to_string()).or_default().span =
+            across.then_some(crate::effects::Span::WHOLE);
+    });
+    relight_all(engine, openrgb, &[id.to_string()])
+}
+
+fn relight_all(engine: &Engine, openrgb: &OpenRgb, ids: &[String]) -> Result<()> {
     let mut boards = std::collections::BTreeSet::new();
-    for (id, _) in &changed {
+    for id in ids {
         if id.starts_with(OPENRGB_PREFIX) {
             boards.insert(split_id(id).0.to_string());
         } else {
@@ -510,35 +544,93 @@ pub fn set_all(
     Ok(())
 }
 
-/// Recolors the synced lighting with `count` colors from what's on the OLED, keeping the
-/// effect itself. A single static color becomes a wave when more than one color is asked for.
+/// What the last OLED color match did, shown under the option on the OLED page.
+pub static OLED_MATCH_STATUS: parking_lot::Mutex<String> = parking_lot::const_mutex(String::new());
+
+/// Gives every synced device `count` colors from what's on the OLED. Each keeps its own
+/// effect (and an SL Flex fan both rings'); a plain color takes the main color, and groups
+/// keep their effect with the new colors.
 pub fn match_oled(engine: &Engine, openrgb: &OpenRgb, count: u8) -> Result<Vec<[u8; 3]>> {
+    let result = recolor_from_oled(engine, openrgb, count);
+    *OLED_MATCH_STATUS.lock() = match &result {
+        Ok((colors, devices)) => format!(
+            "Matched {devices} device{} to {}",
+            if *devices == 1 { "" } else { "s" },
+            colors
+                .iter()
+                .map(|c| format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2]))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ),
+        Err(e) => format!("Couldn't match the lighting: {e:#}"),
+    };
+    result.map(|(colors, _)| colors)
+}
+
+fn recolor_from_oled(
+    engine: &Engine,
+    openrgb: &OpenRgb,
+    count: u8,
+) -> Result<(Vec<[u8; 3]>, usize)> {
     let oled = engine
         .config()
         .oled
         .context("nothing is playing on the OLED")?;
     let colors = crate::palette::from_media(&oled.file, usize::from(count))?;
-    let current = lights(engine, openrgb)
-        .into_iter()
-        .find(|l| l.sync)
-        .and_then(|l| l.effect)
-        .unwrap_or_default();
-    let kind = match current.kind {
-        EffectKind::Static if colors.len() > 1 => EffectKind::Wave,
-        EffectKind::Custom | EffectKind::Script => EffectKind::Wave,
-        kind => kind,
+    let recolor = |effect: Effect| -> Effect {
+        match effect.kind {
+            EffectKind::Custom | EffectKind::Script if colors.len() > 1 => Effect {
+                kind: EffectKind::Wave,
+                colors: colors.clone(),
+                ..Effect::default()
+            },
+            EffectKind::Static | EffectKind::Custom | EffectKind::Script => {
+                static_effect(colors[0])
+            }
+            _ => Effect {
+                colors: colors.clone(),
+                ..effect
+            },
+        }
     };
-    let effect = Effect {
-        kind,
-        colors: colors.clone(),
-        layers: Vec::new(),
-        script: None,
-        recipe: None,
-        name: None,
-        ..current
-    };
-    set_all(engine, openrgb, effect, true)?;
-    Ok(colors)
+    engine.update_config(|c| {
+        for g in &mut c.groups {
+            if let Some(effect) = g.effect.take() {
+                g.effect = Some(recolor(effect));
+            } else {
+                g.color = Some(colors[0]);
+            }
+        }
+    });
+    let mut matched = 0;
+    let mut first_error = None;
+    for light in lights(engine, openrgb).into_iter().filter(|l| l.sync) {
+        let effects: Vec<Effect> = [light.effect, light.outer_effect]
+            .into_iter()
+            .flatten()
+            .collect();
+        let effects = if effects.is_empty() {
+            vec![static_effect(colors[0])]
+        } else {
+            effects.into_iter().map(recolor).collect()
+        };
+        let result = effects
+            .into_iter()
+            .try_for_each(|e| set_effect(engine, openrgb, &light.id, e));
+        match result {
+            Ok(()) => matched += 1,
+            Err(e) => {
+                warn!("matching {} to the OLED: {e:#}", light.name);
+                first_error.get_or_insert(e);
+            }
+        }
+    }
+    if matched == 0 {
+        if let Some(e) = first_error {
+            return Err(e);
+        }
+    }
+    Ok((colors, matched))
 }
 
 pub fn set_group_effect(

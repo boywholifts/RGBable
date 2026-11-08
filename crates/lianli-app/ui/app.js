@@ -318,6 +318,8 @@ async function refresh() {
   renderUpdate(o.update);
   if (initial) {
     $("#autostart").checked = o.autostart;
+    $("#warmth").value = String(o.warmth || 0);
+    $("#warmth-value").textContent = warmthLabel(o.warmth || 0);
     $("#data-dir").textContent = o.data_dir;
     $("#update-channel").value = o.update_channel;
   }
@@ -340,3 +342,16 @@ $("#ram-hint-link").addEventListener("click", (e) => {
 });
 
 loadEffectCatalogue();
+
+// ---------------------------------------------------------------- white balance
+
+const warmthLabel = (w) => (w === 0 ? "Neutral" : w > 0 ? `Warmer ${w}` : `Cooler ${-w}`);
+let warmthTimer = null;
+function setWarmth(value) {
+  $("#warmth").value = String(value);
+  $("#warmth-value").textContent = warmthLabel(value);
+  clearTimeout(warmthTimer);
+  warmthTimer = setTimeout(() => invoke("set_warmth", { warmth: value }).catch((e) => toast(String(e), true)), 250);
+}
+$("#warmth").addEventListener("input", (e) => setWarmth(Number(e.target.value)));
+$("#warmth-reset").addEventListener("click", () => setWarmth(0));

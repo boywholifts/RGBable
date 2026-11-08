@@ -43,96 +43,114 @@ fn sample(file: &Path) -> Result<Vec<[u8; 3]>> {
         .collect())
 }
 
-fn value_and_saturation(c: [u8; 3]) -> (f32, f32) {
-    let max = f32::from(*c.iter().max().unwrap_or(&0)) / 255.0;
-    let min = f32::from(*c.iter().min().unwrap_or(&0)) / 255.0;
-    (max, if max > 0.0 { (max - min) / max } else { 0.0 })
+const HUE_BINS: usize = 36;
+/// Pixels this saturated count as a color; below `GREY_SATURATION` as grey or white.
+const COLOR_SATURATION: f32 = 0.35;
+const GREY_SATURATION: f32 = 0.2;
+/// What a grey or white area of the video becomes on LEDs.
+const LED_GREY: [u8; 3] = [170, 170, 180];
+
+fn hsv(c: [u8; 3]) -> (f32, f32, f32) {
+    let [r, g, b] = c.map(|v| f32::from(v) / 255.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+    let hue = if delta == 0.0 {
+        0.0
+    } else if max == r {
+        ((g - b) / delta).rem_euclid(6.0) / 6.0
+    } else if max == g {
+        ((b - r) / delta + 2.0) / 6.0
+    } else {
+        ((r - g) / delta + 4.0) / 6.0
+    };
+    let saturation = if max > 0.0 { delta / max } else { 0.0 };
+    (hue, saturation, max)
 }
 
-fn distance(a: [f32; 3], b: [f32; 3]) -> f32 {
-    (0..3).map(|i| (a[i] - b[i]).powi(2)).sum()
+fn from_hsv(hue: f32, saturation: f32) -> [u8; 3] {
+    let h = hue.rem_euclid(1.0) * 6.0;
+    let x = 1.0 - (h % 2.0 - 1.0).abs();
+    let (r, g, b) = match h as u32 {
+        0 => (1.0, x, 0.0),
+        1 => (x, 1.0, 0.0),
+        2 => (0.0, 1.0, x),
+        3 => (0.0, x, 1.0),
+        4 => (x, 0.0, 1.0),
+        _ => (1.0, 0.0, x),
+    };
+    [r, g, b].map(|v: f32| ((1.0 - saturation + saturation * v) * 255.0).round() as u8)
 }
 
-/// K-means over the pixels that would show on LEDs (near-black and grey ones are
-/// dropped, since OLED videos are mostly dark). Clusters are ranked by size and
-/// colorfulness, then brightened to full, because dim colors look muddy on LEDs.
+#[derive(Default, Clone, Copy)]
+struct Bin {
+    weight: f32,
+    sin: f32,
+    cos: f32,
+    saturation: f32,
+}
+
+/// The main hues of the bright, colorful pixels, each at full brightness and saturation as
+/// strong as in the video, plus grey when the video has large light grey areas.
+/// Averaging pixels (k-means) mixed glows with their white highlights and gave pale,
+/// washed-out colors, so this picks peaks of a hue histogram instead.
 pub fn pick(pixels: &[[u8; 3]], count: usize) -> Vec<[u8; 3]> {
-    let mut points: Vec<[f32; 3]> = pixels
-        .iter()
-        .filter(|&&p| {
-            let (v, s) = value_and_saturation(p);
-            v > 0.18 && s > 0.25
-        })
-        .map(|p| p.map(f32::from))
-        .collect();
-    if points.len() < count {
-        points = pixels.iter().map(|p| p.map(f32::from)).collect();
-    }
-    if points.is_empty() {
-        return vec![[255, 255, 255]];
+    let mut bins = [Bin::default(); HUE_BINS];
+    let mut grey = 0.0f32;
+    for &pixel in pixels {
+        let (hue, saturation, value) = hsv(pixel);
+        if value < 0.15 {
+            continue;
+        }
+        if saturation >= COLOR_SATURATION {
+            let weight = saturation * value;
+            let bin = &mut bins[(hue * HUE_BINS as f32) as usize % HUE_BINS];
+            let angle = hue * std::f32::consts::TAU;
+            bin.weight += weight;
+            bin.sin += angle.sin() * weight;
+            bin.cos += angle.cos() * weight;
+            bin.saturation += saturation * weight;
+        } else if saturation < GREY_SATURATION && value > 0.35 {
+            grey += value * 0.5;
+        }
     }
 
-    // farthest-point start, so small but distinct colors get a cluster
-    let mut centres = vec![points[points.len() / 2]];
-    while centres.len() < count.min(points.len()) {
-        let far = points
+    let mut picked: Vec<([u8; 3], f32)> = Vec::new();
+    let mut taken = [false; HUE_BINS];
+    while picked.len() < count {
+        let best = (0..HUE_BINS)
+            .filter(|&i| !taken[i])
+            .max_by(|&a, &b| bins[a].weight.total_cmp(&bins[b].weight));
+        let Some(best) = best.filter(|&i| bins[i].weight > 0.0) else {
+            break;
+        };
+        // a peak and its neighbors are one color
+        let mut merged = Bin::default();
+        for offset in [HUE_BINS - 2, HUE_BINS - 1, 0, 1, 2] {
+            let i = (best + offset) % HUE_BINS;
+            if !taken[i] {
+                taken[i] = true;
+                merged.weight += bins[i].weight;
+                merged.sin += bins[i].sin;
+                merged.cos += bins[i].cos;
+                merged.saturation += bins[i].saturation;
+            }
+        }
+        let hue = merged.sin.atan2(merged.cos) / std::f32::consts::TAU;
+        let saturation = (merged.saturation / merged.weight).max(0.75);
+        picked.push((from_hsv(hue, saturation), merged.weight));
+    }
+
+    let strongest = picked.first().map_or(0.0, |p| p.1);
+    if grey > strongest * 0.4 || picked.is_empty() {
+        let at = picked
             .iter()
-            .copied()
-            .max_by(|a, b| {
-                let da = centres
-                    .iter()
-                    .map(|c| distance(*a, *c))
-                    .fold(f32::MAX, f32::min);
-                let db = centres
-                    .iter()
-                    .map(|c| distance(*b, *c))
-                    .fold(f32::MAX, f32::min);
-                da.total_cmp(&db)
-            })
-            .unwrap_or(points[0]);
-        centres.push(far);
+            .position(|p| p.1 < grey)
+            .unwrap_or(picked.len());
+        picked.insert(at, (LED_GREY, grey));
+        picked.truncate(count.max(1));
     }
-
-    let mut sizes = vec![0usize; centres.len()];
-    for _ in 0..12 {
-        let mut sums = vec![[0f32; 3]; centres.len()];
-        sizes = vec![0; centres.len()];
-        for p in &points {
-            let nearest = (0..centres.len())
-                .min_by(|&a, &b| distance(*p, centres[a]).total_cmp(&distance(*p, centres[b])))
-                .unwrap_or(0);
-            sizes[nearest] += 1;
-            for i in 0..3 {
-                sums[nearest][i] += p[i];
-            }
-        }
-        for (k, centre) in centres.iter_mut().enumerate() {
-            if sizes[k] > 0 {
-                *centre = sums[k].map(|v| v / sizes[k] as f32);
-            }
-        }
-    }
-
-    let mut ranked: Vec<([u8; 3], f32)> = centres
-        .iter()
-        .zip(&sizes)
-        .filter(|(_, &n)| n > 0)
-        .map(|(c, &n)| {
-            let rgb = c.map(|v| v.round().clamp(0.0, 255.0) as u8);
-            let (_, s) = value_and_saturation(rgb);
-            (brighten(rgb), n as f32 * (0.3 + s))
-        })
-        .collect();
-    ranked.sort_by(|a, b| b.1.total_cmp(&a.1));
-    ranked.into_iter().map(|(c, _)| c).collect()
-}
-
-fn brighten(c: [u8; 3]) -> [u8; 3] {
-    let max = *c.iter().max().unwrap_or(&0);
-    if max == 0 {
-        return [255, 255, 255];
-    }
-    c.map(|v| (u16::from(v) * 255 / u16::from(max)) as u8)
+    picked.into_iter().map(|(c, _)| c).collect()
 }
 
 #[cfg(test)]
@@ -140,13 +158,39 @@ mod tests {
     use super::*;
 
     #[test]
-    fn finds_the_bright_colors_in_a_dark_frame() {
+    fn a_red_glow_stays_red_however_many_highlights_and_dark_pixels() {
+        let mut pixels = vec![[4, 4, 6]; 4000];
+        pixels.extend(vec![[255, 40, 10]; 120]);
+        pixels.extend(vec![[255, 120, 60]; 40]);
+        pixels.extend(vec![[255, 235, 225]; 60]);
+        let colors = pick(&pixels, 1);
+        let (hue, saturation, value) = hsv(colors[0]);
+        assert!(!(0.04..0.96).contains(&hue), "not red: {colors:?}");
+        assert!(saturation > 0.8 && value > 0.99, "washed out: {colors:?}");
+    }
+
+    #[test]
+    fn grey_areas_come_through_as_grey_next_to_the_main_color() {
+        let mut pixels = vec![[0, 0, 0]; 2000];
+        pixels.extend(vec![[230, 30, 10]; 200]);
+        pixels.extend(vec![[150, 155, 165]; 900]);
+        let colors = pick(&pixels, 3);
+        assert!(colors.contains(&LED_GREY), "{colors:?}");
+        assert_eq!(
+            colors.len(),
+            2,
+            "only red and grey are in the video: {colors:?}"
+        );
+    }
+
+    #[test]
+    fn separate_hues_become_separate_colors() {
         let mut pixels = vec![[5, 5, 8]; 1000];
         pixels.extend(vec![[200, 0, 120]; 80]);
         pixels.extend(vec![[0, 150, 160]; 40]);
         let colors = pick(&pixels, 2);
         assert_eq!(colors.len(), 2);
-        assert_eq!(colors[0], [255, 0, 153]);
-        assert_eq!(colors[1], [0, 239, 255]);
+        assert!(colors[0][0] == 255 && colors[0][1] == 0, "{colors:?}");
+        assert!(colors[1][2] == 255 && colors[1][0] == 0, "{colors:?}");
     }
 }

@@ -53,27 +53,32 @@ async function playOnOled(file) {
   refresh();
 }
 
-$("#oled-fit").addEventListener("click", (e) => {
-  const fit = e.target.dataset.fit;
-  if (!fit) return;
-  oled.fit = fit;
-  oled.shownKey = "";
+/// Fill/Fit and the frame rate take effect straight away on what's playing; while another
+/// video is being previewed they only change the preview (and its encode).
+async function fitOrRateChanged() {
   prepare();
   renderOledStage();
+  const previewing = oled.selected && oled.selected !== oled.current;
+  if (previewing || !oled.current) return;
+  await call("set_oled", { file: null, fit: oled.fit, fps: oled.fps }, `${oled.fit === "cover" ? "Fill" : "Fit"}, ${oled.fps} fps`);
+  refresh();
+}
+$("#oled-fit").addEventListener("click", (e) => {
+  const fit = e.target.dataset.fit;
+  if (!fit || fit === oled.fit) return;
+  oled.fit = fit;
+  oled.shownKey = "";
+  fitOrRateChanged();
 });
 $("#oled-fps").addEventListener("change", () => {
   oled.fps = Number($("#oled-fps").value);
-  prepare();
+  fitOrRateChanged();
 });
 $("#oled-pick").addEventListener("click", async () => {
   const file = await invoke("pick_media");
   if (file) playOnOled(file);
 });
 $("#oled-show").addEventListener("click", () => oled.selected && playOnOled(oled.selected));
-$("#oled-apply").addEventListener("click", async () => {
-  await call("set_oled", { file: null, fit: oled.fit, fps: oled.fps }, "Updated");
-  refresh();
-});
 async function setOledMatch() {
   const count = $("#oled-match").checked ? Number($("#oled-match-count").value) : null;
   await call("set_oled_match", { count }, count ? "Lighting now follows the OLED" : "Lighting no longer follows the OLED");
@@ -97,6 +102,7 @@ function renderOled(state, initial) {
     $("#oled-fps").value = String(state.fps);
   }
   const match = last && last.oled_match;
+  $("#oled-match-status").textContent = (last && last.oled_match_status) || "";
   $("#oled-match").checked = !!match;
   if (match) $("#oled-match-count").value = String(match);
   if (state.file !== oled.current) {
@@ -225,3 +231,16 @@ function syncPreviewPlayback() {
 }
 document.addEventListener("page-changed", syncPreviewPlayback);
 document.addEventListener("visibilitychange", syncPreviewPlayback);
+
+$("#oled-match-now").addEventListener("click", async () => {
+  const button = $("#oled-match-now");
+  button.disabled = true;
+  button.textContent = "Matching…";
+  try {
+    await call("match_oled_now", { count: Number($("#oled-match-count").value) });
+  } finally {
+    button.disabled = false;
+    button.textContent = "Match now";
+    refresh();
+  }
+});

@@ -9,7 +9,8 @@ use crate::effects::{Effect, EffectKind, Side};
 use anyhow::{Context, Result};
 use lianli_media::rgb::{family, sync_layout::Layout};
 use lianli_shared::rgb::{
-    RgbEffect, RgbPlaybackTiming, RgbRegionConfig, RgbRenderFamily, RgbRenderProfile, RgbScope,
+    RgbDirection, RgbEffect, RgbPlaybackTiming, RgbRegionConfig, RgbRenderFamily, RgbRenderProfile,
+    RgbScope,
 };
 
 const SL_V4_POSITIONS: usize = 13;
@@ -122,7 +123,10 @@ fn lianli_frames(
     base: &[[u8; 3]],
     profile: RgbRenderProfile,
 ) -> Option<Frames> {
-    let native = |e: &Option<Effect>| e.as_ref().is_some_and(|e| e.kind == EffectKind::Lianli);
+    let native = |e: &Option<Effect>| {
+        e.as_ref()
+            .is_some_and(|e| e.kind == EffectKind::Lianli && e.travel_span().is_none())
+    };
     if !native(&lighting.inner) && !native(&lighting.outer) {
         return None;
     }
@@ -162,6 +166,11 @@ fn lianli_frames(
             .filter(|d| parameters.directions.contains(d))
             .or_else(|| parameters.directions.first().copied())
             .unwrap_or_default();
+        let direction = if effect.reverse {
+            opposite(direction)
+        } else {
+            direction
+        };
         Some(RgbRegionConfig {
             effect: RgbEffect {
                 mode,
@@ -363,6 +372,42 @@ fn paint(
 
 /// The loop to upload at `shrink` level: L-Connect effects come from the Lian Li renderer and
 /// are thinned out to fit; RGBable effects use longer frames until they fit `budget`.
+/// White balance for everything RGBable sends, -50 (cooler) to 50 (warmer). LEDs show full
+/// white with a blue tint, so warming takes blue (and a little green) out.
+pub static WARMTH: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(0);
+
+fn balance(color: [u8; 3], warmth: i8) -> [u8; 3] {
+    let warmth = f32::from(warmth.clamp(-50, 50)) / 100.0;
+    let gains = if warmth >= 0.0 {
+        [1.0, 1.0 - 0.3 * warmth, 1.0 - 0.9 * warmth]
+    } else {
+        [1.0 + 0.9 * warmth, 1.0 + 0.3 * warmth, 1.0]
+    };
+    [0, 1, 2].map(|i| (f32::from(color[i]) * gains[i]).round() as u8)
+}
+
+pub fn balance_all(colors: &mut [[u8; 3]]) {
+    let warmth = WARMTH.load(std::sync::atomic::Ordering::Relaxed);
+    if warmth != 0 {
+        for c in colors {
+            *c = balance(*c, warmth);
+        }
+    }
+}
+
+/// The Lian Li renderers read "reverse" from the direction, so a reversed effect runs the
+/// other way round.
+fn opposite(direction: RgbDirection) -> RgbDirection {
+    match direction {
+        RgbDirection::Clockwise => RgbDirection::CounterClockwise,
+        RgbDirection::CounterClockwise => RgbDirection::Clockwise,
+        RgbDirection::Up => RgbDirection::Down,
+        RgbDirection::Down => RgbDirection::Up,
+        RgbDirection::Spread => RgbDirection::Gather,
+        RgbDirection::Gather => RgbDirection::Spread,
+    }
+}
+
 /// Devices with L-Connect's own Drizzling (the Strimers) play it instead of the RGBable copy.
 fn native_drizzle(lighting: &Lighting, profile: RgbRenderProfile) -> Lighting {
     let has_it = lianli_media::rgb::parameters::for_scope(profile, RgbScope::All)
@@ -370,7 +415,7 @@ fn native_drizzle(lighting: &Lighting, profile: RgbRenderProfile) -> Lighting {
         .any(|p| p.mode == lianli_shared::rgb::RgbMode::Drizzling);
     let swap = |e: &Option<Effect>| {
         e.clone().map(|e| match e.kind {
-            EffectKind::Drizzle if has_it => Effect {
+            EffectKind::Drizzle if has_it && e.span.is_none() => Effect {
                 kind: EffectKind::Lianli,
                 mode: Some(lianli_shared::rgb::RgbMode::Drizzling),
                 ..e
@@ -644,6 +689,16 @@ mod tests {
             Some(lianli_shared::rgb::RgbMode::Drizzling)
         );
         assert_eq!(native_drizzle(&drizzle, sl_v4(3)), drizzle);
+        let render = |reverse: bool| {
+            let lighting = Lighting::whole(Effect {
+                reverse,
+                ..drizzle.inner.clone().unwrap()
+            });
+            lianli_frames(&native_drizzle(&lighting, strimer), &[[0; 3]; 116], strimer)
+                .unwrap()
+                .frames
+        };
+        assert_ne!(render(false), render(true), "reverse is ignored");
         let frames = wireless_frames(
             &drizzle,
             &[[0; 3]; 116],
@@ -654,6 +709,19 @@ mod tests {
             40,
         );
         assert!(frames.unwrap().frames.len() > 1);
+    }
+
+    #[test]
+    fn warming_takes_blue_out_of_white_and_leaves_red_alone() {
+        assert_eq!(balance([255, 255, 255], 0), [255, 255, 255]);
+        let warm = balance([255, 255, 255], 30);
+        assert!(
+            warm[0] == 255 && warm[2] < warm[1] && warm[1] < 255,
+            "{warm:?}"
+        );
+        assert_eq!(balance([255, 0, 0], 50), [255, 0, 0]);
+        let cool = balance([255, 255, 255], -30);
+        assert!(cool[2] == 255 && cool[0] < cool[1], "{cool:?}");
     }
 
     #[test]
