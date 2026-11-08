@@ -16,7 +16,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 pub const RING_ID: &str = "oled-ring";
 const RING_LEDS: usize = 45;
@@ -294,6 +294,46 @@ impl Engine {
             .expect("spawn engine thread");
     }
 
+    const FAN_KEEPER_TICK: Duration = Duration::from_secs(1);
+    /// About 20%: the lowest speed sent to the fans, so a low board signal can't stall them.
+    const MIN_FAN_DUTY: u8 = 51;
+
+    /// Wireless fans keep whatever speed they were last given, and one that resets comes back
+    /// stopped. They follow the motherboard's fan signal, which the dongle measures on its fan
+    /// cable: SL V3 fans do it themselves once told to, the others get the duty sent each
+    /// second. With no signal, a stopped fan is run at full speed rather than left still.
+    fn keep_fans_spinning(wireless: &WirelessController) {
+        wireless.set_fg_sync(true);
+        let mut warned_no_signal = false;
+        loop {
+            // a reading of 0 is what the dongle gives with no fan cable to the board, so it
+            // counts as no signal rather than an order to stop the fans
+            let board = wireless
+                .motherboard_pwm()
+                .filter(|&duty| duty > 0)
+                .map(|duty| duty.max(Self::MIN_FAN_DUTY));
+            if board.is_none() && !warned_no_signal {
+                warn!("the wireless dongle reports no motherboard fan signal; stopped fans run at full speed");
+            }
+            warned_no_signal = board.is_none();
+            for device in wireless.devices().into_iter().filter(|d| d.fan_count > 0) {
+                let result = if device.fan_type.supports_hw_mobo_sync() {
+                    wireless.set_hardware_pwm_sync(&device.mac)
+                } else if let Some(duty) = board {
+                    wireless.set_fan_speeds_by_mac(&device.mac, &[duty; 4])
+                } else if device.current_pwm[..usize::from(device.fan_count.min(4))].contains(&0) {
+                    wireless.set_fan_speeds_by_mac(&device.mac, &[255; 4])
+                } else {
+                    Ok(())
+                };
+                if let Err(e) = result {
+                    debug!("{}: fan speed: {e:#}", device.mac_str());
+                }
+            }
+            thread::sleep(Self::FAN_KEEPER_TICK);
+        }
+    }
+
     /// Pairs devices RGBable already knows (they are in the config) that have reset and
     /// paired with no dongle at all, as fans do after a crash. Devices paired with another
     /// dongle, or unpaired by the user, are left alone.
@@ -367,6 +407,12 @@ impl Engine {
             }
         }
 
+        {
+            let wireless = wireless.clone();
+            thread::Builder::new()
+                .name("fan-keeper".into())
+                .spawn(move || Self::keep_fans_spinning(&wireless))?;
+        }
         {
             let engine = self.clone();
             thread::Builder::new()
