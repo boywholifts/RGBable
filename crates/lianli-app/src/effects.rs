@@ -27,6 +27,14 @@ pub enum EffectKind {
     Aurora,
     Police,
     Drizzle,
+    /// Colors sweeping across a keyboard's columns.
+    KeyWave,
+    /// Rings spreading out from the middle of a keyboard.
+    KeyRipple,
+    /// Drops falling down a keyboard's columns, like digital rain.
+    KeyRain,
+    /// The gaming keys (WASD and the arrows) in the second color, the rest in the first.
+    KeyHighlight,
     /// Layers of other effects blended together (the effect builder).
     Custom,
     /// A Rhai script that colors each LED.
@@ -162,7 +170,54 @@ impl Default for Effect {
     }
 }
 
+impl EffectKind {
+    /// Effects made for a keyboard's grid of keys. Elsewhere they run along the strip.
+    pub fn is_keyboard(self) -> bool {
+        matches!(
+            self,
+            Self::KeyWave | Self::KeyRipple | Self::KeyRain | Self::KeyHighlight
+        )
+    }
+}
+
+/// Where each LED of a keyboard sits (0 to 1 across and down) and which are gaming keys.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct KeyLayout {
+    pub points: Vec<[f32; 2]>,
+    pub highlighted: Vec<bool>,
+}
+
+impl KeyLayout {
+    pub fn slice(&self, start: usize, len: usize) -> Self {
+        let end = (start + len).min(self.points.len());
+        let start = start.min(end);
+        Self {
+            points: self.points[start..end].to_vec(),
+            highlighted: self.highlighted[start..end].to_vec(),
+        }
+    }
+}
+
 impl Effect {
+    /// A keyboard effect drawn on the keys where they really are.
+    pub fn frame_keys(&self, layout: &KeyLayout, phase: f32) -> Vec<[u8; 3]> {
+        let phase = phase.rem_euclid(1.0);
+        let colors = self.colors();
+        layout
+            .points
+            .iter()
+            .zip(&layout.highlighted)
+            .enumerate()
+            .map(|(i, (&[x, y], &marked))| {
+                let x = if self.reverse { 1.0 - x } else { x };
+                scale(
+                    key_color(self.kind, colors, phase, [x, y], marked, i),
+                    self.brightness,
+                )
+            })
+            .collect()
+    }
+
     /// Each layer loops a whole number of times within the longest layer's loop, so the
     /// combination still repeats seamlessly.
     fn layered(&self, zones: &[usize], phase: f32) -> Vec<[u8; 3]> {
@@ -348,6 +403,10 @@ impl Effect {
             EffectKind::Aurora => 8000,
             EffectKind::Police => 1600,
             EffectKind::Drizzle => 2400 * self.colors().len() as u32,
+            EffectKind::KeyWave => 4000,
+            EffectKind::KeyRipple => 2500,
+            EffectKind::KeyRain => 3000,
+            EffectKind::KeyHighlight => 4000,
             EffectKind::Lianli => 3000,
             EffectKind::Custom => 1000,
             EffectKind::Script => 4000,
@@ -437,6 +496,12 @@ impl Effect {
                     EffectKind::Aurora => aurora(colors, phase, p),
                     EffectKind::Police => police(colors, phase, p),
                     EffectKind::Drizzle => drizzle(colors, phase, p, strip_leds, zone),
+                    EffectKind::KeyWave
+                    | EffectKind::KeyRipple
+                    | EffectKind::KeyRain
+                    | EffectKind::KeyHighlight => {
+                        key_color(self.kind, colors, phase, [p, 0.5], false, led_index)
+                    }
                     EffectKind::Lianli | EffectKind::Custom | EffectKind::Script => colors[0],
                 };
                 out.push(scale(color, self.brightness));
@@ -536,6 +601,47 @@ fn meteor(color: [u8; 3], head: f32, p: f32, share: f32) -> [u8; 3] {
         return [0, 0, 0];
     }
     dim(color, (1.0 - behind / tail).powi(2))
+}
+
+fn key_color(
+    kind: EffectKind,
+    colors: &[[u8; 3]],
+    t: f32,
+    [x, y]: [f32; 2],
+    marked: bool,
+    _led: usize,
+) -> [u8; 3] {
+    match kind {
+        EffectKind::KeyWave => gradient(colors, t + x * 0.85 + y * 0.15),
+        EffectKind::KeyRipple => {
+            let distance = ((x - 0.5).powi(2) + ((y - 0.5) * 0.45).powi(2)).sqrt() / 0.55;
+            let ring = (distance - t).rem_euclid(1.0);
+            let glow = (-(ring.min(1.0 - ring) * 9.0).powi(2)).exp();
+            let color = colors[(t * colors.len() as f32) as usize % colors.len()];
+            dim(color, glow)
+        }
+        EffectKind::KeyRain => {
+            let column = (x * 24.0).round() as usize;
+            let h = hash(column + 7);
+            let speed = 1 + h % 2;
+            let head = (t * speed as f32 + (h & 0xffff) as f32 / 65536.0).fract() * 1.6 - 0.3;
+            let behind = head - y;
+            let glow = if (0.0..0.5).contains(&behind) {
+                1.0 - behind / 0.5
+            } else {
+                0.0
+            };
+            let color = colors[column % colors.len()];
+            if behind.abs() < 0.08 {
+                mix(color, [255, 255, 255], 0.5)
+            } else {
+                dim(color, glow)
+            }
+        }
+        EffectKind::KeyHighlight if marked => colors.get(1).copied().unwrap_or([255, 255, 255]),
+        EffectKind::KeyHighlight => colors[0],
+        _ => colors[0],
+    }
 }
 
 fn hash(n: usize) -> u32 {
@@ -737,7 +843,7 @@ mod tests {
         assert_eq!(periods.len(), 1, "{periods:?}");
     }
 
-    const ALL: [EffectKind; 19] = [
+    const ALL: [EffectKind; 23] = [
         EffectKind::Static,
         EffectKind::Breathing,
         EffectKind::ColorCycle,
@@ -757,6 +863,10 @@ mod tests {
         EffectKind::Aurora,
         EffectKind::Police,
         EffectKind::Drizzle,
+        EffectKind::KeyWave,
+        EffectKind::KeyRipple,
+        EffectKind::KeyRain,
+        EffectKind::KeyHighlight,
     ];
 
     #[test]

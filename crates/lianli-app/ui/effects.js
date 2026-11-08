@@ -20,12 +20,17 @@ const KINDS = [
   { id: "aurora", label: "Aurora", colors: 4, reverse: true, defaults: ["#00ffa0", "#8000ff", "#00a0ff"] },
   { id: "police", label: "Police", colors: 2, defaults: ["#ff0000", "#0040ff"] },
   { id: "drizzle", label: "Drizzle", colors: 6, reverse: true, hint: "Lian Li's Drizzling. Strimers play their built-in version.", defaults: ["#00e5ff", "#8000ff", "#ff2040"] },
+  { id: "key_wave", label: "Key wave", colors: 4, reverse: true, hint: "Sweeps across the keyboard's columns. Other devices show it along their LEDs.", defaults: ["#ff0080", "#8000ff", "#00c8ff"] },
+  { id: "key_ripple", label: "Key ripple", colors: 4, hint: "Rings spreading out from the middle of the keyboard.", defaults: ["#00c8ff", "#ff0080"] },
+  { id: "key_rain", label: "Digital rain", colors: 3, hint: "Drops falling down the keyboard's columns.", defaults: ["#00ff60"] },
+  { id: "key_highlight", label: "Gaming keys", colors: 2, hint: "The first color for every key, the second for WASD and the arrow keys.", defaults: ["#300060", "#ff0040"] },
 ];
 
 const CATEGORIES = [
   { id: "basic", label: "Basic", kinds: ["static", "breathing", "color_cycle", "rainbow", "heartbeat", "strobe"] },
   { id: "motion", label: "Motion", kinds: ["wave", "rainbow_wave", "meteor", "drizzle", "scanner", "runway", "fill", "ripple", "police"] },
   { id: "ambient", label: "Ambient", kinds: ["twinkle", "starry_night", "fire", "aurora"] },
+  { id: "keyboard", label: "Keyboard", kinds: ["key_wave", "key_ripple", "key_rain", "key_highlight"] },
   { id: "lianli", label: "Lian Li" },
   { id: "mine", label: "Mine" },
 ];

@@ -6,7 +6,7 @@
 //! protocol 6 every command is acknowledged with a status code, so failures
 //! are reported instead of being silently dropped.
 
-use crate::effects::Effect;
+use crate::effects::{Effect, KeyLayout};
 use anyhow::{bail, Context, Result};
 use parking_lot::{Mutex, RwLock};
 use serde::Serialize;
@@ -43,6 +43,9 @@ pub struct OrgbDevice {
     pub modes: Vec<String>,
     pub active_mode: String,
     pub first_color: Option<[u8; 3]>,
+    /// Where the keys sit, for devices whose zones come with a key grid (keyboards).
+    #[serde(skip)]
+    pub keys: Option<KeyLayout>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -82,9 +85,11 @@ pub struct OpenRgb {
 /// the set changes, so the animator puts each device back into direct mode.
 /// A run of a device's LEDs that follows one lighting: an effect drawn across `zones`
 /// (LED counts), or a plain color.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LedPart {
     pub zones: Vec<usize>,
+    /// This part's keys, when it is (part of) a keyboard.
+    pub keys: Option<KeyLayout>,
     pub effect: Option<Effect>,
     pub color: [u8; 3],
     pub delay_ms: u32,
@@ -105,7 +110,10 @@ pub fn compose(parts: &[LedPart], elapsed_ms: i64) -> Vec<[u8; 3]> {
                 let period = u64::from(effect.period_ms().max(1));
                 let behind = elapsed_ms - i64::from(part.delay_ms);
                 let phase = behind.rem_euclid(period as i64) as f32 / period as f32;
-                frame.extend(effect.frame(&part.zones, phase));
+                match part.keys.as_ref().filter(|_| effect.kind.is_keyboard()) {
+                    Some(keys) => frame.extend(effect.frame_keys(keys, phase)),
+                    None => frame.extend(effect.frame(&part.zones, phase)),
+                }
             }
             None => frame.extend(std::iter::repeat_n(part.color, part.leds())),
         }
@@ -481,6 +489,63 @@ fn list_devices(stream: &mut TcpStream, version: u32) -> Result<(Vec<u32>, Vec<O
     Ok((ids, devices))
 }
 
+/// Where each LED sits on the zones' key grids, scaled to 0..1 across and down, and which are
+/// the gaming keys. LEDs off every grid go along the bottom.
+fn key_layout(
+    zones: &[Zone],
+    grids: &[Option<(usize, usize, Vec<u32>)>],
+    names: &[String],
+) -> Option<KeyLayout> {
+    if grids.iter().all(Option::is_none) {
+        return None;
+    }
+    let total = names.len().max(zones.iter().map(|z| z.leds).sum());
+    let mut points: Vec<Option<[f32; 2]>> = vec![None; total];
+    let mut offset = 0;
+    for (zone, grid) in zones.iter().zip(grids) {
+        if let Some((height, width, map)) = grid {
+            for (cell, &led) in map.iter().enumerate() {
+                let index = offset + led as usize;
+                if led == u32::MAX || led as usize >= zone.leds || index >= total {
+                    continue;
+                }
+                let (row, column) = (cell / width, cell % width);
+                let across = column as f32 / (*width - 1).max(1) as f32;
+                let down = row as f32 / (*height - 1).max(1) as f32;
+                points[index].get_or_insert([across, down]);
+            }
+        }
+        offset += zone.leds;
+    }
+    const GAMING: [&str; 8] = [
+        "W",
+        "A",
+        "S",
+        "D",
+        "Up Arrow",
+        "Down Arrow",
+        "Left Arrow",
+        "Right Arrow",
+    ];
+    let highlighted = (0..total)
+        .map(|i| {
+            names.get(i).is_some_and(|name| {
+                let key = name.strip_prefix("Key: ").unwrap_or(name);
+                GAMING.iter().any(|g| key.eq_ignore_ascii_case(g))
+            })
+        })
+        .collect();
+    let points = points
+        .into_iter()
+        .enumerate()
+        .map(|(i, p)| p.unwrap_or([i as f32 / total.max(1) as f32, 1.0]))
+        .collect();
+    Some(KeyLayout {
+        points,
+        highlighted,
+    })
+}
+
 fn kind_name(kind: u32) -> &'static str {
     match kind {
         0 => "motherboard",
@@ -530,6 +595,7 @@ fn parse_controller(index: u32, data: &[u8], version: u32) -> Result<OrgbDevice>
     }
     let zone_count = r.u16()?;
     let mut zones = Vec::new();
+    let mut grids: Vec<Option<(usize, usize, Vec<u32>)>> = Vec::new();
     for _ in 0..zone_count {
         let zone_name = r.string()?;
         r.skip(4)?; // type
@@ -537,7 +603,19 @@ fn parse_controller(index: u32, data: &[u8], version: u32) -> Result<OrgbDevice>
         let max = r.u32()? as usize;
         let leds = r.u32()? as usize;
         let matrix = r.u16()? as usize;
-        r.skip(matrix)?;
+        grids.push(if matrix >= 8 {
+            let height = r.u32()? as usize;
+            let width = r.u32()? as usize;
+            let cells = (matrix - 8) / 4;
+            let mut map = Vec::with_capacity(cells);
+            for _ in 0..cells {
+                map.push(r.u32()?);
+            }
+            (height * width == cells && height > 0 && width > 0).then_some((height, width, map))
+        } else {
+            r.skip(matrix)?;
+            None
+        });
         if version >= 4 {
             let segments = r.u16()?;
             for _ in 0..segments {
@@ -569,12 +647,14 @@ fn parse_controller(index: u32, data: &[u8], version: u32) -> Result<OrgbDevice>
         });
     }
     let leds = r.u16()? as usize;
+    let mut led_names = Vec::with_capacity(leds);
     for _ in 0..leds {
-        r.string()?; // LED name
+        led_names.push(r.string()?);
         if version < 6 {
             r.u32()?; // LED value
         }
     }
+    let keys = key_layout(&zones, &grids, &led_names);
     let colors = r.u16()? as usize;
     let first_color = if colors > 0 {
         let c = r.take(4)?;
@@ -598,6 +678,7 @@ fn parse_controller(index: u32, data: &[u8], version: u32) -> Result<OrgbDevice>
         modes,
         active_mode,
         first_color,
+        keys,
     })
 }
 
@@ -651,5 +732,32 @@ impl Reader<'_> {
         Ok(String::from_utf8_lossy(bytes)
             .trim_end_matches('\0')
             .to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keys_are_placed_on_their_grid_and_gaming_keys_found() {
+        let zones = [Zone {
+            name: "Keyboard".into(),
+            leds: 4,
+            min: 4,
+            max: 4,
+        }];
+        // a 2 x 3 grid with an empty cell; LED 3 is on no cell
+        let grids = [Some((2, 3, vec![0, u32::MAX, 1, 2, 3, u32::MAX]))];
+        let names: Vec<String> = ["Key: Q", "Key: W", "Key: Escape", "Key: Up Arrow"]
+            .map(String::from)
+            .to_vec();
+        let keys = key_layout(&zones, &grids, &names).unwrap();
+        assert_eq!(keys.points[0], [0.0, 0.0]);
+        assert_eq!(keys.points[1], [1.0, 0.0]);
+        assert_eq!(keys.points[2], [0.0, 1.0]);
+        assert_eq!(keys.points[3], [0.5, 1.0]);
+        assert_eq!(keys.highlighted, vec![false, true, false, true]);
+        assert!(key_layout(&zones, &[None], &names).is_none());
     }
 }

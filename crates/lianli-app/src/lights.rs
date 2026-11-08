@@ -302,11 +302,16 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
     } else {
         runs.push((device_id, vec![device.leds]));
     }
+    let mut start = 0;
     runs.into_iter()
         .map(|(source, zones)| {
             let saved = config.devices.get(&source);
+            let leds: usize = zones.iter().sum();
+            let keys = device.keys.as_ref().map(|k| k.slice(start, leds));
+            start += leds;
             LedPart {
                 zones,
+                keys,
                 effect: saved.and_then(|s| s.effect.clone()).map(|e| Effect {
                     span: saved.and_then(|s| s.span).or(board_span),
                     turn: saved.and_then(|s| s.turn).or(board_turn),
@@ -954,6 +959,7 @@ mod tests {
             modes: Vec::new(),
             active_mode: String::new(),
             first_color: Some([1, 2, 3]),
+            keys: None,
         }
     }
 
