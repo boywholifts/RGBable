@@ -28,11 +28,8 @@ pub fn find_templates(folder: &Path) -> Vec<PathBuf> {
 
 /// Videos under `folder`, by lowercase file stem, to find the ones themes play.
 pub fn find_videos(folder: &Path) -> BTreeMap<String, PathBuf> {
-    let video = |e: &str| {
-        crate::oled_library::MEDIA
-            .iter()
-            .any(|m| e.eq_ignore_ascii_case(m))
-    };
+    const VIDEOS: &[&str] = &["mp4", "mkv", "mov", "webm", "avi"];
+    let video = |e: &str| VIDEOS.iter().any(|m| e.eq_ignore_ascii_case(m));
     files_under(folder, video)
         .into_iter()
         .take(2000)
@@ -337,8 +334,8 @@ pub fn import(
     let width = root.get("width").float().unwrap_or(0.0);
     let height = root.get("height").float().unwrap_or(0.0);
     ensure!(
-        width > height && width > 0.0,
-        "made for another screen ({width} × {height})"
+        width == f64::from(oled_modules::WIDTH) && height == f64::from(oled_modules::HEIGHT),
+        "made for part of a split screen or another screen ({width} × {height})"
     );
     let scale = Scale {
         x: f64::from(oled_modules::WIDTH) / width,
@@ -423,6 +420,12 @@ pub fn import(
         .flatten();
     let background = match still {
         Some(picture) => {
+            // some themes keep it the way the panel sits, upright turned a quarter clockwise
+            let picture = if picture.height() > picture.width() {
+                image::imageops::rotate270(&picture)
+            } else {
+                picture
+            };
             let backgrounds = out.join("Backgrounds");
             std::fs::create_dir_all(&backgrounds)?;
             let path = backgrounds.join(format!("{file_name}.png"));
