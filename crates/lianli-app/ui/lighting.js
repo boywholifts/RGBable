@@ -21,6 +21,25 @@ function closeMenu() {
   if (open) open.remove();
 }
 
+/// Where a right-click opened the next menu, so it appears at the pointer.
+let menuPoint = null;
+
+/// Right-clicking anything with a ⋯ button opens that button's menu at the pointer. The
+/// webview's own menu (reload, inspect) is kept only for text fields.
+document.addEventListener("contextmenu", (e) => {
+  if (e.target.closest("input, textarea, [contenteditable]")) return;
+  e.preventDefault();
+  for (let node = e.target; node && node !== document.body; node = node.parentElement) {
+    const more = node.matches(".more-btn") ? node : [...node.querySelectorAll(".more-btn")].find((b) => b.parentElement === node || b.parentElement.parentElement === node);
+    if (more) {
+      if (more.disabled) return;
+      menuPoint = { x: e.clientX, y: e.clientY };
+      more.click();
+      return;
+    }
+  }
+});
+
 /// items: { label, onClick, checked, danger, header } or "-" for a divider.
 function openMenu(anchor, items) {
   closeMenu();
@@ -44,7 +63,9 @@ function openMenu(anchor, items) {
     }
   }
   document.body.append(menu);
-  const r = anchor.getBoundingClientRect();
+  const point = menuPoint;
+  menuPoint = null;
+  const r = point ? { left: point.x, right: point.x + menu.offsetWidth, top: point.y, bottom: point.y } : anchor.getBoundingClientRect();
   const width = menu.offsetWidth, height = menu.offsetHeight;
   menu.style.left = Math.max(8, Math.min(r.right - width, window.innerWidth - width - 8)) + "px";
   menu.style.top = (r.bottom + height + 8 > window.innerHeight ? r.top - height - 4 : r.bottom + 4) + "px";
@@ -177,7 +198,7 @@ function rowBadges(l) {
 }
 
 function deviceRow(l) {
-  const more = el("button", { class: "icon-btn", title: "More" }, "⋯");
+  const more = el("button", { class: "icon-btn more-btn", title: "More (or right-click)" }, "⋯");
   more.addEventListener("click", (e) => {
     e.stopPropagation();
     deviceMenu(l, more);
@@ -256,7 +277,7 @@ function groupSection(key, title, members, g) {
       e.stopPropagation();
       openDrawer({ type: "group", id: g.id });
     });
-    const more = el("button", { class: "icon-btn", title: "More" }, "⋯");
+    const more = el("button", { class: "icon-btn more-btn", title: "More (or right-click)" }, "⋯");
     more.addEventListener("click", (e) => {
       e.stopPropagation();
       groupMenu(g, more);

@@ -170,7 +170,7 @@ function drawSequence() {
       changed();
     });
 
-    const more = el("button", { class: "icon-btn", title: "Rename, LED count, group and more" }, "⋯");
+    const more = el("button", { class: "icon-btn more-btn", title: "Rename, LED count, group and more (or right-click)" }, "⋯");
     more.addEventListener("click", (e) => {
       e.stopPropagation();
       deviceMenu(item.light, more);
