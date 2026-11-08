@@ -338,15 +338,19 @@ impl Engine {
 
     const FAN_KEEPER_TICK: Duration = Duration::from_secs(1);
     const PUMP_REFRESH: Duration = Duration::from_secs(30);
+    const FAN_REFRESH: Duration = Duration::from_secs(10);
 
     /// Wireless fans keep whatever speed they were last given, and one that resets comes back
-    /// stopped, so every fan device is given its speed each second. Motherboard mode follows
+    /// stopped, so each second every fan device not at its speed is given it. Motherboard mode follows
     /// the board's fan signal, which the dongle measures on its fan cable; SL V3 fans do that
     /// themselves once told to.
     fn keep_fans_spinning(&self, wireless: &WirelessController) {
         wireless.set_fg_sync(true);
         let mut warned_no_signal = false;
         let mut pump_sent: Option<(PumpMode, Instant)> = None;
+        // Speeds go out when a fan isn't at its speed, and now and then regardless: sending
+        // every fan its speed every second crowded out lighting uploads on the radio.
+        let mut last_sent: BTreeMap<[u8; 6], Instant> = BTreeMap::new();
         loop {
             let board = wireless.motherboard_pwm();
             let coolant = self.last_coolant.read().map(|(c, at)| (c, at.elapsed()));
@@ -361,7 +365,18 @@ impl Engine {
                     mode == FanMode::Motherboard && device.fan_type.supports_hw_mobo_sync();
                 let result = match fans::decide(&mode, board, coolant) {
                     _ if board_driven => wireless.set_hardware_pwm_sync(&device.mac),
-                    Decision::Duty(duty) => wireless.set_fan_speeds_by_mac(&device.mac, &[duty; 4]),
+                    Decision::Duty(duty) => {
+                        let running = &device.current_pwm[..usize::from(device.fan_count.min(4))];
+                        let due = last_sent
+                            .get(&device.mac)
+                            .is_none_or(|at| at.elapsed() >= Self::FAN_REFRESH);
+                        if due || running.iter().any(|&pwm| pwm.abs_diff(duty) > 2) {
+                            last_sent.insert(device.mac, Instant::now());
+                            wireless.set_fan_speeds_by_mac(&device.mac, &[duty; 4])
+                        } else {
+                            Ok(())
+                        }
+                    }
                     Decision::KeepUnlessStopped => {
                         needs_board = true;
                         let running = &device.current_pwm[..usize::from(device.fan_count.min(4))];
@@ -956,6 +971,7 @@ impl Engine {
         // checks in a row, so stale discovery data cannot trigger a re-send storm.
         const STRIKES: u8 = 2;
         const SHRINK_AFTER_SENDS: u8 = 2;
+        const RETRY_FULL_AFTER: Duration = Duration::from_secs(300);
 
         enum State {
             Pending {
@@ -972,6 +988,7 @@ impl Engine {
         let mut not_before: BTreeMap<[u8; 6], Instant> = BTreeMap::new();
         // How far each device's effects had to be shrunk before it accepted them.
         let mut shrink: BTreeMap<[u8; 6], u8> = BTreeMap::new();
+        let mut shrunk_at: BTreeMap<[u8; 6], Instant> = BTreeMap::new();
         let mut last_verify = Instant::now();
         let mut last_ring_frame = Instant::now();
 
@@ -1009,6 +1026,7 @@ impl Engine {
                         {
                             let level = shrink.get(&mac).copied().unwrap_or(0) + 1;
                             shrink.insert(mac, level);
+                            shrunk_at.insert(mac, Instant::now());
                             warn!(
                                 "{}: effect not confirmed, retrying it smaller (level {level})",
                                 ctl.id
@@ -1076,6 +1094,7 @@ impl Engine {
                         // new effect starts at full size instead of inheriting a still frame.
                         if dirty {
                             shrink.remove(&mac);
+                            shrunk_at.remove(&mac);
                         }
                         (prepare(shrink.get(&mac).copied().unwrap_or(0)), 0)
                     }
@@ -1111,6 +1130,17 @@ impl Engine {
                     let Some(State::Settled { upload, strikes }) = states.get_mut(mac) else {
                         continue;
                     };
+                    // A shrunk effect (or a still frame) came from a bad spell on the radio,
+                    // so the full effect is tried again after a while rather than kept.
+                    if shrunk_at
+                        .get(mac)
+                        .is_some_and(|at| at.elapsed() >= RETRY_FULL_AFTER)
+                    {
+                        shrunk_at.remove(mac);
+                        info!("{}: trying its full effect again", ctl.id);
+                        ctl.dirty.store(true, Ordering::Release);
+                        continue;
+                    }
                     if wireless.rgb_upload_applied(mac, upload.effect_index()) {
                         *strikes = 0;
                         continue;
@@ -1379,10 +1409,10 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
     Ok(output)
 }
 
-/// Compressed bytes an effect loop may use at shrink level 0. The protocol allows 12 KB,
-/// but devices failed to take loops near that size, so loops start at half of it and are
-/// halved again for each level a device needed.
-const UPLOAD_BUDGET: usize = 6 * 1024;
+/// Compressed bytes an effect loop may use at shrink level 0. The protocol allows 12 KB, but
+/// with seven devices on the radio, loops of 5 KB went unconfirmed on every one of them, so
+/// loops start at a quarter of it and are halved again for each level a device needed.
+const UPLOAD_BUDGET: usize = 3 * 1024;
 /// At this level an effect is shown as a still frame.
 const MAX_SHRINK: u8 = 3;
 
