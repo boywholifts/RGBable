@@ -203,6 +203,10 @@ impl OpenRgb {
 
     /// True when OpenRGB now lists different controllers than were read at connect. OpenRGB
     /// starts its server before detection finishes, and devices can be plugged in later.
+    pub fn is_connected(&self) -> bool {
+        self.stream.lock().is_some()
+    }
+
     pub fn device_list_changed(&self) -> Result<bool> {
         let mut guard = self.stream.lock();
         let (stream, version) = guard.as_mut().context("not connected to OpenRGB")?;

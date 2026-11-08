@@ -1217,35 +1217,68 @@ fn connect_openrgb_in_background(engine: Arc<Engine>, openrgb: Arc<OpenRgb>, sta
 }
 
 /// Picks up devices OpenRGB finds after RGBable connected: quickly while OpenRGB is still
-/// detecting at startup, then twice a minute for devices plugged in later. Runs for the
-/// life of the app.
+/// detecting at startup, then twice a minute for devices plugged in later. A lost connection
+/// (OpenRGB closed or restarted, which hands the boards back their own effects) is
+/// reconnected every few seconds, starting the managed OpenRGB again if it isn't running.
+/// Runs for the life of the app.
 fn watch_openrgb_devices(engine: &Arc<Engine>, openrgb: &Arc<OpenRgb>) {
+    use std::time::{Duration, Instant};
+    const RECONNECT_EVERY: Duration = Duration::from_secs(5);
+    const RESTART_HOST_EVERY: Duration = Duration::from_secs(60);
     static WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if WATCHING.swap(true, std::sync::atomic::Ordering::AcqRel) {
         return;
     }
-    let started = std::time::Instant::now();
+    let started = Instant::now();
+    let mut lost_at: Option<Instant> = None;
+    let mut host_started_at: Option<Instant> = None;
+    let mut listed_at = Instant::now();
     loop {
-        let wait = if started.elapsed() < std::time::Duration::from_secs(90) {
-            3
+        let every = if started.elapsed() < Duration::from_secs(90) {
+            Duration::from_secs(3)
         } else {
-            30
+            Duration::from_secs(30)
         };
-        std::thread::sleep(std::time::Duration::from_secs(wait));
-        let changed = match openrgb.device_list_changed() {
-            Ok(changed) => changed,
-            Err(_) => continue,
-        };
-        if !changed {
+        std::thread::sleep(RECONNECT_EVERY.min(every));
+        if lost_at.is_none() && openrgb.is_connected() && listed_at.elapsed() < every {
             continue;
         }
-        let port = engine.config().openrgb_port;
-        match openrgb.connect(port) {
+        listed_at = Instant::now();
+        let reconnect = match openrgb.device_list_changed() {
+            Ok(changed) => changed,
+            Err(_) => {
+                if lost_at.is_none() {
+                    tracing::warn!("lost the connection to OpenRGB; reconnecting");
+                    lost_at = Some(Instant::now());
+                }
+                true
+            }
+        };
+        if !reconnect {
+            continue;
+        }
+        let config = engine.config();
+        match openrgb.connect(config.openrgb_port) {
             Ok(()) => {
-                tracing::info!("OpenRGB's device list changed; reloaded it");
+                if lost_at.take().is_some() {
+                    tracing::info!("reconnected to OpenRGB");
+                } else {
+                    tracing::info!("OpenRGB's device list changed; reloaded it");
+                }
                 lights::after_openrgb_connect(engine, openrgb);
             }
-            Err(e) => tracing::warn!("reloading OpenRGB devices: {e:#}"),
+            Err(e) => {
+                let lost_for = lost_at.map_or(Duration::ZERO, |at| at.elapsed());
+                let may_restart =
+                    host_started_at.is_none_or(|at| at.elapsed() >= RESTART_HOST_EVERY);
+                if config.manage_openrgb && lost_for >= Duration::from_secs(15) && may_restart {
+                    host_started_at = Some(Instant::now());
+                    if let Err(e) = openrgb_host::start() {
+                        tracing::warn!("starting OpenRGB again: {e:#}");
+                    }
+                }
+                tracing::debug!("reconnecting to OpenRGB: {e:#}");
+            }
         }
     }
 }
