@@ -253,3 +253,43 @@ pub fn restart() -> Result<()> {
     std::thread::sleep(std::time::Duration::from_millis(1500));
     start()
 }
+
+/// Whether a program with this file name (like "Vial.exe") is running.
+#[cfg(windows)]
+pub fn process_running(exe: &str) -> bool {
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    let mut entry = PROCESSENTRY32W {
+        dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+        ..Default::default()
+    };
+    // SAFETY: the snapshot handle is checked before use and closed once; the entry's size
+    // field is set as the API requires.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return false;
+        }
+        let mut found = false;
+        let mut more = Process32FirstW(snapshot, &mut entry) != 0;
+        while more {
+            let name = &entry.szExeFile;
+            let len = name.iter().position(|&c| c == 0).unwrap_or(name.len());
+            if String::from_utf16_lossy(&name[..len]).eq_ignore_ascii_case(exe) {
+                found = true;
+                break;
+            }
+            more = Process32NextW(snapshot, &mut entry) != 0;
+        }
+        CloseHandle(snapshot);
+        found
+    }
+}
+
+#[cfg(not(windows))]
+pub fn process_running(_exe: &str) -> bool {
+    false
+}

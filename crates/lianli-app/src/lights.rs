@@ -26,6 +26,8 @@ pub struct LightView {
     pub sides: bool,
     pub sync: bool,
     pub group: Option<String>,
+    /// Kept off the device lists until shown; also left out of Sync everything.
+    pub hidden: bool,
     /// OpenRGB zones whose LED count the user can set (addressable headers).
     pub zones: Vec<ZoneView>,
     pub delay_ms: u32,
@@ -102,6 +104,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 zones: Vec::new(),
                 sync: saved.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &d.id),
+                hidden: false,
                 default_name: d.default_name,
                 name: d.name,
                 id: d.id,
@@ -163,6 +166,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                     .collect(),
                 sync: saved.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &id),
+                hidden: false,
                 id: id.clone(),
             });
         }
@@ -204,6 +208,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 zones: vec![zone_view(index, zone)],
                 sync: own.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &header),
+                hidden: false,
                 id: header,
             });
         }
@@ -213,6 +218,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
         light.delay_ms = saved.map_or(0, |d| d.delay_ms);
         light.span = saved.and_then(|d| d.span);
         light.turn = saved.and_then(|d| d.turn);
+        light.hidden = saved.is_some_and(|d| d.hidden);
     }
     list
 }
@@ -495,6 +501,10 @@ pub struct SequenceEntry {
     pub span: Option<crate::effects::Span>,
     #[serde(default)]
     pub turn: Option<crate::effects::Span>,
+}
+
+pub fn set_hidden(engine: &Engine, id: &str, hidden: bool) {
+    engine.update_config(|c| c.devices.entry(id.to_string()).or_default().hidden = hidden);
 }
 
 /// Saves a whole sequence at once and resends only the devices that changed.

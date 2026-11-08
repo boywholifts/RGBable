@@ -172,6 +172,10 @@ function deviceMenu(l, anchor) {
   }
   items.push({ label: l.delay_ms ? `Start delay (${(l.delay_ms / 1000).toFixed(1)} s)…` : "Start delay…", onClick: () => delayDialog(l) });
   if (l.zones && l.zones.length) items.push({ label: "LED count…", onClick: () => ledCountDialog(l) });
+  items.push({
+    label: l.hidden ? "Unhide" : "Hide",
+    onClick: () => call("set_hidden", { id: l.id, hidden: !l.hidden }, l.hidden ? `${l.name} is shown again` : `${l.name} hidden: Show hidden brings it back`).then(rerender),
+  });
   items.push("-", { header: "Move to group" });
   items.push({ label: "No group", checked: !l.group, onClick: () => call("move_to_group", { id: l.id, group: null }).then(rerender) });
   for (const g of groups) {
@@ -336,7 +340,15 @@ function renderEverything(o) {
   card.onclick = () => openDrawer({ type: "all" });
 }
 
+let showHidden = false;
+
 function renderLights(o) {
+  const hiddenCount = o.lights.filter((l) => l.hidden).length;
+  const toggle = $("#show-hidden");
+  toggle.hidden = !hiddenCount;
+  toggle.textContent = showHidden ? "Hide hidden devices" : `Show hidden (${hiddenCount})`;
+  if (!hiddenCount) showHidden = false;
+  o = { ...o, lights: showHidden ? o.lights : o.lights.filter((l) => !l.hidden) };
   const orgb = o.openrgb;
   $("#orgb-status").replaceChildren(
     orgb.connected ? `OpenRGB connected` : "OpenRGB not connected · ",
@@ -346,7 +358,7 @@ function renderLights(o) {
   const noRam = orgb.connected && !o.lights.some((l) => l.source === "openrgb" && l.kind === "ram");
   $("#ram-hint").hidden = !noRam || o.manage_openrgb;
 
-  const key = JSON.stringify([o.lights, o.groups, orgb.connected, [...collapsed]]);
+  const key = JSON.stringify([o.lights, o.groups, orgb.connected, [...collapsed], showHidden]);
   if (key === structureKey || document.querySelector("#lights .dragging") || document.querySelector(".menu")) return;
   structureKey = key;
   renderEverything(o);
@@ -367,6 +379,11 @@ function renderLights(o) {
   }
   if (drawer.open) renderDrawerTitle();
 }
+
+$("#show-hidden").addEventListener("click", () => {
+  showHidden = !showHidden;
+  rerender();
+});
 
 $("#group-new").addEventListener("click", () =>
   promptName("New group", "", async (name) => {

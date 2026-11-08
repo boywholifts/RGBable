@@ -15,7 +15,7 @@ const partial = (span) => span && span.len < 1000;
 const SPEEDS = [[1, "Slowest"], [2, "Slow"], [3, "Normal"], [4, "Fast"], [5, "Fastest"]];
 
 function seqLights(o) {
-  const lights = o.lights.filter((l) => seq.group === "all" || l.group === seq.group);
+  const lights = o.lights.filter((l) => !l.hidden && (seq.group === "all" || l.group === seq.group));
   return lights
     .map((l) => ({
       id: l.id,
@@ -42,7 +42,7 @@ function seqLights(o) {
 }
 
 function renderSequence(o, force) {
-  const key = JSON.stringify([o.lights.map((l) => [l.id, l.name, l.delay_ms, l.span, l.turn, l.effect, l.outer_effect, l.group]), o.groups, seq.group]);
+  const key = JSON.stringify([o.lights.map((l) => [l.id, l.name, l.delay_ms, l.span, l.turn, l.effect, l.outer_effect, l.group, l.hidden]), o.groups, seq.group]);
   if (!force && (seq.dirty || key === seq.key || document.querySelector(".seq-row.dragging, .seq-marker.dragging"))) return;
   seq.key = key;
   seq.items = seqLights(o);

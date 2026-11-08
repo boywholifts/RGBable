@@ -138,6 +138,11 @@ fn set_reverse(state: State<'_, AppState>, id: String, reverse: bool) -> Result<
 }
 
 #[tauri::command(async)]
+fn set_hidden(state: State<'_, AppState>, id: String, hidden: bool) {
+    lights::set_hidden(&state.engine, &id, hidden);
+}
+
+#[tauri::command(async)]
 fn set_speed(state: State<'_, AppState>, id: String, speed: u8) -> Result<(), String> {
     lights::set_speed(&state.engine, &state.openrgb, &id, speed).map_err(chain)
 }
@@ -1055,6 +1060,7 @@ fn main() {
     let openrgb = Arc::new(OpenRgb::new());
     openrgb.start_animator();
     connect_openrgb_in_background(engine.clone(), openrgb.clone(), true);
+    watch_vial(engine.clone(), openrgb.clone());
 
     let updater = Arc::new(Updater::default());
     if cfg!(not(debug_assertions)) {
@@ -1125,6 +1131,7 @@ fn main() {
             set_clean_transitions,
             set_reverse,
             set_speed,
+            set_hidden,
             oled_palette,
             set_oled_match,
             match_oled_now,
@@ -1237,6 +1244,27 @@ fn connect_openrgb_in_background(engine: Arc<Engine>, openrgb: Arc<OpenRgb>, sta
             std::thread::sleep(std::time::Duration::from_secs(5));
         }
     });
+}
+
+/// While the Vial app is open, keyboards are left to it: RGBable's frames would keep
+/// overwriting what Vial shows and changes. They get their RGBable lighting back once it
+/// closes. Runs for the life of the app.
+fn watch_vial(engine: Arc<Engine>, openrgb: Arc<OpenRgb>) {
+    std::thread::Builder::new()
+        .name("vial-watch".into())
+        .spawn(move || loop {
+            let open = openrgb_host::process_running("Vial.exe");
+            if openrgb.hold_keyboards(open) {
+                if open {
+                    tracing::info!("Vial is open; leaving keyboards to it");
+                } else {
+                    tracing::info!("Vial closed; keyboards follow RGBable again");
+                    lights::sync_openrgb_effects(&engine, &openrgb);
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_secs(1));
+        })
+        .expect("spawn Vial watcher");
 }
 
 /// Picks up devices OpenRGB finds after RGBable connected: quickly while OpenRGB is still

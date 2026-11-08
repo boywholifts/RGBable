@@ -133,6 +133,8 @@ pub struct DeviceConfig {
     /// This device's time slot when devices take turns.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<crate::effects::Span>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
 }
 
 fn is_zero_i8(value: &i8) -> bool {
@@ -145,7 +147,7 @@ fn is_zero(value: &u32) -> bool {
 
 impl DeviceConfig {
     pub fn in_sync(&self) -> bool {
-        self.sync.unwrap_or(true)
+        !self.hidden && self.sync.unwrap_or(true)
     }
 }
 

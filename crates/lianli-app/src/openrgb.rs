@@ -74,6 +74,8 @@ pub struct OpenRgb {
     devices: RwLock<Vec<OrgbDevice>>,
     listed_ids: RwLock<Vec<u32>>,
     animations: Mutex<Animations>,
+    /// Keyboards left alone while Vial has them: nothing is written to them.
+    keyboards_held: std::sync::atomic::AtomicBool,
 }
 
 /// Effects OpenRGB devices play, keyed by controller index. `generation` changes whenever
@@ -129,7 +131,32 @@ impl OpenRgb {
             devices: RwLock::new(Vec::new()),
             listed_ids: RwLock::new(Vec::new()),
             animations: Mutex::new(Animations::default()),
+            keyboards_held: std::sync::atomic::AtomicBool::new(false),
         }
+    }
+
+    /// Stops or resumes writing to keyboards (while Vial edits one, RGBable's frames would
+    /// fight its changes). Returns whether that changed anything.
+    pub fn hold_keyboards(&self, held: bool) -> bool {
+        use std::sync::atomic::Ordering;
+        if self.keyboards_held.swap(held, Ordering::AcqRel) == held {
+            return false;
+        }
+        if !held {
+            // back into direct mode on the next frame, in case Vial changed the mode
+            self.animations.lock().generation += 1;
+        }
+        true
+    }
+
+    fn is_held(&self, index: u32) -> bool {
+        self.keyboards_held
+            .load(std::sync::atomic::Ordering::Acquire)
+            && self
+                .devices
+                .read()
+                .iter()
+                .any(|d| d.index == index && d.kind == "keyboard")
     }
 
     pub fn view(&self) -> OrgbView {
@@ -253,6 +280,9 @@ impl OpenRgb {
 
     /// Writes one color per LED; `custom_mode` first switches the device to direct control.
     pub fn set_leds(&self, index: u32, colors: &[[u8; 3]], custom_mode: bool) -> Result<()> {
+        if self.is_held(index) {
+            return Ok(());
+        }
         let leds = colors.len();
         let mut guard = self.stream.lock();
         let Some((stream, version)) = guard.as_mut() else {
