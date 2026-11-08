@@ -433,8 +433,12 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .seq-actions { align-items: center; }
 @keyframes seq-flash { from { box-shadow: 0 0 0 2px var(--accent), 0 0 24px var(--accent); } to { box-shadow: none; } }
 .seq-row.flash { animation: seq-flash .8s ease-out; }
-.icon-btn.toggle .icon { width: 16px; height: 16px; }
-.icon-btn.toggle.on { background: rgba(128,0,255,.22); color: #d9b8ff; }
+.icon-btn.switchable .icon { width: 16px; height: 16px; }
+.icon-btn.switchable.on { background: rgba(128,0,255,.22); color: #d9b8ff; }
 .icon-btn[disabled] { opacity: .3; pointer-events: none; }
 .seq-segment { position: absolute; top: -2px; height: 10px; border-radius: 5px; opacity: .85; }
 .warmth-row input[type=range] { flex: 1; max-width: 360px; }
+.seq-hint { margin: 10px 2px 0; }
+.seq-marker.movable { cursor: grab; touch-action: none; }
+.seq-marker.movable:hover, .seq-marker.dragging { width: 18px; height: 18px; }
+.seq-marker.dragging { cursor: grabbing; transition: none; }

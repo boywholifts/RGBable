@@ -98,6 +98,10 @@ pub struct Effect {
     /// Where this device sits on a strip that runs across its fans or through several devices.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub span: Option<Span>,
+    /// The share of a longer loop this device gets when devices take turns; it is dark the
+    /// rest of the time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<Span>,
     /// Name of a saved custom effect.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -153,6 +157,7 @@ impl Default for Effect {
             recipe: None,
             name: None,
             span: None,
+            turn: None,
         }
     }
 }
@@ -286,6 +291,9 @@ impl Effect {
     /// Effects that move one LED at a time look smooth only when each frame is one step;
     /// in-between frames blur the drops and make the loop too big for wireless devices.
     pub fn steps(&self, zones: &[usize]) -> Option<usize> {
+        if self.turn.is_some() {
+            return None;
+        }
         match self.generic().kind {
             EffectKind::Drizzle => {
                 let longest = match self.travel_span() {
@@ -303,6 +311,13 @@ impl Effect {
 
     /// Length of one loop in milliseconds.
     pub fn period_ms(&self) -> u32 {
+        if let Some(turn) = self.turn {
+            let own = Effect {
+                turn: None,
+                ..self.clone()
+            };
+            return (own.period_ms() as f32 / turn.len()) as u32;
+        }
         if self.kind == EffectKind::Lianli {
             return self.generic().period_ms();
         }
@@ -344,6 +359,18 @@ impl Effect {
     /// The LEDs at `phase` (0..1 through the loop). `zones` are the LED counts of each
     /// fan or cable section; position-based effects run around each zone separately.
     pub fn frame(&self, zones: &[usize], phase: f32) -> Vec<[u8; 3]> {
+        if let Some(turn) = self.turn {
+            let phase = phase.rem_euclid(1.0);
+            let offset = phase - turn.start();
+            if !(0.0..turn.len()).contains(&offset) {
+                return vec![[0, 0, 0]; zones.iter().sum()];
+            }
+            let own = Effect {
+                turn: None,
+                ..self.clone()
+            };
+            return own.frame(zones, offset / turn.len());
+        }
         if self.kind == EffectKind::Lianli {
             return self.generic().frame(zones, phase);
         }
@@ -774,6 +801,27 @@ mod tests {
         assert_eq!(first.period_ms(), across.period_ms() * 2);
         assert!(lit(&first.frame(&[20], 0.3)) && !lit(&second.frame(&[20], 0.3)));
         assert!(!lit(&first.frame(&[20], 0.8)) && lit(&second.frame(&[20], 0.8)));
+    }
+
+    #[test]
+    fn devices_taking_turns_are_dark_outside_their_slot() {
+        let breathing = effect(EffectKind::Breathing, &[[0, 255, 0]]);
+        let first = Effect {
+            turn: Some(Span { start: 0, len: 500 }),
+            ..breathing.clone()
+        };
+        let second = Effect {
+            turn: Some(Span {
+                start: 500,
+                len: 500,
+            }),
+            ..breathing.clone()
+        };
+        assert_eq!(first.period_ms(), breathing.period_ms() * 2);
+        assert_eq!(first.frame(&[1], 0.25), breathing.frame(&[1], 0.5));
+        assert_eq!(second.frame(&[1], 0.25), vec![[0, 0, 0]]);
+        assert_eq!(second.frame(&[1], 0.75), breathing.frame(&[1], 0.5));
+        assert_eq!(first.frame(&[1], 0.75), vec![[0, 0, 0]]);
     }
 
     #[test]

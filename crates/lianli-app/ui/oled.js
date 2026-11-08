@@ -29,7 +29,7 @@ function renderOledStage() {
   const previewing = oled.selected && oled.selected !== oled.current;
   const path = previewing ? oled.selected : oled.current;
   showOnScreen(path);
-  $("#oled-caption").textContent = previewing ? "Preview: not on the OLED yet" : oled.current ? "Now on the OLED" : "Nothing playing";
+  $("#oled-caption").textContent = previewing ? "Preview: not on the HydroShift yet" : oled.current ? "Now on the HydroShift" : "Nothing playing";
   $("#oled-name").textContent = path ? fileName(path) : "Pick something from the library below";
   $("#oled-show").hidden = !previewing;
   $("#oled-frame").classList.toggle("previewing", !!previewing);
@@ -145,7 +145,7 @@ function renderLibraryGrid() {
       ? el("img", { src: assetUrl(item.thumb), alt: "", loading: "lazy" })
       : el("div", { class: "thumb-wait" }, "…");
     const tile = el("div", { class: "oled-tile", "data-path": item.path, title: item.path }, [
-      el("div", { class: "oled-thumb" }, [thumb, el("span", { class: "now-badge" }, "On the OLED")]),
+      el("div", { class: "oled-thumb" }, [thumb, el("span", { class: "now-badge" }, "On the HydroShift")]),
       el("div", { class: "oled-tile-name" }, item.name),
       el("div", { class: "muted small" }, `${item.folder} · ${formatSize(item.size)}`),
     ]);

@@ -124,8 +124,9 @@ fn lianli_frames(
     profile: RgbRenderProfile,
 ) -> Option<Frames> {
     let native = |e: &Option<Effect>| {
-        e.as_ref()
-            .is_some_and(|e| e.kind == EffectKind::Lianli && e.travel_span().is_none())
+        e.as_ref().is_some_and(|e| {
+            e.kind == EffectKind::Lianli && e.travel_span().is_none() && e.turn.is_none()
+        })
     };
     if !native(&lighting.inner) && !native(&lighting.outer) {
         return None;
@@ -415,7 +416,7 @@ fn native_drizzle(lighting: &Lighting, profile: RgbRenderProfile) -> Lighting {
         .any(|p| p.mode == lianli_shared::rgb::RgbMode::Drizzling);
     let swap = |e: &Option<Effect>| {
         e.clone().map(|e| match e.kind {
-            EffectKind::Drizzle if has_it && e.span.is_none() => Effect {
+            EffectKind::Drizzle if has_it && e.span.is_none() && e.turn.is_none() => Effect {
                 kind: EffectKind::Lianli,
                 mode: Some(lianli_shared::rgb::RgbMode::Drizzling),
                 ..e

@@ -91,6 +91,9 @@ pub struct DeviceConfig {
     /// Runs moving effects across the device's fans, or through a chain of devices.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub span: Option<crate::effects::Span>,
+    /// This device's time slot when devices take turns.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turn: Option<crate::effects::Span>,
 }
 
 fn is_zero_i8(value: &i8) -> bool {
@@ -765,12 +768,15 @@ impl Engine {
                             shrink.remove(&mac);
                         }
                         let level = shrink.get(&mac).copied().unwrap_or(0);
-                        let (delay, span) = self
+                        let (delay, span, turn) = self
                             .config()
                             .devices
                             .get(&ctl.id)
-                            .map_or((0, None), |d| (d.delay_ms, d.span));
-                        (prepare_lighting(wireless, ctl, &mac, level, delay, span), 0)
+                            .map_or((0, None, None), |d| (d.delay_ms, d.span, d.turn));
+                        (
+                            prepare_lighting(wireless, ctl, &mac, level, delay, span, turn),
+                            0,
+                        )
                     }
                 };
                 let result = upload.and_then(|u| wireless.send_rgb_upload(&mac, &u, 4).map(|()| u));
@@ -846,13 +852,17 @@ impl Engine {
                 return;
             }
             *last_frame = Instant::now();
-            let (delay, span) = self
+            let (delay, span, turn) = self
                 .config
                 .lock()
                 .devices
                 .get(&ctl.id)
-                .map_or((0, None), |d| (i64::from(d.delay_ms), d.span));
-            let effect = Effect { span, ..effect };
+                .map_or((0, None, None), |d| (i64::from(d.delay_ms), d.span, d.turn));
+            let effect = Effect {
+                span,
+                turn,
+                ..effect
+            };
             let behind = started.elapsed().as_millis() as i64 - delay;
             let period = u64::from(effect.period_ms().max(1));
             let phase = behind.rem_euclid(period as i64) as f32 / period as f32;
@@ -1087,6 +1097,7 @@ fn prepare_lighting(
     shrink: u8,
     delay_ms: u32,
     span: Option<crate::effects::Span>,
+    turn: Option<crate::effects::Span>,
 ) -> Result<WirelessRgbUpload> {
     let mut lighting = ctl.lighting.lock().clone();
     for effect in [&mut lighting.inner, &mut lighting.outer]
@@ -1094,6 +1105,7 @@ fn prepare_lighting(
         .flatten()
     {
         effect.span = span;
+        effect.turn = turn;
     }
     let base = ctl.colors.lock().clone();
     if lighting.is_static() || ctl.identifying.load(Ordering::Acquire) {

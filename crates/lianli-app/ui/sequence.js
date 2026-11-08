@@ -1,12 +1,15 @@
-// Devices page: every device in the order its effect starts, top first, with its delay,
+// Devices page: every device in the order its effect starts, top first, with its timing,
 // direction, whether moving effects run across its fans, and the same ⋯ menu as the
-// Lighting page. "Flow through" chains the devices into one strip, so a meteor or wave
-// travels from the first device into the next.
+// Lighting page. Timing is one of:
+//   delays  each device runs its own loop, started a set time after the others
+//   flow    the devices form one long strip, so a meteor or wave travels from one into the next
+//   turns   one device at a time: each plays its effect in its own slot and is dark otherwise
 
-const seq = { group: "all", items: [], dirty: false, step: 300, auto: true, chain: false, key: "" };
+const seq = { group: "all", items: [], dirty: false, step: 300, auto: true, mode: "delays", key: "" };
 
 const isAnimated = (l) => [l.effect, l.outer_effect].some((e) => e && e.kind !== "static");
 const multiZone = (l) => /fans$/.test(l.kind) || l.kind === "Strimer" || (l.zones && l.zones.length > 1);
+const partial = (span) => span && span.len < 1000;
 
 function seqLights(o) {
   const lights = o.lights.filter((l) => seq.group === "all" || l.group === seq.group);
@@ -20,25 +23,26 @@ function seqLights(o) {
       delay: l.delay_ms || 0,
       reversed: [l.effect, l.outer_effect].some((e) => e && e.reverse && e.kind !== "static"),
       across: !!l.span && l.span.len >= 1000,
-      chainStart: l.span && l.span.len < 1000 ? l.span.start : null,
+      slot: partial(l.span) ? l.span.start : partial(l.turn) ? l.turn.start : null,
+      flow: partial(l.span),
+      turns: partial(l.turn),
       multi: multiZone(l),
       light: l,
     }))
     .sort((a, b) =>
       b.animated - a.animated ||
-      (a.chainStart ?? 0) - (b.chainStart ?? 0) ||
+      (a.slot ?? 0) - (b.slot ?? 0) ||
       a.delay - b.delay ||
       a.name.localeCompare(b.name)
     );
 }
 
 function renderSequence(o, force) {
-  const key = JSON.stringify([o.lights.map((l) => [l.id, l.name, l.delay_ms, l.span, l.effect, l.outer_effect, l.group]), o.groups, seq.group]);
-  if (!force && (seq.dirty || key === seq.key || document.querySelector(".seq-row.dragging"))) return;
+  const key = JSON.stringify([o.lights.map((l) => [l.id, l.name, l.delay_ms, l.span, l.turn, l.effect, l.outer_effect, l.group]), o.groups, seq.group]);
+  if (!force && (seq.dirty || key === seq.key || document.querySelector(".seq-row.dragging, .seq-marker.dragging"))) return;
   seq.key = key;
   seq.items = seqLights(o);
-  seq.chain = seq.items.some((i) => i.chainStart !== null);
-  $("#seq-chain").checked = seq.chain;
+  seq.mode = seq.items.some((i) => i.flow) ? "flow" : seq.items.some((i) => i.turns) ? "turns" : "delays";
   seq.dirty = false;
   const pick = $("#seq-group");
   pick.replaceChildren(
@@ -51,7 +55,7 @@ function renderSequence(o, force) {
 
 function spaceEvenly() {
   let n = 0;
-  for (const item of seq.items) item.delay = item.animated && !seq.chain ? n++ * seq.step : 0;
+  for (const item of seq.items) item.delay = item.animated && seq.mode === "delays" ? n++ * seq.step : 0;
 }
 
 function changed() {
@@ -59,22 +63,60 @@ function changed() {
   drawSequence();
 }
 
-/// Spans for the chain: the moving devices share one strip in list order.
-function chainSpans() {
+/// Equal slots in list order for the moving devices: places on the strip for "flow",
+/// shares of the loop for "turns".
+function slots() {
   const moving = seq.items.filter((i) => i.animated);
-  const spans = new Map();
+  const result = new Map();
+  if (seq.mode === "delays") return result;
   moving.forEach((item, n) => {
     const start = Math.round((n * 1000) / moving.length);
     const end = Math.round(((n + 1) * 1000) / moving.length);
-    spans.set(item.id, { start, len: end - start });
+    result.set(item.id, { start, len: end - start });
   });
-  return spans;
+  return result;
+}
+
+const SNAP_MS = 50;
+
+/// Drag a dot along the timeline to set that device's delay.
+function draggableMarker(marker, track, item, range, input) {
+  marker.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    marker.setPointerCapture(e.pointerId);
+    marker.classList.add("dragging");
+    const move = (ev) => {
+      const box = track.getBoundingClientRect();
+      const x = Math.max(0, Math.min(1, (ev.clientX - box.left) / box.width));
+      item.delay = Math.round((x * range) / SNAP_MS) * SNAP_MS;
+      marker.style.left = `${(item.delay / range) * 100}%`;
+      input.value = item.delay;
+      seq.dirty = true;
+      $("#seq-save").disabled = false;
+      $("#seq-discard").hidden = false;
+    };
+    const up = () => {
+      marker.classList.remove("dragging");
+      marker.removeEventListener("pointermove", move);
+      marker.removeEventListener("pointerup", up);
+      changed();
+    };
+    marker.addEventListener("pointermove", move);
+    marker.addEventListener("pointerup", up);
+  });
 }
 
 function drawSequence() {
   const list = $("#seq-list");
   const range = Math.max(3000, ...seq.items.map((i) => i.delay + 1000));
-  const spans = seq.chain ? chainSpans() : new Map();
+  const parts = slots();
+  document.querySelectorAll("#seq-mode button").forEach((b) => b.classList.toggle("on", b.dataset.mode === seq.mode));
+  $("#seq-mode-hint").textContent = {
+    delays: "Each device loops on its own, starting this long after the top one. Drag the dots or type a delay.",
+    flow: "The devices act as one long strip in this order: a meteor or wave runs through the first device, then into the next. Effects that light everything at once (breathing, strobe) look the same as before.",
+    turns: "One device at a time, in this order: each plays its effect once in its turn and stays dark while the others play.",
+  }[seq.mode];
   $("#seq-save").disabled = !seq.dirty;
   $("#seq-discard").hidden = !seq.dirty;
   if (!seq.items.length) {
@@ -84,13 +126,13 @@ function drawSequence() {
   let dragged = null;
   list.replaceChildren(...seq.items.map((item, index) => {
     const input = el("input", { type: "number", class: "text num", min: 0, max: 10000, step: 50, value: item.delay });
-    input.disabled = !item.animated || seq.chain;
+    input.disabled = !item.animated || seq.mode !== "delays";
     input.addEventListener("change", () => {
       item.delay = Math.max(0, Math.min(10000, Math.round(Number(input.value) || 0)));
       changed();
     });
 
-    const reverse = el("button", { class: "icon-btn toggle" + (item.reversed ? " on" : ""), title: item.reversed ? "Reversed: click for the normal direction" : "Reverse the direction" }, icon("reverse"));
+    const reverse = el("button", { class: "icon-btn switchable" + (item.reversed ? " on" : ""), title: item.reversed ? "Reversed: click for the normal direction" : "Reverse the direction" }, icon("reverse"));
     reverse.disabled = !item.animated;
     reverse.addEventListener("click", async (e) => {
       e.stopPropagation();
@@ -99,11 +141,12 @@ function drawSequence() {
       drawSequence();
     });
 
+    const flowing = seq.mode === "flow";
     const across = el("button", {
-      class: "icon-btn toggle" + (item.across || seq.chain ? " on" : ""),
-      title: seq.chain ? "Flowing through the devices" : item.across ? "Runs across all its fans: click to run on each fan" : "Run moving effects across all its fans instead of on each one",
+      class: "icon-btn switchable" + (item.across || flowing ? " on" : ""),
+      title: flowing ? "Flowing through the devices" : item.across ? "Runs across all its fans: click to run on each fan" : "Run moving effects across all its fans instead of on each one",
     }, icon("across"));
-    across.disabled = !item.animated || !item.multi || seq.chain;
+    across.disabled = !item.animated || !item.multi || flowing;
     across.addEventListener("click", (e) => {
       e.stopPropagation();
       item.across = !item.across;
@@ -117,18 +160,20 @@ function drawSequence() {
     });
 
     const track = el("div", { class: "seq-track" });
-    const span = spans.get(item.id);
-    if (span) {
-      const segment = el("div", { class: "seq-segment", title: `Its part of the strip: ${span.start / 10}–${(span.start + span.len) / 10}%` });
-      segment.style.left = `${span.start / 10}%`;
-      segment.style.width = `${span.len / 10}%`;
+    const part = parts.get(item.id);
+    if (part) {
+      const what = seq.mode === "flow" ? "Its part of the strip" : "Its turn";
+      const segment = el("div", { class: "seq-segment", title: `${what}: ${part.start / 10}–${(part.start + part.len) / 10}%` });
+      segment.style.left = `${part.start / 10}%`;
+      segment.style.width = `${part.len / 10}%`;
       segment.style.background = item.color;
       track.append(segment);
     } else {
-      const marker = el("div", { class: "seq-marker", title: `${(item.delay / 1000).toFixed(2)} s` });
+      const marker = el("div", { class: "seq-marker" + (item.animated ? " movable" : ""), title: item.animated ? "Drag to set the delay" : "" });
       marker.style.left = `${(item.delay / range) * 100}%`;
       marker.style.background = item.color;
       marker.style.boxShadow = `0 0 10px ${item.color}`;
+      if (item.animated) draggableMarker(marker, track, item, range, input);
       track.append(marker);
     }
 
@@ -146,6 +191,7 @@ function drawSequence() {
       more,
     ]);
     row.addEventListener("dragstart", (e) => {
+      if (e.target.closest(".seq-track")) return e.preventDefault();
       dragged = index;
       row.classList.add("dragging");
       e.dataTransfer.effectAllowed = "move";
@@ -169,14 +215,14 @@ function drawSequence() {
   }));
 }
 
-/// Flashes each row when its effect would start (in a chain, as the effect reaches it),
-/// to check the order before saving.
+/// Flashes each row when its effect would start (or as the effect reaches it), to check
+/// the order before saving.
 function previewSequence() {
   const moving = seq.items.filter((i) => i.animated);
   document.querySelectorAll(".seq-row").forEach((row, i) => {
     const item = seq.items[i];
     if (!item.animated) return;
-    const at = seq.chain ? moving.indexOf(item) * 400 : item.delay;
+    const at = seq.mode === "delays" ? item.delay : moving.indexOf(item) * 400;
     setTimeout(() => {
       row.classList.remove("flash");
       void row.offsetWidth;
@@ -198,6 +244,13 @@ $("#seq-group").addEventListener("change", (e) => {
     el("button", { class: "btn primary", onclick: async () => { closeDialog(); await saveSequence(); show(); } }, "Save"),
   ]);
 });
+$("#seq-mode").addEventListener("click", (e) => {
+  const mode = e.target.dataset.mode;
+  if (!mode || mode === seq.mode) return;
+  seq.mode = mode;
+  spaceEvenly();
+  changed();
+});
 $("#seq-step").addEventListener("change", (e) => {
   seq.step = Math.max(0, Math.min(5000, Number(e.target.value) || 0));
   if (seq.auto) {
@@ -211,11 +264,6 @@ $("#seq-auto").addEventListener("change", (e) => {
     spaceEvenly();
     changed();
   }
-});
-$("#seq-chain").addEventListener("change", (e) => {
-  seq.chain = e.target.checked;
-  spaceEvenly();
-  changed();
 });
 $("#seq-even").addEventListener("click", () => {
   spaceEvenly();
@@ -234,12 +282,16 @@ $("#seq-preview").addEventListener("click", previewSequence);
 $("#seq-discard").addEventListener("click", () => last && renderSequence(last, true));
 
 async function saveSequence() {
-  const spans = seq.chain ? chainSpans() : new Map();
-  const entries = seq.items.map((i) => ({
-    id: i.id,
-    delay_ms: seq.chain ? 0 : i.delay,
-    span: spans.get(i.id) || (i.across ? { start: 0, len: 1000 } : null),
-  }));
+  const parts = slots();
+  const entries = seq.items.map((i) => {
+    const part = parts.get(i.id) || null;
+    return {
+      id: i.id,
+      delay_ms: seq.mode === "delays" ? i.delay : 0,
+      span: seq.mode === "flow" ? part : i.across ? { start: 0, len: 1000 } : null,
+      turn: seq.mode === "turns" ? part : null,
+    };
+  });
   await call("set_sequence", { entries }, "Saved");
   seq.dirty = false;
   await refresh();

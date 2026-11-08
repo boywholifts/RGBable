@@ -30,6 +30,7 @@ pub struct LightView {
     pub zones: Vec<ZoneView>,
     pub delay_ms: u32,
     pub span: Option<crate::effects::Span>,
+    pub turn: Option<crate::effects::Span>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -97,6 +98,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 sides: d.sides,
                 delay_ms: 0,
                 span: None,
+                turn: None,
                 zones: Vec::new(),
                 sync: saved.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &d.id),
@@ -146,6 +148,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 sides: false,
                 delay_ms: 0,
                 span: None,
+                turn: None,
                 zones: device
                     .zones
                     .iter()
@@ -185,6 +188,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 sides: false,
                 delay_ms: 0,
                 span: None,
+                turn: None,
                 zones: vec![zone_view(index, zone)],
                 sync: own.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &header),
@@ -196,6 +200,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
         let saved = config.devices.get(&light.id);
         light.delay_ms = saved.map_or(0, |d| d.delay_ms);
         light.span = saved.and_then(|d| d.span);
+        light.turn = saved.and_then(|d| d.turn);
     }
     list
 }
@@ -260,6 +265,7 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
     let device_id = openrgb_id(device);
     let board_delay = config.devices.get(&device_id).map_or(0, |d| d.delay_ms);
     let board_span = config.devices.get(&device_id).and_then(|d| d.span);
+    let board_turn = config.devices.get(&device_id).and_then(|d| d.turn);
     let mut runs: Vec<(String, Vec<usize>)> = Vec::new();
     let zoned: usize = device.zones.iter().map(|z| z.leds).sum();
     if zoned == device.leds {
@@ -285,6 +291,7 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
                 zones,
                 effect: saved.and_then(|s| s.effect.clone()).map(|e| Effect {
                     span: saved.and_then(|s| s.span).or(board_span),
+                    turn: saved.and_then(|s| s.turn).or(board_turn),
                     ..e
                 }),
                 color: saved
@@ -456,6 +463,8 @@ pub struct SequenceEntry {
     pub delay_ms: u32,
     #[serde(default)]
     pub span: Option<crate::effects::Span>,
+    #[serde(default)]
+    pub turn: Option<crate::effects::Span>,
 }
 
 /// Saves a whole sequence at once and resends only the devices that changed.
@@ -466,9 +475,11 @@ pub fn set_sequence(engine: &Engine, openrgb: &OpenRgb, entries: &[SequenceEntry
             .filter_map(|e| {
                 let delay = e.delay_ms.min(MAX_DELAY_MS);
                 let entry = c.devices.entry(e.id.clone()).or_default();
-                let different = entry.delay_ms != delay || entry.span != e.span;
+                let different =
+                    entry.delay_ms != delay || entry.span != e.span || entry.turn != e.turn;
                 entry.delay_ms = delay;
                 entry.span = e.span;
+                entry.turn = e.turn;
                 different.then(|| e.id.clone())
             })
             .collect()
