@@ -41,6 +41,9 @@ pub struct Config {
     /// Widgets drawn over the screen videos, by video path; `SHARED_WIDGETS` for the rest.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub oled_modules: BTreeMap<String, Vec<OledModule>>,
+    /// Widget layouts saved or imported by name, to load into the editor.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub widget_layouts: BTreeMap<String, Vec<OledModule>>,
     /// OpenRGB SDK server to read RAM / GPU / motherboard lighting from.
     #[serde(default)]
     pub openrgb_port: Option<u16>,
@@ -249,6 +252,7 @@ pub struct OledView {
     pub fps: u32,
     pub state: String,
     pub modules: BTreeMap<String, Vec<OledModule>>,
+    pub layouts: BTreeMap<String, Vec<OledModule>>,
 }
 
 // ------------------------------------------------------------------ controllers
@@ -932,6 +936,7 @@ impl Engine {
             fps: oled.map_or(30, |o| o.fps),
             state: self.oled_state.read().clone(),
             modules: config.oled_modules.clone(),
+            layouts: config.widget_layouts.clone(),
         }
     }
 

@@ -177,12 +177,24 @@
               <option value="gpu_temp">GPU temperature</option>
               <option value="gpu_load">GPU load</option>
               <option value="fans">Fan speed</option>
+              <option value="cpu_load">CPU load</option>
+              <option value="ram_load">RAM load</option>
+              <option value="gpu_power">GPU power</option>
+              <option value="gpu_clock">GPU clock</option>
               <option value="text">Text</option>
+              <option value="bar">Bar</option>
             </select>
             <label class="check" title="Off: these widgets show on every video that doesn't have its own"><input type="checkbox" id="widgets-own" /> Only this video</label>
             <button class="btn" id="widgets-discard" disabled>Discard</button>
             <button class="btn primary" id="widgets-apply" disabled>Apply</button>
           </div>
+        </div>
+        <div class="row widget-layouts">
+          <select id="widget-layouts" title="Load a saved or imported layout into the editor"><option value="">No saved layouts</option></select>
+          <button class="btn" id="layout-delete" disabled title="Delete the chosen layout">Delete</button>
+          <button class="btn" id="layout-save" disabled>Save as layout…</button>
+          <span class="spacer"></span>
+          <button class="btn" id="layout-import" title="Use the themes from L-Connect's HydroShift screen: pick the folder with its .template files">Import L-Connect themes…</button>
         </div>
         <div class="cpu-setup" id="cpu-setup" hidden></div>
         <div class="readout-list" id="readout-list"></div>

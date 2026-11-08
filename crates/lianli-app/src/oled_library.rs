@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
-const MEDIA: &[&str] = &[
+pub const MEDIA: &[&str] = &[
     "mp4", "mkv", "mov", "webm", "avi", "gif", "png", "jpg", "jpeg", "bmp", "webp",
 ];
 const MAX_ITEMS: usize = 500;

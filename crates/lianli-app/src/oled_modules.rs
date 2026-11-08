@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 pub const WIDTH: u32 = 2288;
 pub const HEIGHT: u32 = 1080;
 pub const MAX_MODULES: usize = 40;
+/// A clock `format` showing only AM or PM, as some L-Connect themes do beside the time.
+pub const AM_PM_ONLY: &str = "AP";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -362,6 +364,7 @@ pub fn value(
     now: chrono::DateTime<chrono::Local>,
 ) -> String {
     match module.kind {
+        ModuleKind::Clock if module.format == AM_PM_ONLY => now.format("%p").to_string(),
         ModuleKind::Clock => {
             let seconds = module.format.contains('s');
             let layout = match (module.hour12, seconds) {

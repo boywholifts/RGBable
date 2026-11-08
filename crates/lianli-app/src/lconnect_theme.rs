@@ -13,13 +13,35 @@ pub struct Imported {
     pub name: String,
     pub widgets: Vec<OledModule>,
     pub background: Option<PathBuf>,
+    /// The theme's video, when it was found next to the themes.
+    pub video: Option<PathBuf>,
     /// L-Connect readings RGBable doesn't have yet.
     pub skipped: Vec<String>,
 }
 
 /// The `.template` files under `folder` (a few levels deep).
 pub fn find_templates(folder: &Path) -> Vec<PathBuf> {
-    fn walk(dir: &Path, depth: u8, found: &mut Vec<PathBuf>) {
+    let mut found = files_under(folder, |e| e.eq_ignore_ascii_case("template"));
+    found.truncate(300);
+    found
+}
+
+/// Videos under `folder`, by lowercase file stem, to find the ones themes play.
+pub fn find_videos(folder: &Path) -> BTreeMap<String, PathBuf> {
+    let video = |e: &str| {
+        crate::oled_library::MEDIA
+            .iter()
+            .any(|m| e.eq_ignore_ascii_case(m))
+    };
+    files_under(folder, video)
+        .into_iter()
+        .take(2000)
+        .filter_map(|path| Some((path.file_stem()?.to_string_lossy().to_lowercase(), path)))
+        .collect()
+}
+
+fn files_under(folder: &Path, wanted: impl Fn(&str) -> bool) -> Vec<PathBuf> {
+    fn walk(dir: &Path, depth: u8, wanted: &dyn Fn(&str) -> bool, found: &mut Vec<PathBuf>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
             return;
         };
@@ -27,21 +49,38 @@ pub fn find_templates(folder: &Path) -> Vec<PathBuf> {
             let path = entry.path();
             if path.is_dir() {
                 if depth > 0 {
-                    walk(&path, depth - 1, found);
+                    walk(&path, depth - 1, wanted, found);
                 }
-            } else if path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("template"))
+            } else if found.len() < 10_000
+                && path
+                    .extension()
+                    .is_some_and(|e| wanted(&e.to_string_lossy()))
             {
                 found.push(path);
             }
         }
     }
     let mut found = Vec::new();
-    walk(folder, 5, &mut found);
+    walk(folder, 5, &wanted, &mut found);
     found.sort();
-    found.truncate(300);
     found
+}
+
+/// The theme's video among `videos`: by the name L-Connect saved it under, or the theme's.
+fn theme_video(root: Node, template: &Path, videos: &BTreeMap<String, PathBuf>) -> Option<PathBuf> {
+    let saved = root
+        .get("videoPath")
+        .str()
+        .and_then(|p| p.rsplit(['\\', '/']).next())
+        .and_then(|name| Path::new(name).file_stem())
+        .map(|stem| stem.to_string_lossy().to_lowercase());
+    let own = template
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_lowercase());
+    [saved, own]
+        .into_iter()
+        .flatten()
+        .find_map(|stem| videos.get(&stem).cloned())
 }
 
 /// A .NET `System.Drawing.Color`: an ARGB value, or one of the named colors.
@@ -66,7 +105,7 @@ fn color(node: Node) -> Option<[u8; 3]> {
 fn reading(name: &str) -> Option<ModuleKind> {
     let name = name.strip_suffix("_F").unwrap_or(name);
     Some(match name {
-        "TIME" | "TIME_APM" => ModuleKind::Clock,
+        "TIME" | "TIME_APM" | "APM" => ModuleKind::Clock,
         "DATE" => ModuleKind::Date,
         "CPUTEMP" => ModuleKind::CpuTemp,
         "GPUTEMP" => ModuleKind::GpuTemp,
@@ -197,7 +236,11 @@ fn text_widget(
             Some(kind) => {
                 let mut widget = base_widget(kind);
                 widget.hour12 = name == "TIME_APM";
-                widget.format = data.get("SubName").str().unwrap_or("").to_string();
+                widget.format = if name == "APM" {
+                    oled_modules::AM_PM_ONLY.to_string()
+                } else {
+                    data.get("SubName").str().unwrap_or("").to_string()
+                };
                 widget
             }
             None => {
@@ -280,7 +323,12 @@ fn safe_name(name: &str) -> String {
 }
 
 /// Reads one theme and writes its pictures to `out`.
-pub fn import(template: &Path, out: &Path, fonts: &FontIndex) -> Result<Imported> {
+pub fn import(
+    template: &Path,
+    out: &Path,
+    fonts: &FontIndex,
+    videos: &BTreeMap<String, PathBuf>,
+) -> Result<Imported> {
     let data =
         std::fs::read(template).with_context(|| format!("reading {}", template.display()))?;
     let graph = nrbf::parse(&data).with_context(|| format!("reading {}", template.display()))?;
@@ -320,7 +368,14 @@ pub fn import(template: &Path, out: &Path, fonts: &FontIndex) -> Result<Imported
             part.get("X").float().unwrap_or(0.0),
             part.get("Y").float().unwrap_or(0.0),
         );
+        if part.get("IsHide").bool() == Some(true) {
+            continue;
+        }
         for item in part.get("GraphList").items() {
+            // hidden items are L-Connect's own previews of a module, sample values and all
+            if item.get("hide").bool() == Some(true) {
+                continue;
+            }
             if item.class().ends_with("GraphImage") {
                 if let Some(picture) = png(item.get("bitmap")) {
                     let (w, h) = picture.dimensions();
@@ -355,13 +410,17 @@ pub fn import(template: &Path, out: &Path, fonts: &FontIndex) -> Result<Imported
             .with_context(|| format!("saving {}", path.display()))?;
         let mut image = base_widget(ModuleKind::Image);
         image.file = path.to_string_lossy().into_owned();
-        (image.w, image.h) = (1000, 1000);
+        (image.x, image.y, image.w, image.h) = (0, 0, 1000, 1000);
         widgets.insert(0, image);
     }
     widgets.truncate(oled_modules::MAX_MODULES);
 
-    // a still of the theme's video, when it has one
-    let still = png(root.get("VideoPic")).or_else(|| png(root.get("BgImg")));
+    let video = theme_video(root, template, videos);
+    // without its video, a still of it, when the theme has one
+    let still = video
+        .is_none()
+        .then(|| png(root.get("VideoPic")).or_else(|| png(root.get("BgImg"))))
+        .flatten();
     let background = match still {
         Some(picture) => {
             let backgrounds = out.join("Backgrounds");
@@ -380,6 +439,7 @@ pub fn import(template: &Path, out: &Path, fonts: &FontIndex) -> Result<Imported
         name,
         widgets,
         background,
+        video,
         skipped,
     })
 }
@@ -392,6 +452,7 @@ mod tests {
     fn maps_lconnect_readings() {
         assert_eq!(reading("CPUTEMP_F"), Some(ModuleKind::CpuTemp));
         assert_eq!(reading("TIME_APM"), Some(ModuleKind::Clock));
+        assert_eq!(reading("APM"), Some(ModuleKind::Clock));
         assert_eq!(reading("UPSPEED"), None);
     }
 

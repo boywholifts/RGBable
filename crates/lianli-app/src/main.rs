@@ -6,10 +6,8 @@ mod cpu_temp;
 mod effects;
 mod engine;
 mod fans;
-#[allow(dead_code)]
 mod lconnect_theme;
 mod lights;
-#[allow(dead_code)]
 mod nrbf;
 mod oled_library;
 mod oled_modules;
@@ -456,6 +454,7 @@ async fn oled_library(app: AppHandle, state: State<'_, AppState>) -> Result<Oled
         let _ = scope.allow_directory(&folder.path, false);
     }
     let _ = scope.allow_directory(oled_library::thumbs_folder(), false);
+    let _ = scope.allow_directory(themes_dir(), true);
     let missing = items.iter().any(|i| i.thumb.is_none());
     if missing && !MAKING_THUMBS.swap(true, Ordering::AcqRel) {
         let pending = items.clone();
@@ -547,6 +546,134 @@ fn set_oled_modules(
     state.engine.set_oled_modules(file, modules);
 }
 
+/// Where imported L-Connect themes keep their pictures.
+fn themes_dir() -> PathBuf {
+    data_dir().join("L-Connect themes")
+}
+
+#[derive(serde::Serialize)]
+struct ThemeImport {
+    imported: Vec<String>,
+    failed: Vec<String>,
+    /// L-Connect readings RGBable doesn't show yet.
+    skipped: Vec<String>,
+    backgrounds: usize,
+    /// Themes whose video was found, which now play with their widgets.
+    videos: usize,
+}
+
+/// Turns the L-Connect HydroShift themes in a folder the user picks into widget layouts.
+#[tauri::command]
+async fn import_lconnect_themes(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<ThemeImport>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(folder) = app
+        .dialog()
+        .file()
+        .set_title("Pick a folder with L-Connect themes (.template files)")
+        .blocking_pick_folder()
+        .and_then(|p| p.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    let engine = state.engine.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let templates = lconnect_theme::find_templates(&folder);
+        if templates.is_empty() {
+            return Err("No L-Connect themes (.template files) in that folder".to_string());
+        }
+        let out = themes_dir();
+        let fonts = lconnect_theme::FontIndex::scan();
+        let videos = lconnect_theme::find_videos(&folder);
+        let mut report = ThemeImport {
+            imported: Vec::new(),
+            failed: Vec::new(),
+            skipped: Vec::new(),
+            backgrounds: 0,
+            videos: 0,
+        };
+        let mut themed_videos = Vec::new();
+        let mut layouts = Vec::new();
+        for template in &templates {
+            let file = template
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            match lconnect_theme::import(template, &out, &fonts, &videos) {
+                Ok(theme) if theme.widgets.is_empty() => report
+                    .failed
+                    .push(format!("{file}: nothing RGBable can show")),
+                Ok(theme) => {
+                    let name = format!("L-Connect · {}", theme.name);
+                    report.backgrounds += usize::from(theme.background.is_some());
+                    if let Some(video) = theme.video {
+                        report.videos += 1;
+                        themed_videos.push((video, theme.widgets.clone()));
+                    }
+                    report.skipped.extend(theme.skipped);
+                    report.imported.push(name.clone());
+                    layouts.push((name, theme.widgets));
+                }
+                Err(e) => report.failed.push(format!("{file}: {e:#}")),
+            }
+        }
+        report.skipped.sort();
+        report.skipped.dedup();
+        let backgrounds = out.join("Backgrounds");
+        engine.update_config(|c| {
+            for (name, widgets) in layouts {
+                c.widget_layouts.insert(name, widgets);
+            }
+            if report.backgrounds > 0 && !c.oled_folders.contains(&backgrounds) {
+                c.oled_folders.push(backgrounds);
+            }
+            for (video, widgets) in themed_videos {
+                if let Some(folder) = video.parent() {
+                    if !c.oled_folders.iter().any(|f| f == folder) {
+                        c.oled_folders.push(folder.to_path_buf());
+                    }
+                }
+                c.oled_modules
+                    .entry(video.to_string_lossy().into_owned())
+                    .or_insert(widgets);
+            }
+        });
+        Ok(Some(report))
+    })
+    .await
+    .map_err(err)?
+}
+
+#[tauri::command(async)]
+fn save_widget_layout(
+    state: State<'_, AppState>,
+    name: String,
+    modules: Vec<oled_modules::OledModule>,
+) -> Result<(), String> {
+    let name: String = name.trim().chars().take(60).collect();
+    if name.is_empty() {
+        return Err("Give the layout a name".into());
+    }
+    let modules: Vec<_> = modules
+        .into_iter()
+        .take(oled_modules::MAX_MODULES)
+        .map(oled_modules::OledModule::cleaned)
+        .collect();
+    state.engine.update_config(|c| {
+        c.widget_layouts.insert(name, modules);
+    });
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn delete_widget_layout(state: State<'_, AppState>, name: String) {
+    state.engine.update_config(|c| {
+        c.widget_layouts.remove(&name);
+    });
+}
+
 #[derive(serde::Serialize)]
 struct WidgetFont {
     id: String,
@@ -555,15 +682,16 @@ struct WidgetFont {
     file: Option<String>,
 }
 
-/// The fonts widgets can use: RGBable's own, then any that came with L-Connect.
+/// The fonts widgets can use: RGBable's own, any that came with L-Connect, and the PC's fonts
+/// imported themes use.
 #[tauri::command(async)]
-fn widget_fonts(app: AppHandle) -> Vec<WidgetFont> {
+fn widget_fonts(app: AppHandle, state: State<'_, AppState>) -> Vec<WidgetFont> {
     let own = oled_modules::FONTS.iter().map(|(id, name, ..)| WidgetFont {
         id: (*id).to_string(),
         name: (*name).to_string(),
         file: None,
     });
-    let lconnect = oled_modules::lconnect_fonts().into_iter().map(|path| {
+    let file_font = |path: PathBuf, source: &str| {
         let _ = app.asset_protocol_scope().allow_file(&path);
         let stem = path
             .file_stem()
@@ -571,11 +699,23 @@ fn widget_fonts(app: AppHandle) -> Vec<WidgetFont> {
             .unwrap_or_default();
         WidgetFont {
             id: format!("file:{}", path.display()),
-            name: format!("{stem} (L-Connect)"),
+            name: format!("{stem} ({source})"),
             file: Some(path.to_string_lossy().into_owned()),
         }
-    });
-    own.chain(lconnect).collect()
+    };
+    let lconnect: Vec<PathBuf> = oled_modules::lconnect_fonts();
+    let config = state.engine.config();
+    let used: std::collections::BTreeSet<PathBuf> = config
+        .widget_layouts
+        .values()
+        .chain(config.oled_modules.values())
+        .flatten()
+        .filter_map(|m| m.font.strip_prefix("file:").map(PathBuf::from))
+        .filter(|path| !lconnect.contains(path) && path.is_file())
+        .collect();
+    own.chain(lconnect.into_iter().map(|p| file_font(p, "L-Connect")))
+        .chain(used.into_iter().map(|p| file_font(p, "this PC")))
+        .collect()
 }
 
 #[tauri::command(async)]
@@ -1174,6 +1314,9 @@ fn main() {
             set_warmth,
             set_fan_mode,
             set_oled_modules,
+            import_lconnect_themes,
+            save_widget_layout,
+            delete_widget_layout,
             oled_readings,
             widget_fonts,
             cpu_temp_status,

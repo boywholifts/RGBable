@@ -502,6 +502,14 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .snap-line.h { left: 0; right: 0; height: 1px; }
 .snap-line[hidden] { display: none; }
 .readout-row.active { border-color: var(--accent); }
+.readout.boxed { padding: 0; border-radius: 0; }
+.readout.backdrop { pointer-events: none; outline: none; }
+.widget-image { display: block; width: 100%; height: 100%; object-fit: fill; pointer-events: none; }
+.widget-bar { width: 100%; height: 100%; }
+.widget-layouts { gap: 8px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
+.widget-layouts .spacer { flex: 1; }
+#widget-layouts { max-width: 280px; }
+.readout-row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .readout-row .kind { width: 150px; flex: none; font-weight: 600; }
 .readout-row input[type=text] { flex: 1; min-width: 0; }
 .readout-row input[type=color] { width: 36px; height: 28px; padding: 0; border: none; background: none; flex: none; }
