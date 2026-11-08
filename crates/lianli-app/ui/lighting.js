@@ -187,7 +187,7 @@ function deviceRow(l) {
   const row = el("div", { class: "device-row", draggable: "true", "data-id": l.id, title: "Change this device's lighting" }, [
     box,
     el("div", { class: "row-text" }, [
-      el("div", { class: "row-name" }, [l.name, ...rowBadges(l)]),
+      el("div", { class: "row-name with-badges" }, [el("span", { class: "name-text", title: l.name }, l.name), ...rowBadges(l)]),
       el("div", { class: "row-sub" }, `${l.kind === "header" ? "ARGB header" : l.kind} · ${effectSummary(l)}`),
     ]),
     more,
