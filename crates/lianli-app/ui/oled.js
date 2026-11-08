@@ -38,6 +38,7 @@ function renderOledStage() {
     t.classList.toggle("selected", t.dataset.path === oled.selected);
     t.classList.toggle("playing", t.dataset.path === oled.current);
   });
+  if (typeof syncReadouts === "function") syncReadouts(path);
 }
 
 function prepare() {

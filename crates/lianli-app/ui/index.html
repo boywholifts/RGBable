@@ -124,7 +124,10 @@
 
       <div class="card oled-stage">
         <div class="oled-frame" id="oled-frame">
-          <div class="oled-screen" id="oled-screen"><div class="oled-empty">Nothing on the screen</div></div>
+          <div class="oled-canvas">
+            <div class="oled-screen" id="oled-screen"><div class="oled-empty">Nothing on the screen</div></div>
+            <div class="oled-readouts" id="oled-readouts"></div>
+          </div>
         </div>
         <div class="oled-info">
           <div class="muted small" id="oled-caption">Now on the HydroShift</div>
@@ -154,6 +157,27 @@
           <div class="muted small" id="oled-match-status"></div>
           <p class="muted small">Shown landscape at 2288 × 1080. Fill crops the edges; Fit adds black bars. Each video is prepared for the screen once (it starts while you preview it), then plays straight away.</p>
         </div>
+      </div>
+
+      <div class="card readouts-card">
+        <div class="readouts-head">
+          <div>
+            <h2>Readouts</h2>
+            <p class="muted small" id="readouts-hint">Live info drawn over the video, like the time or your coolant temperature. Drag them on the preview to move them and drag a corner to resize.</p>
+          </div>
+          <select id="readout-add">
+            <option value="">Add a readout…</option>
+            <option value="clock">Clock</option>
+            <option value="date">Date</option>
+            <option value="coolant">Coolant temperature</option>
+            <option value="pump">Pump speed</option>
+            <option value="gpu_temp">GPU temperature</option>
+            <option value="gpu_load">GPU load</option>
+            <option value="fans">Fan speed</option>
+            <option value="text">Text</option>
+          </select>
+        </div>
+        <div class="readout-list" id="readout-list"></div>
       </div>
 
       <div class="lights-head">
@@ -385,6 +409,7 @@
   <script src="lighting.js"></script>
   <script src="library.js"></script>
   <script src="oled.js"></script>
+  <script src="readouts.js"></script>
   <script src="sequence.js"></script>
   <script src="fans.js"></script>
   <script src="app.js"></script>

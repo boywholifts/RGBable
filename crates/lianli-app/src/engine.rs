@@ -4,6 +4,7 @@
 
 use crate::effects::{Effect, Side};
 use crate::fans::{self, Decision, FanMode, FanProfile, PumpMode};
+use crate::oled_modules::{self, OledModule, Readings};
 use crate::render::{self, Lighting};
 use anyhow::{bail, Context, Result};
 use lianli_devices::winusb::hs2_oled_led::Hs2OledLedController;
@@ -37,6 +38,9 @@ pub struct Config {
     pub oled_ring: Option<[u8; 3]>,
     #[serde(default)]
     pub oled: Option<OledConfig>,
+    /// Readouts drawn over each screen video, by the video's path.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub oled_modules: BTreeMap<String, Vec<OledModule>>,
     /// OpenRGB SDK server to read RAM / GPU / motherboard lighting from.
     #[serde(default)]
     pub openrgb_port: Option<u16>,
@@ -230,6 +234,7 @@ pub struct OledView {
     pub fit: String,
     pub fps: u32,
     pub state: String,
+    pub modules: BTreeMap<String, Vec<OledModule>>,
 }
 
 // ------------------------------------------------------------------ controllers
@@ -910,6 +915,7 @@ impl Engine {
             fit: oled.map_or_else(default_fit, |o| o.fit.clone()),
             fps: oled.map_or(30, |o| o.fps),
             state: self.oled_state.read().clone(),
+            modules: config.oled_modules.clone(),
         }
     }
 
@@ -1224,7 +1230,64 @@ impl Engine {
         }
     }
 
+    /// What the screen's readouts show right now.
+    pub fn readings(&self, gpu: Option<&mut oled_modules::Gpu>) -> Readings {
+        let telemetry = self.telemetry.read().clone();
+        let rpms: Vec<u32> = self
+            .wireless
+            .read()
+            .as_ref()
+            .map(|w| {
+                w.devices()
+                    .iter()
+                    .flat_map(|d| d.fan_rpms[..usize::from(d.fan_count.min(4))].to_vec())
+                    .filter(|&rpm| rpm > 0)
+                    .map(u32::from)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let (gpu_temp_c, gpu_load) = gpu.map_or((None, None), |g| g.read());
+        Readings {
+            coolant_c: telemetry.coolant_c,
+            pump_rpm: telemetry.pump_rpm,
+            gpu_temp_c,
+            gpu_load,
+            fans_rpm: (!rpms.is_empty()).then(|| rpms.iter().sum::<u32>() / rpms.len() as u32),
+        }
+    }
+
+    pub fn set_oled_modules(self: &Arc<Self>, file: String, modules: Vec<OledModule>) {
+        let modules: Vec<OledModule> = modules
+            .into_iter()
+            .take(oled_modules::MAX_MODULES)
+            .map(OledModule::cleaned)
+            .collect();
+        let playing = self.update_config(|c| {
+            if modules.is_empty() {
+                c.oled_modules.remove(&file);
+            } else {
+                c.oled_modules.insert(file.clone(), modules);
+            }
+            c.oled
+                .as_ref()
+                .is_some_and(|o| o.file.to_string_lossy() == file.as_str())
+        });
+        if playing {
+            self.restart_oled();
+        }
+    }
+
     fn oled_loop(&self, oled: &OledConfig, stop: &AtomicBool) {
+        let modules = self
+            .config
+            .lock()
+            .oled_modules
+            .get(oled.file.to_string_lossy().as_ref())
+            .cloned()
+            .unwrap_or_default();
+        if !modules.is_empty() {
+            return self.oled_live_loop(oled, &modules, stop);
+        }
         use lianli_devices::winusb::lcd::WinUsbLcdDevice;
         *self.oled_state.write() = "Encoding".into();
         let encoded = match encode_for_oled(oled) {
@@ -1250,6 +1313,141 @@ impl Engine {
             thread::sleep(Duration::from_secs(5));
         }
     }
+}
+
+impl Engine {
+    /// Plays the video with its readouts drawn on, encoding it as it plays: one ffmpeg reads
+    /// the video and an overlay image this sends once a second, and its output goes straight
+    /// to the screen.
+    fn oled_live_loop(&self, oled: &OledConfig, modules: &[OledModule], stop: &AtomicBool) {
+        use lianli_devices::winusb::lcd::WinUsbLcdDevice;
+        while !stop.load(Ordering::Acquire) {
+            *self.oled_state.write() = "Playing".into();
+            let result = live_ffmpeg(oled).and_then(|mut ffmpeg| {
+                let mut overlay_in = ffmpeg.stdin.take().context("ffmpeg's input")?;
+                let mut video_out = ffmpeg.stdout.take().context("ffmpeg's output")?;
+                let streamed = thread::scope(|scope| {
+                    scope.spawn(|| self.feed_overlay(modules, &mut overlay_in, stop));
+                    let streamed = find_wired(0x1CBE, 0xA068)
+                        .and_then(|det| WinUsbLcdDevice::open(det.device, 0xA068))
+                        .and_then(|mut lcd| {
+                            lcd.stream_h264_reader(&mut video_out, stop, oled.fps as f32)
+                        });
+                    let _ = ffmpeg.kill();
+                    streamed
+                });
+                let finished = ffmpeg.wait_with_output();
+                if let Ok(output) = finished.as_ref() {
+                    let errors = String::from_utf8_lossy(&output.stderr);
+                    if !errors.trim().is_empty() && !stop.load(Ordering::Acquire) {
+                        warn!("ffmpeg (screen readouts): {}", errors.trim());
+                    }
+                }
+                streamed
+            });
+            if stop.load(Ordering::Acquire) {
+                break;
+            }
+            if let Err(e) = result {
+                warn!("OLED stream with readouts stopped: {e:#}; retrying in 5 s");
+                *self.oled_state.write() = "Reconnecting".into();
+            }
+            thread::sleep(Duration::from_secs(5));
+        }
+    }
+
+    /// Sends ffmpeg the readouts as an upright overlay frame once a second until stopped or
+    /// ffmpeg goes away. The frames' timing is what paces the video to real time.
+    fn feed_overlay(
+        &self,
+        modules: &[OledModule],
+        into: &mut impl std::io::Write,
+        stop: &AtomicBool,
+    ) {
+        let mut gpu = modules
+            .iter()
+            .any(|m| m.kind.uses_gpu())
+            .then(oled_modules::Gpu::new);
+        let mut next = Instant::now();
+        while !stop.load(Ordering::Acquire) {
+            let readings = self.readings(gpu.as_mut());
+            let frame = oled_modules::render(modules, &readings, chrono::Local::now());
+            if into
+                .write_all(&oled_modules::rotate_clockwise(&frame))
+                .is_err()
+            {
+                return;
+            }
+            next += Duration::from_secs(1);
+            thread::sleep(next.saturating_duration_since(Instant::now()));
+        }
+    }
+}
+
+fn live_ffmpeg(oled: &OledConfig) -> Result<std::process::Child> {
+    anyhow::ensure!(
+        oled.file.is_file(),
+        "{} does not exist",
+        oled.file.display()
+    );
+    let fps = oled.fps.clamp(1, 60);
+    let fit = match oled.fit.as_str() {
+        "contain" => "scale=2288:1080:force_original_aspect_ratio=decrease,pad=2288:1080:(ow-iw)/2:(oh-ih)/2:color=black",
+        _ => "scale=2288:1080:force_original_aspect_ratio=increase,crop=2288:1080",
+    };
+    let still = is_still_image(&oled.file);
+    let mut ffmpeg = std::process::Command::new(crate::oled_library::ffmpeg());
+    ffmpeg.args(["-loglevel", "error"]);
+    if still {
+        ffmpeg.args(["-loop", "1"]);
+    } else {
+        ffmpeg.args(["-stream_loop", "-1"]);
+    }
+    ffmpeg
+        .arg("-i")
+        .arg(&oled.file)
+        .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-s"])
+        .arg(format!("{}x{}", oled_modules::HEIGHT, oled_modules::WIDTH))
+        .args(["-framerate", "1", "-i", "-"])
+        .args([
+            "-filter_complex",
+            &format!(
+                "[0:v]{fit},transpose=1,fps={fps}[video];[1:v]fps={fps}[readouts];\
+                 [video][readouts]overlay=format=auto:repeatlast=1"
+            ),
+        ])
+        .args([
+            "-r",
+            &fps.to_string(),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+        ])
+        .args([
+            "-x264opts",
+            "bframes=0",
+            "-threads",
+            "4",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .args(["-color_range", "pc", "-an", "-f", "h264", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    no_window(&mut ffmpeg);
+    info!("Playing {} on the OLED with readouts", oled.file.display());
+    ffmpeg
+        .spawn()
+        .context("running ffmpeg (install it with: winget install Gyan.FFmpeg)")
+}
+
+fn is_still_image(file: &Path) -> bool {
+    let lower = file.to_string_lossy().to_lowercase();
+    [".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"]
+        .iter()
+        .any(|ext| lower.ends_with(ext))
 }
 
 // ------------------------------------------------------------------ helpers

@@ -7,6 +7,7 @@ mod engine;
 mod fans;
 mod lights;
 mod oled_library;
+mod oled_modules;
 mod openrgb;
 mod openrgb_host;
 mod palette;
@@ -524,6 +525,26 @@ fn restart(app: &AppHandle) -> anyhow::Result<()> {
     tracing::info!("restarting RGBable");
     app.exit(0);
     Ok(())
+}
+
+#[tauri::command(async)]
+fn set_oled_modules(
+    state: State<'_, AppState>,
+    file: String,
+    modules: Vec<oled_modules::OledModule>,
+) {
+    state.engine.set_oled_modules(file, modules);
+}
+
+/// Live readout values for the screen editor's preview.
+#[tauri::command(async)]
+fn oled_readings(state: State<'_, AppState>) -> oled_modules::Readings {
+    static GPU: std::sync::OnceLock<parking_lot::Mutex<oled_modules::Gpu>> =
+        std::sync::OnceLock::new();
+    let mut gpu = GPU
+        .get_or_init(|| parking_lot::Mutex::new(oled_modules::Gpu::new()))
+        .lock();
+    state.engine.readings(Some(&mut gpu))
 }
 
 #[tauri::command(async)]
@@ -1093,6 +1114,8 @@ fn main() {
             set_across,
             set_warmth,
             set_fan_mode,
+            set_oled_modules,
+            oled_readings,
             set_all_fan_modes,
             set_pump_mode,
             select_fan_profile,
