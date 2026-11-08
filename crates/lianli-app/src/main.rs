@@ -622,22 +622,31 @@ async fn import_lconnect_themes(
         report.skipped.sort();
         report.skipped.dedup();
         let backgrounds = out.join("Backgrounds");
+        let any_still = std::fs::read_dir(&backgrounds)
+            .map(|mut d| d.next().is_some())
+            .unwrap_or(false);
+        let theme_videos = out.join("Videos");
         engine.update_config(|c| {
             for (name, widgets) in layouts {
                 c.widget_layouts.insert(name, widgets);
             }
             if report.backgrounds > 0 && !c.oled_folders.contains(&backgrounds) {
-                c.oled_folders.push(backgrounds);
+                c.oled_folders.push(backgrounds.clone());
+            }
+            // earlier imports listed L-Connect's whole video folder, modular pieces and all
+            let sources: Vec<&std::path::Path> =
+                videos.values().filter_map(|v| v.parent()).collect();
+            c.oled_folders
+                .retain(|f| !sources.contains(&f.as_path()) || !f.starts_with(&folder));
+            if report.videos > 0 && !c.oled_folders.contains(&theme_videos) {
+                c.oled_folders.push(theme_videos.clone());
+            }
+            if !any_still {
+                c.oled_folders.retain(|f| f != &backgrounds);
             }
             for (video, widgets) in themed_videos {
-                if let Some(folder) = video.parent() {
-                    if !c.oled_folders.iter().any(|f| f == folder) {
-                        c.oled_folders.push(folder.to_path_buf());
-                    }
-                }
                 c.oled_modules
-                    .entry(video.to_string_lossy().into_owned())
-                    .or_insert(widgets);
+                    .insert(video.to_string_lossy().into_owned(), widgets);
             }
         });
         Ok(Some(report))

@@ -84,6 +84,20 @@ fn theme_video(root: Node, template: &Path, videos: &BTreeMap<String, PathBuf>) 
     })
 }
 
+/// A copy of a theme's video in RGBable's themes folder, so the library lists the theme videos
+/// alone rather than everything in L-Connect's video folder.
+fn keep_video(source: &Path, out: &Path) -> Result<PathBuf> {
+    let videos = out.join("Videos");
+    std::fs::create_dir_all(&videos)?;
+    let name = source.file_name().context("video without a name")?;
+    let copy = videos.join(name);
+    let size = |p: &Path| std::fs::metadata(p).map(|m| m.len()).ok();
+    if size(&copy) != size(source) {
+        std::fs::copy(source, &copy).with_context(|| format!("copying {}", source.display()))?;
+    }
+    Ok(copy)
+}
+
 /// A .NET `System.Drawing.Color`: an ARGB value, or one of the named colors.
 fn color(node: Node) -> Option<[u8; 3]> {
     if node.is_null() {
@@ -425,10 +439,11 @@ pub fn import(
         widgets.insert(0, overlay);
     }
     widgets.truncate(oled_modules::MAX_MODULES);
-    let video = if animation.is_none() {
-        theme_video(root, template, videos)
-    } else {
-        None
+    let video = match animation {
+        None => theme_video(root, template, videos)
+            .map(|source| keep_video(&source, out))
+            .transpose()?,
+        Some(_) => None,
     };
     // without its video, a still of it, when the theme has one
     let still = video
@@ -451,7 +466,11 @@ pub fn import(
                 .with_context(|| format!("saving {}", path.display()))?;
             Some(path)
         }
-        None => None,
+        None => {
+            // a still from an earlier import, before its video was found
+            let _ = std::fs::remove_file(out.join("Backgrounds").join(format!("{file_name}.png")));
+            None
+        }
     };
     skipped.sort();
     skipped.dedup();
