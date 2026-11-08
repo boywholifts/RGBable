@@ -67,3 +67,13 @@ function closeOnBackdrop(backdrop, close) {
     pressed = false;
   });
 }
+
+const ICONS = {
+  reverse: '<path d="M4 8h14l-3-3M20 16H6l3 3"/>',
+  clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
+};
+function icon(name) {
+  const span = el("span", { class: "icon" });
+  span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
+  return span;
+}

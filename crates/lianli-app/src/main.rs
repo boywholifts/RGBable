@@ -101,6 +101,11 @@ fn set_delays(state: State<'_, AppState>, delays: Vec<(String, u32)>) -> Result<
 }
 
 #[tauri::command(async)]
+fn set_reverse(state: State<'_, AppState>, id: String, reverse: bool) -> Result<(), String> {
+    lights::set_reverse(&state.engine, &state.openrgb, &id, reverse).map_err(chain)
+}
+
+#[tauri::command(async)]
 fn set_delay(state: State<'_, AppState>, id: String, delay_ms: u32) -> Result<(), String> {
     lights::set_delay(&state.engine, &state.openrgb, &id, delay_ms).map_err(chain)
 }
@@ -977,6 +982,7 @@ fn main() {
             restart_app,
             set_delay,
             set_delays,
+            set_reverse,
             oled_palette,
             set_oled_match,
             set_color_presets,

@@ -418,6 +418,25 @@ pub fn set_delay(engine: &Engine, openrgb: &OpenRgb, id: &str, delay_ms: u32) ->
 
 pub const MAX_DELAY_MS: u32 = 10_000;
 
+/// Flips the direction of a device's current effect (both rings of an SL Flex fan). A header
+/// that follows its board gets its own copy, so the board itself is left alone.
+pub fn set_reverse(engine: &Engine, openrgb: &OpenRgb, id: &str, reverse: bool) -> Result<()> {
+    let light = lights(engine, openrgb)
+        .into_iter()
+        .find(|l| l.id == id)
+        .with_context(|| format!("no device {id}"))?;
+    let effects = [light.effect, light.outer_effect];
+    anyhow::ensure!(
+        effects.iter().flatten().any(Effect::is_animated),
+        "{} has a plain color, so there is no direction to reverse",
+        light.name
+    );
+    for effect in effects.into_iter().flatten() {
+        set_effect(engine, openrgb, id, Effect { reverse, ..effect })?;
+    }
+    Ok(())
+}
+
 /// Saves a whole sequence at once and resends only the devices whose delay changed.
 pub fn set_delays(engine: &Engine, openrgb: &OpenRgb, delays: &[(String, u32)]) -> Result<()> {
     let changed: Vec<(String, u32)> = engine.update_config(|c| {

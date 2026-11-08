@@ -1,4 +1,5 @@
-// Sequence page: the order devices start their effects in, top first, with each one's delay.
+// Devices page: every device in the order its effect starts, top first, with its delay,
+// direction and the same ⋯ menu as the Lighting page.
 
 const seq = { group: "all", items: [], dirty: false, step: 300, auto: true, key: "" };
 
@@ -13,6 +14,8 @@ function seqLights(o) {
       effect: l.effect || l.outer_effect,
       animated: [l.effect, l.outer_effect].some((e) => e && e.kind !== "static"),
       delay: l.delay_ms || 0,
+      reversed: [l.effect, l.outer_effect].some((e) => e && e.reverse && e.kind !== "static"),
+      light: l,
     }))
     .sort((a, b) => b.animated - a.animated || a.delay - b.delay || a.name.localeCompare(b.name));
 }
@@ -53,7 +56,21 @@ function drawSequence() {
   }
   let dragged = null;
   list.replaceChildren(...seq.items.map((item, index) => {
-    const input = el("input", { type: "number", class: "text num", min: 0, max: 10000, step: 50, value: item.delay, disabled: !item.animated });
+    const input = el("input", { type: "number", class: "text num", min: 0, max: 10000, step: 50, value: item.delay });
+    input.disabled = !item.animated;
+    const reverse = el("button", { class: "icon-btn toggle" + (item.reversed ? " on" : ""), title: item.reversed ? "Reversed: click for the normal direction" : "Reverse the direction" }, icon("reverse"));
+    reverse.disabled = !item.animated;
+    reverse.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await call("set_reverse", { id: item.id, reverse: !item.reversed }, item.reversed ? `${item.name}: normal direction` : `${item.name}: reversed`);
+      item.reversed = !item.reversed;
+      drawSequence();
+    });
+    const more = el("button", { class: "icon-btn", title: "Rename, LED count, group and more" }, "⋯");
+    more.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deviceMenu(item.light, more);
+    });
     input.addEventListener("change", () => {
       item.delay = Math.max(0, Math.min(10000, Math.round(Number(input.value) || 0)));
       changed();
@@ -70,7 +87,9 @@ function drawSequence() {
         el("div", { class: "row-sub" }, item.animated ? item.sub : "Plain color, nothing to delay"),
       ]),
       el("div", { class: "seq-track", title: `${(item.delay / 1000).toFixed(2)} s` }, marker),
-      el("label", { class: "seq-delay" }, [input, el("span", { class: "muted small" }, "ms")]),
+      el("label", { class: "seq-delay", title: "Start delay" }, [input, el("span", { class: "muted small" }, "ms")]),
+      reverse,
+      more,
     ]);
     row.addEventListener("dragstart", (e) => {
       dragged = index;
