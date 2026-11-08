@@ -68,6 +68,13 @@ fn hsv(c: [u8; 3]) -> (f32, f32, f32) {
     (hue, saturation, max)
 }
 
+/// The hue at full saturation, with the in-between channel gamma-corrected. LEDs give out light
+/// linearly, so any white mixed in turns red pink, and a channel at a fifth of full is far
+/// stronger than it looks on screen: deep reds came out hot pink.
+fn led_color(hue: f32) -> [u8; 3] {
+    from_hsv(hue, 1.0).map(|v| ((f32::from(v) / 255.0).powf(2.2) * 255.0).round() as u8)
+}
+
 fn from_hsv(hue: f32, saturation: f32) -> [u8; 3] {
     let h = hue.rem_euclid(1.0) * 6.0;
     let x = 1.0 - (h % 2.0 - 1.0).abs();
@@ -87,7 +94,6 @@ struct Bin {
     weight: f32,
     sin: f32,
     cos: f32,
-    saturation: f32,
 }
 
 /// The main hues of the bright, colorful pixels, each at full brightness and saturation as
@@ -109,7 +115,6 @@ pub fn pick(pixels: &[[u8; 3]], count: usize) -> Vec<[u8; 3]> {
             bin.weight += weight;
             bin.sin += angle.sin() * weight;
             bin.cos += angle.cos() * weight;
-            bin.saturation += saturation * weight;
         } else if saturation < GREY_SATURATION && value > 0.35 {
             grey += value * 0.5;
         }
@@ -133,21 +138,12 @@ pub fn pick(pixels: &[[u8; 3]], count: usize) -> Vec<[u8; 3]> {
                 merged.weight += bins[i].weight;
                 merged.sin += bins[i].sin;
                 merged.cos += bins[i].cos;
-                merged.saturation += bins[i].saturation;
             }
         }
         // the hue of the peak itself: its neighbors (orange highlights on a red glow) would
         // pull it off
         let hue = bins[best].sin.atan2(bins[best].cos) / std::f32::consts::TAU;
-        // a nearly pure color is made pure: the last few percent of the other channels turn
-        // a red glow pink on LEDs
-        let saturation = merged.saturation / merged.weight;
-        let saturation = if saturation >= 0.8 {
-            1.0
-        } else {
-            saturation.max(0.75)
-        };
-        picked.push((from_hsv(hue, saturation), merged.weight));
+        picked.push((led_color(hue), merged.weight));
     }
 
     let strongest = picked.first().map_or(0.0, |p| p.1);
@@ -180,6 +176,15 @@ mod tests {
             r == 255 && g < 40 && b == 0,
             "washed out or pinkish: {colors:?}"
         );
+    }
+
+    #[test]
+    fn a_dark_crimson_comes_out_red_not_pink() {
+        let mut pixels = vec![[6, 2, 3]; 3000];
+        pixels.extend(vec![[120, 30, 45]; 300]);
+        pixels.extend(vec![[90, 20, 40]; 200]);
+        let [r, g, b] = pick(&pixels, 1)[0];
+        assert!(r == 255 && g == 0 && b < 25, "pinkish: {:?}", [r, g, b]);
     }
 
     #[test]
