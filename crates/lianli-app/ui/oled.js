@@ -20,6 +20,12 @@ function showOnScreen(path) {
     : el("video", { src: assetUrl(path), autoplay: "", loop: "", muted: "", playsinline: "" });
   if (media.tagName === "VIDEO") media.muted = true;
   media.style.objectFit = oled.fit;
+  // L-Connect keeps some videos the way the panel sits (1080 × 2288); the screen plays them upright
+  const turnUpright = () => {
+    const [w, h] = media.tagName === "VIDEO" ? [media.videoWidth, media.videoHeight] : [media.naturalWidth, media.naturalHeight];
+    media.classList.toggle("panel-native", w === 1080 && h === 2288);
+  };
+  media.addEventListener(media.tagName === "VIDEO" ? "loadedmetadata" : "load", turnUpright);
   media.addEventListener("error", () => screen.replaceChildren(el("div", { class: "oled-empty" }, "Can't preview this file here, but the OLED can still play it")));
   screen.replaceChildren(media);
   syncPreviewPlayback();

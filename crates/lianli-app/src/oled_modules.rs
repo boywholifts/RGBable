@@ -35,6 +35,9 @@ pub enum ModuleKind {
     Image,
     /// A bar filled by another reading (`source`).
     Bar,
+    /// A looping video with transparency (`file`) over `w` × `h`, drawn under the other
+    /// widgets as the screen plays.
+    Video,
 }
 
 impl ModuleKind {
@@ -169,7 +172,7 @@ impl OledModule {
         self.y = self.y.min(1000);
         self.size = self.size.clamp(20, 600);
         self.label = self.label.chars().take(40).collect();
-        self.text = self.text.chars().take(60).collect();
+        self.text = self.text.chars().take(120).collect();
         self.opacity = self.opacity.clamp(10, 100);
         self.caption_scale = self.caption_scale.clamp(15, 100);
         self.w = self.w.min(1000);
@@ -177,10 +180,12 @@ impl OledModule {
         self.format = self.format.chars().take(20).collect();
         self.block = self.block.min(500);
         self.gap = self.gap.min(500);
-        if self
-            .source
-            .is_some_and(|s| matches!(s, ModuleKind::Bar | ModuleKind::Image | ModuleKind::Text))
-        {
+        if self.source.is_some_and(|s| {
+            matches!(
+                s,
+                ModuleKind::Bar | ModuleKind::Image | ModuleKind::Text | ModuleKind::Video
+            )
+        }) {
             self.source = None;
         }
         self
@@ -386,7 +391,7 @@ pub fn value(
             now.format(layout).to_string()
         }
         ModuleKind::Text => module.text.clone(),
-        ModuleKind::Image | ModuleKind::Bar => String::new(),
+        ModuleKind::Image | ModuleKind::Bar | ModuleKind::Video => String::new(),
         kind => match readings.number(kind) {
             Some((number, unit)) if module.unit => format!("{number}{unit}"),
             Some((number, _)) => number,
@@ -461,6 +466,7 @@ pub fn render(
         let h = f32::from(module.h) / 1000.0 * HEIGHT as f32;
         match module.kind {
             ModuleKind::Image => draw_image(&mut frame, module, x, y, w, h, opacity),
+            ModuleKind::Video => {}
             ModuleKind::Bar => {
                 let filled = readings.fraction(module.reading()).unwrap_or(0.0);
                 draw_bar(&mut frame, module, x, y, w, h, filled, opacity);
@@ -472,6 +478,23 @@ pub fn render(
 }
 
 /// Where a widget's box starts, given its anchor point and size.
+/// Where a boxed widget (a picture, bar or video) sits on the landscape frame, in pixels:
+/// left, top, width and height.
+pub fn pixel_box(module: &OledModule) -> (u32, u32, u32, u32) {
+    let w = (f32::from(module.w) / 1000.0 * WIDTH as f32)
+        .round()
+        .max(2.0);
+    let h = (f32::from(module.h) / 1000.0 * HEIGHT as f32)
+        .round()
+        .max(2.0);
+    let x = f32::from(module.x) / 1000.0 * WIDTH as f32;
+    let y = f32::from(module.y) / 1000.0 * HEIGHT as f32;
+    let (left, top) = top_left(module.anchor, x, y, w, h);
+    // even sizes and positions keep ffmpeg's chroma planes aligned
+    let even = |v: f32| (v.round().max(0.0) as u32) & !1;
+    (even(left), even(top), even(w), even(h))
+}
+
 fn top_left(anchor: Anchor, x: f32, y: f32, w: f32, h: f32) -> (f32, f32) {
     match anchor {
         Anchor::Center => (x - w / 2.0, y - h / 2.0),
@@ -498,10 +521,13 @@ fn draw_readout(
     let caption = module.label.trim();
     let caption_size = size * f32::from(module.caption_scale) / 100.0;
     let gap = size * 0.08;
+    let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
+    let line_height = size * 1.1;
+    let text_height = size + line_height * lines.len().saturating_sub(1) as f32;
     let total = if caption.is_empty() {
-        size
+        text_height
     } else {
-        size + gap + caption_size
+        text_height + gap + caption_size
     };
     let top = match module.anchor {
         Anchor::Center => y - total / 2.0,
@@ -540,18 +566,21 @@ fn draw_readout(
     } else {
         top + caption_size + gap
     };
-    let left = left_of(&text, size);
-    for (offset, color, alpha) in layers(opacity) {
-        draw_text(
-            frame,
-            &font,
-            &text,
-            size,
-            left + offset,
-            value_top + offset,
-            color,
-            alpha,
-        );
+    for (n, line) in lines.iter().enumerate() {
+        let left = left_of(line, size);
+        let line_top = value_top + line_height * n as f32;
+        for (offset, color, alpha) in layers(opacity) {
+            draw_text(
+                frame,
+                &font,
+                line,
+                size,
+                left + offset,
+                line_top + offset,
+                color,
+                alpha,
+            );
+        }
     }
 }
 

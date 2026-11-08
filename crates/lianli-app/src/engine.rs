@@ -4,7 +4,7 @@
 
 use crate::effects::{Effect, Side};
 use crate::fans::{self, Decision, FanMode, FanProfile, PumpMode};
-use crate::oled_modules::{self, OledModule, Readings};
+use crate::oled_modules::{self, ModuleKind, OledModule, Readings};
 use crate::render::{self, Lighting};
 use anyhow::{bail, Context, Result};
 use lianli_devices::winusb::hs2_oled_led::Hs2OledLedController;
@@ -1360,7 +1360,7 @@ impl Engine {
         use lianli_devices::winusb::lcd::WinUsbLcdDevice;
         while !stop.load(Ordering::Acquire) {
             *self.oled_state.write() = "Playing".into();
-            let result = live_ffmpeg(oled).and_then(|mut ffmpeg| {
+            let result = live_ffmpeg(oled, modules).and_then(|mut ffmpeg| {
                 let overlay_in = ffmpeg.stdin.take().context("ffmpeg's input")?;
                 let mut video_out = ffmpeg.stdout.take().context("ffmpeg's output")?;
                 let streamed = thread::scope(|scope| {
@@ -1431,7 +1431,7 @@ fn sleep_unless_stopped(duration: Duration, stop: &AtomicBool) {
     }
 }
 
-fn live_ffmpeg(oled: &OledConfig) -> Result<std::process::Child> {
+fn live_ffmpeg(oled: &OledConfig, modules: &[OledModule]) -> Result<std::process::Child> {
     anyhow::ensure!(
         oled.file.is_file(),
         "{} does not exist",
@@ -1455,11 +1455,31 @@ fn live_ffmpeg(oled: &OledConfig) -> Result<std::process::Child> {
         .arg(&oled.file)
         .args(["-f", "rawvideo", "-pix_fmt", "rgba", "-s"])
         .arg(format!("{}x{}", oled_modules::HEIGHT, oled_modules::WIDTH))
-        .args(["-framerate", "1", "-i", "-"])
+        .args(["-framerate", "1", "-i", "-"]);
+    let upright = crate::oled_library::upright(&oled.file);
+    // one animated overlay at most: each is another video to decode alongside
+    let animation = modules
+        .iter()
+        .find(|m| m.kind == ModuleKind::Video && Path::new(&m.file).is_file());
+    let base = match animation {
+        Some(module) => {
+            ffmpeg.args(["-stream_loop", "-1", "-i"]).arg(&module.file);
+            let (left, top, w, h) = oled_modules::pixel_box(module);
+            let turn = crate::oled_library::upright(Path::new(&module.file));
+            let alpha = f32::from(module.opacity.clamp(10, 100)) / 100.0;
+            format!(
+                "[0:v]{upright}{fit}[back];\
+                 [2:v]{turn}scale={w}:{h},format=rgba,colorchannelmixer=aa={alpha:.2}[animation];\
+                 [back][animation]overlay={left}:{top}:format=auto,"
+            )
+        }
+        None => format!("[0:v]{upright}{fit},"),
+    };
+    ffmpeg
         .args([
             "-filter_complex",
             &format!(
-                "[0:v]{fit},transpose=1,fps={fps}[video];[1:v]fps={fps}[readouts];\
+                "{base}transpose=1,fps={fps}[video];[1:v]fps={fps}[readouts];\
                  [video][readouts]overlay=format=auto:repeatlast=1"
             ),
         ])
@@ -1597,7 +1617,13 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
         .file_stem()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "media".into());
-    let output = cache_dir.join(format!("{stem}-{:x}-{}-{fps}.h264", source.len(), oled.fit));
+    let upright = crate::oled_library::upright(&oled.file);
+    let turned = if upright.is_empty() { "" } else { "-u" };
+    let output = cache_dir.join(format!(
+        "{stem}-{:x}-{}-{fps}{turned}.h264",
+        source.len(),
+        oled.fit
+    ));
     let partial = output.with_extension("partial");
     if let Ok(meta) = std::fs::metadata(&output) {
         if meta.modified().is_ok_and(|m| m >= source_modified) && meta.len() > 0 {
@@ -1620,7 +1646,7 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
     ffmpeg
         .arg("-i")
         .arg(&oled.file)
-        .args(["-vf", &format!("{fit},transpose=1,fps={fps}")])
+        .args(["-vf", &format!("{upright}{fit},transpose=1,fps={fps}")])
         .args([
             "-r",
             &fps.to_string(),

@@ -405,7 +405,7 @@ textarea.code:focus { outline: 1px solid var(--accent); }
 .oled-stage { display: flex; gap: 24px; align-items: center; padding: 22px; }
 .oled-frame { flex: 1.4; min-width: 0; padding: 14px; border-radius: 22px; background: linear-gradient(180deg, #1d1726, #0f0b14); border: 1px solid var(--line); box-shadow: inset 0 0 0 2px #0a070e, 0 0 40px rgba(139, 61, 255, .12); transition: box-shadow .2s; }
 .oled-frame.previewing { box-shadow: inset 0 0 0 2px #0a070e, 0 0 0 2px rgba(255, 176, 32, .5); }
-.oled-screen { aspect-ratio: 2288 / 1080; background: #000; border-radius: 10px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.oled-screen { position: relative; aspect-ratio: 2288 / 1080; background: #000; border-radius: 10px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
 .oled-screen img, .oled-screen video { width: 100%; height: 100%; display: block; }
 .oled-empty { color: #4a4058; font-size: 13px; text-align: center; padding: 20px; }
 .oled-info { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 260px; }
@@ -481,6 +481,11 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .oled-readouts { position: absolute; inset: 0; pointer-events: none; overflow: hidden; border-radius: 10px; container-type: size; }
 .readout { position: absolute; transform: translate(-50%, -50%); pointer-events: auto; cursor: move; text-align: center; white-space: nowrap; font-family: "Bahnschrift", "Segoe UI", "DejaVu Sans", sans-serif; font-weight: 700; line-height: 1; user-select: none; text-shadow: 0.05em 0.05em 0 rgba(0, 0, 0, .6); padding: 2px 4px; border-radius: 6px; outline: 1px dashed transparent; }
 .readout:hover, .readout.active { outline-color: rgba(255, 255, 255, .45); }
+.readout-value { white-space: pre; line-height: 1.1; }
+#oled-screen .panel-native { position: absolute; left: 50%; top: 50%; width: 47.2%; height: 211.85%; transform: translate(-50%, -50%) rotate(-90deg); object-fit: fill; }
+.readout.video-box { border: 1px dashed rgba(255, 255, 255, .35); border-radius: 0; display: flex; align-items: flex-end; justify-content: flex-start; }
+.readout.video-box .video-label { font: 600 11px/1.2 system-ui, sans-serif; color: rgba(255, 255, 255, .7); background: rgba(0, 0, 0, .55); padding: 3px 6px; margin: 6px; border-radius: 4px; text-shadow: none; }
+.readout.video-box.backdrop { pointer-events: none; }
 .readout-caption { display: block; opacity: .75; margin-bottom: .08em; }
 .readout-size { position: absolute; right: -6px; bottom: -6px; width: 12px; height: 12px; border-radius: 3px; background: var(--accent); cursor: nwse-resize; opacity: 0; }
 .readout:hover .readout-size, .readout.active .readout-size { opacity: 1; }

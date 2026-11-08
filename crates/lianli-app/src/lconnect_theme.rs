@@ -19,9 +19,11 @@ pub struct Imported {
     pub skipped: Vec<String>,
 }
 
-/// The `.template` files under `folder` (a few levels deep).
+/// The theme files (`.template`, `.theme`) under `folder` (a few levels deep).
 pub fn find_templates(folder: &Path) -> Vec<PathBuf> {
-    let mut found = files_under(folder, |e| e.eq_ignore_ascii_case("template"));
+    let mut found = files_under(folder, |e| {
+        e.eq_ignore_ascii_case("template") || e.eq_ignore_ascii_case("theme")
+    });
     found.truncate(300);
     found
 }
@@ -63,21 +65,23 @@ fn files_under(folder: &Path, wanted: impl Fn(&str) -> bool) -> Vec<PathBuf> {
     found
 }
 
-/// The theme's video among `videos`: by the name L-Connect saved it under, or the theme's.
-fn theme_video(root: Node, template: &Path, videos: &BTreeMap<String, PathBuf>) -> Option<PathBuf> {
-    let saved = root
-        .get("videoPath")
+/// A file a theme names by its path on Lian Li's machines, found among `videos` by name.
+fn named_video(root: Node, field: &str, videos: &BTreeMap<String, PathBuf>) -> Option<PathBuf> {
+    let stem = root
+        .get(field)
         .str()
         .and_then(|p| p.rsplit(['\\', '/']).next())
         .and_then(|name| Path::new(name).file_stem())
-        .map(|stem| stem.to_string_lossy().to_lowercase());
-    let own = template
-        .file_stem()
-        .map(|stem| stem.to_string_lossy().to_lowercase());
-    [saved, own]
-        .into_iter()
-        .flatten()
-        .find_map(|stem| videos.get(&stem).cloned())
+        .map(|stem| stem.to_string_lossy().to_lowercase())?;
+    videos.get(&stem).cloned()
+}
+
+/// The theme's background video: by the name L-Connect saved it under, or the theme's.
+fn theme_video(root: Node, template: &Path, videos: &BTreeMap<String, PathBuf>) -> Option<PathBuf> {
+    named_video(root, "videoPath", videos).or_else(|| {
+        let own = template.file_stem()?.to_string_lossy().to_lowercase();
+        videos.get(&own).cloned()
+    })
 }
 
 /// A .NET `System.Drawing.Color`: an ARGB value, or one of the named colors.
@@ -410,9 +414,22 @@ pub fn import(
         (image.x, image.y, image.w, image.h) = (0, 0, 1000, 1000);
         widgets.insert(0, image);
     }
-    widgets.truncate(oled_modules::MAX_MODULES);
 
-    let video = theme_video(root, template, videos);
+    // a theme with an animated overlay (art with transparency) goes over any video; its plain
+    // video is the same art on black
+    let animation = named_video(root, "videoPathAlpha", videos);
+    if let Some(file) = &animation {
+        let mut overlay = base_widget(ModuleKind::Video);
+        overlay.file = file.to_string_lossy().into_owned();
+        (overlay.x, overlay.y, overlay.w, overlay.h) = (0, 0, 1000, 1000);
+        widgets.insert(0, overlay);
+    }
+    widgets.truncate(oled_modules::MAX_MODULES);
+    let video = if animation.is_none() {
+        theme_video(root, template, videos)
+    } else {
+        None
+    };
     // without its video, a still of it, when the theme has one
     let still = video
         .is_none()

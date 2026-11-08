@@ -16,8 +16,9 @@ const READOUT_KINDS = {
   text: { name: "Text", label: "" },
   bar: { name: "Bar", label: "" },
   image: { name: "Picture", label: "" },
+  video: { name: "Animated overlay", label: "" },
 };
-const BOXED = new Set(["bar", "image"]);
+const BOXED = new Set(["bar", "image", "video"]);
 const readoutNumberKinds = new Set(["coolant", "cpu_temp", "pump", "gpu_temp", "gpu_load", "fans", "cpu_load", "ram_load", "gpu_power", "gpu_clock"]);
 const ANCHOR_SHIFT = { center: "translate(-50%, -50%)", top_left: "none", top_center: "translate(-50%, 0)", top_right: "translate(-100%, 0)" };
 const ANCHOR_ALIGN = { center: "center", top_left: "left", top_center: "center", top_right: "right" };
@@ -270,10 +271,11 @@ function drawWidgetLayer() {
     let body;
     if (m.kind === "image") body = [el("img", { class: "widget-image", src: m.file ? assetUrl(m.file) : "", alt: "", draggable: "false" })];
     else if (m.kind === "bar") body = [el("div", { class: "widget-bar" })];
+    else if (m.kind === "video") body = [el("span", { class: "video-label" }, `Animated overlay · ${(m.file || "").split(/[\\/]/).pop()} (plays on the screen)`)];
     else body = [m.label ? el("span", { class: "readout-caption" }, m.label) : null, el("span", { class: "readout-value" }, readoutValue(m))];
     // a picture over the whole screen (an imported theme's frames) mustn't catch drags meant for the widgets on it
-    const backdrop = m.kind === "image" && m.w >= 1000 && m.h >= 1000;
-    const classes = "readout" + (BOXED.has(m.kind) ? " boxed" : "") + (backdrop ? " backdrop" : "") + (i === readouts.active ? " active" : "");
+    const backdrop = (m.kind === "image" || m.kind === "video") && m.w >= 1000 && m.h >= 1000;
+    const classes = "readout" + (BOXED.has(m.kind) ? " boxed" : "") + (m.kind === "video" ? " video-box" : "") + (backdrop ? " backdrop" : "") + (i === readouts.active ? " active" : "");
     const node = el("div", { class: classes, title: "Drag to move", "data-index": String(i) }, [
       ...body,
       el("span", { class: "readout-size", title: "Drag to resize" }),
@@ -351,7 +353,7 @@ function drawWidgetList() {
       source.addEventListener("change", () => { m.source = source.value; update(); });
       extra.push(source);
     }
-    if (m.kind === "image") extra.push(el("span", { class: "muted small grow" }, (m.file || "").split(/[\\/]/).pop()));
+    if (m.kind === "image" || m.kind === "video") extra.push(el("span", { class: "muted small grow" }, (m.file || "").split(/[\\/]/).pop()));
     if (m.kind === "text") {
       const text = el("input", { type: "text", class: "text", placeholder: "Text to show", value: m.text || "" });
       text.addEventListener("input", () => { m.text = text.value; update(); });
@@ -383,7 +385,7 @@ function drawWidgetList() {
       ...extra,
       boxed ? null : label,
       boxed ? null : font,
-      m.kind === "image" ? null : color,
+      m.kind === "image" || m.kind === "video" ? null : color,
       advanced,
       remove,
     ].filter(Boolean));

@@ -122,6 +122,8 @@ fn thumb_path(file: &Path, modified: u64) -> PathBuf {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     file.hash(&mut hasher);
     modified.hash(&mut hasher);
+    // thumbnails from before panel-native videos were turned upright are made again
+    2u8.hash(&mut hasher);
     thumb_dir().join(format!("{:016x}.jpg", hasher.finish()))
 }
 
@@ -180,10 +182,11 @@ pub fn make_thumbnails(items: &[LibraryItem], ffmpeg: &Path) -> usize {
     for item in items.iter().filter(|i| !i.image && i.thumb.is_none()) {
         let target = thumb_path(Path::new(&item.path), item.modified);
         let mut command = std::process::Command::new(ffmpeg);
+        let scale = format!("{}scale=360:-2", upright(Path::new(&item.path)));
         command
             .args(["-v", "error", "-y", "-ss", "1", "-i"])
             .arg(&item.path)
-            .args(["-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "5"]);
+            .args(["-frames:v", "1", "-vf", &scale, "-q:v", "5"]);
         command.arg(&target);
         #[cfg(windows)]
         {
@@ -197,7 +200,7 @@ pub fn make_thumbnails(items: &[LibraryItem], ffmpeg: &Path) -> usize {
             retry
                 .args(["-v", "error", "-y", "-i"])
                 .arg(&item.path)
-                .args(["-frames:v", "1", "-vf", "scale=360:-2", "-q:v", "5"])
+                .args(["-frames:v", "1", "-vf", &scale, "-q:v", "5"])
                 .arg(&target);
             #[cfg(windows)]
             {
@@ -211,6 +214,66 @@ pub fn make_thumbnails(items: &[LibraryItem], ffmpeg: &Path) -> usize {
         }
     }
     made
+}
+
+/// The size of a video's or picture's first video stream, as ffmpeg reports it.
+fn video_size(file: &Path) -> Option<(u32, u32)> {
+    let mut command = std::process::Command::new(ffmpeg());
+    command.args(["-hide_banner", "-i"]).arg(file);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let output = command.output().ok()?;
+    let info = String::from_utf8_lossy(&output.stderr);
+    parse_video_size(&info)
+}
+
+fn parse_video_size(info: &str) -> Option<(u32, u32)> {
+    let line = info
+        .lines()
+        .find(|l| l.contains("Stream") && l.contains("Video:"))?;
+    line.split([',', ' '])
+        .filter_map(|word| {
+            let (w, h) = word.split_once('x')?;
+            Some((w.parse().ok()?, h.parse().ok()?))
+        })
+        .find(|&(w, h): &(u32, u32)| w >= 16 && h >= 16)
+}
+
+/// L-Connect keeps some videos the way the screen's panel sits: 1080 × 2288, the upright
+/// picture turned a quarter clockwise. Those need turning back before the usual landscape fit.
+pub fn panel_native(file: &Path) -> bool {
+    static KNOWN: parking_lot::Mutex<Option<std::collections::HashMap<PathBuf, (u64, bool)>>> =
+        parking_lot::Mutex::new(None);
+    let modified = std::fs::metadata(file)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    if let Some(&(at, native)) = KNOWN.lock().get_or_insert_with(Default::default).get(file) {
+        if at == modified {
+            return native;
+        }
+    }
+    let native = video_size(file) == Some((1080, 2288));
+    let mut known = KNOWN.lock();
+    let known = known.get_or_insert_with(Default::default);
+    if known.len() > 2000 {
+        known.clear();
+    }
+    known.insert(file.to_path_buf(), (modified, native));
+    native
+}
+
+/// The filter that turns a panel-native video upright, ending in a comma, or nothing.
+pub fn upright(file: &Path) -> &'static str {
+    if panel_native(file) {
+        "transpose=2,"
+    } else {
+        ""
+    }
 }
 
 /// ffmpeg from PATH, or the one OLEDable's installer set up.
@@ -232,6 +295,18 @@ pub fn thumbs_folder() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_video_size_from_ffmpeg() {
+        let info = "  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(progressive), 1080x2288 [SAR 1:1 DAR 135:286], 2120 kb/s, 30 fps\n";
+        assert_eq!(parse_video_size(info), Some((1080, 2288)));
+        let mov = "  Stream #0:0: Video: qtrle (rle  / 0x20656C72), argb(progressive), 166x360, 6094 kb/s, 60 fps";
+        assert_eq!(parse_video_size(mov), Some((166, 360)));
+        assert_eq!(
+            parse_video_size("  Stream #0:1: Audio: aac, 48000 Hz"),
+            None
+        );
+    }
 
     #[test]
     fn lists_media_newest_first_and_skips_other_files() {
