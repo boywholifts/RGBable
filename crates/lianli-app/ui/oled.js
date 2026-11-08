@@ -102,7 +102,7 @@ function renderOled(state, initial) {
     $("#oled-fps").value = String(state.fps);
   }
   const match = last && last.oled_match;
-  $("#oled-match-status").textContent = (last && last.oled_match_status) || "";
+  showMatchStatus((last && last.oled_match_status) || "");
   $("#oled-match").checked = !!match;
   if (match) $("#oled-match-count").value = String(match);
   if (state.file !== oled.current) {
@@ -244,3 +244,15 @@ $("#oled-match-now").addEventListener("click", async () => {
     refresh();
   }
 });
+
+/// The match status with each picked color shown as a chip instead of its hex code.
+function showMatchStatus(text) {
+  const parts = text.split(/(#[0-9a-f]{6})/i).filter(Boolean);
+  $("#oled-match-status").replaceChildren(...parts.map((part) => {
+    if (!/^#[0-9a-f]{6}$/i.test(part)) return part.replace(/\s+$/, " ");
+    const chip = el("span", { class: "color-chip", title: part });
+    chip.style.background = part;
+    chip.style.boxShadow = `0 0 8px ${part}`;
+    return chip;
+  }));
+}

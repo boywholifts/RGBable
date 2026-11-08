@@ -136,8 +136,17 @@ pub fn pick(pixels: &[[u8; 3]], count: usize) -> Vec<[u8; 3]> {
                 merged.saturation += bins[i].saturation;
             }
         }
-        let hue = merged.sin.atan2(merged.cos) / std::f32::consts::TAU;
-        let saturation = (merged.saturation / merged.weight).max(0.75);
+        // the hue of the peak itself: its neighbors (orange highlights on a red glow) would
+        // pull it off
+        let hue = bins[best].sin.atan2(bins[best].cos) / std::f32::consts::TAU;
+        // a nearly pure color is made pure: the last few percent of the other channels turn
+        // a red glow pink on LEDs
+        let saturation = merged.saturation / merged.weight;
+        let saturation = if saturation >= 0.8 {
+            1.0
+        } else {
+            saturation.max(0.75)
+        };
         picked.push((from_hsv(hue, saturation), merged.weight));
     }
 
@@ -164,9 +173,13 @@ mod tests {
         pixels.extend(vec![[255, 120, 60]; 40]);
         pixels.extend(vec![[255, 235, 225]; 60]);
         let colors = pick(&pixels, 1);
-        let (hue, saturation, value) = hsv(colors[0]);
+        let (hue, _, _) = hsv(colors[0]);
         assert!(!(0.04..0.96).contains(&hue), "not red: {colors:?}");
-        assert!(saturation > 0.8 && value > 0.99, "washed out: {colors:?}");
+        let [r, g, b] = colors[0];
+        assert!(
+            r == 255 && g < 40 && b == 0,
+            "washed out or pinkish: {colors:?}"
+        );
     }
 
     #[test]
