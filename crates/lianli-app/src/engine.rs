@@ -824,8 +824,20 @@ impl Engine {
                     }
                 }
 
+                let prepare = |level: u8| {
+                    let (delay, span, turn) = self
+                        .config()
+                        .devices
+                        .get(&ctl.id)
+                        .map_or((0, None, None), |d| (d.delay_ms, d.span, d.turn));
+                    prepare_lighting(wireless, ctl, &mac, level, delay, span, turn)
+                };
                 let (upload, sends) = match resend {
-                    Some((Some(upload), sends)) if !dirty => (Ok(upload), sends),
+                    // prepared again rather than re-sent as is: the loop's starting point
+                    // depends on when it lands, and a stale one puts the device out of step
+                    Some((Some(_), sends)) if !dirty => {
+                        (prepare(shrink.get(&mac).copied().unwrap_or(0)), sends)
+                    }
                     _ => {
                         ctl.dirty.store(false, Ordering::Release);
                         ctl.settled.store(false, Ordering::Release);
@@ -834,16 +846,7 @@ impl Engine {
                         if dirty {
                             shrink.remove(&mac);
                         }
-                        let level = shrink.get(&mac).copied().unwrap_or(0);
-                        let (delay, span, turn) = self
-                            .config()
-                            .devices
-                            .get(&ctl.id)
-                            .map_or((0, None, None), |d| (d.delay_ms, d.span, d.turn));
-                        (
-                            prepare_lighting(wireless, ctl, &mac, level, delay, span, turn),
-                            0,
-                        )
+                        (prepare(shrink.get(&mac).copied().unwrap_or(0)), 0)
                     }
                 };
                 let result = upload.and_then(|u| wireless.send_rgb_upload(&mac, &u, 4).map(|()| u));
