@@ -488,9 +488,32 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .readouts-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .readouts-head h2 { margin: 0 0 4px; }
 .readout-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
-.readout-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 10px; background: var(--card-hi); border: 1px solid transparent; }
+.readout-row { display: flex; flex-direction: column; gap: 10px; padding: 8px 12px; border-radius: 10px; background: var(--card-hi); border: 1px solid transparent; }
+.readout-row-main { display: flex; align-items: center; gap: 10px; }
+.readout-adv { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px 18px; padding: 4px 2px 6px; }
+.adv-field { display: flex; align-items: center; gap: 8px; }
+.adv-field > span:first-child { width: 92px; flex: none; }
+.adv-field input[type=range] { flex: 1; }
+.adv-field .num { width: 64px; padding: 4px 6px; }
+.widget-font { max-width: 170px; }
+.widget-actions { gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.snap-line { position: absolute; background: rgba(255, 64, 160, .85); pointer-events: none; }
+.snap-line.v { top: 0; bottom: 0; width: 1px; }
+.snap-line.h { left: 0; right: 0; height: 1px; }
+.snap-line[hidden] { display: none; }
 .readout-row.active { border-color: var(--accent); }
 .readout-row .kind { width: 150px; flex: none; font-weight: 600; }
 .readout-row input[type=text] { flex: 1; min-width: 0; }
 .readout-row input[type=color] { width: 36px; height: 28px; padding: 0; border: none; background: none; flex: none; }
 .readout-row .spacer { flex: 1; }
+
+@font-face { font-family: "w-orbitron"; src: url("fonts/Orbitron.ttf"); font-weight: 100 900; font-variation-settings: "wght" 700; }
+@font-face { font-family: "w-oxanium"; src: url("fonts/Oxanium.ttf"); font-weight: 100 900; font-variation-settings: "wght" 700; }
+@font-face { font-family: "w-rajdhani"; src: url("fonts/Rajdhani-Bold.ttf"); font-weight: 100 900; font-variation-settings: "wght" 400; }
+@font-face { font-family: "w-chakra"; src: url("fonts/ChakraPetch-Bold.ttf"); font-weight: 100 900; font-variation-settings: "wght" 400; }
+@font-face { font-family: "w-russo"; src: url("fonts/RussoOne-Regular.ttf"); font-weight: 100 900; font-variation-settings: "wght" 400; }
+@font-face { font-family: "w-audiowide"; src: url("fonts/Audiowide-Regular.ttf"); font-weight: 100 900; font-variation-settings: "wght" 400; }
+@font-face { font-family: "w-bebas"; src: url("fonts/BebasNeue-Regular.ttf"); font-weight: 100 900; font-variation-settings: "wght" 400; }
+@font-face { font-family: "w-techmono"; src: url("fonts/ShareTechMono-Regular.ttf"); font-weight: 100 900; font-variation-settings: "wght" 400; }
+@font-face { font-family: "w-monoton"; src: url("fonts/Monoton-Regular.ttf"); font-weight: 100 900; font-variation-settings: "wght" 400; }
+@font-face { font-family: "w-pixel"; src: url("fonts/PressStart2P-Regular.ttf"); font-weight: 100 900; font-variation-settings: "wght" 400; }

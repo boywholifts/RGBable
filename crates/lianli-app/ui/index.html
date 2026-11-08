@@ -163,20 +163,24 @@
       <div class="card readouts-card">
         <div class="readouts-head">
           <div>
-            <h2>Readouts</h2>
-            <p class="muted small" id="readouts-hint">Live info drawn over the video, like the time or your coolant temperature. Drag them on the preview to move them and drag a corner to resize.</p>
+            <h2>Widgets</h2>
+            <p class="muted small">Live info drawn over the video, like the time or your coolant temperature. Drag them on the preview (they snap to the center and to each other; hold Alt to place freely), drag a corner to resize, then Apply to send them to the screen.</p>
           </div>
-          <select id="readout-add">
-            <option value="">Add a readout…</option>
-            <option value="clock">Clock</option>
-            <option value="date">Date</option>
-            <option value="coolant">Coolant temperature</option>
-            <option value="pump">Pump speed</option>
-            <option value="gpu_temp">GPU temperature</option>
-            <option value="gpu_load">GPU load</option>
-            <option value="fans">Fan speed</option>
-            <option value="text">Text</option>
-          </select>
+          <div class="row widget-actions">
+            <select id="readout-add">
+              <option value="">Add a widget…</option>
+              <option value="clock">Clock</option>
+              <option value="date">Date</option>
+              <option value="coolant">Coolant temperature</option>
+              <option value="pump">Pump speed</option>
+              <option value="gpu_temp">GPU temperature</option>
+              <option value="gpu_load">GPU load</option>
+              <option value="fans">Fan speed</option>
+              <option value="text">Text</option>
+            </select>
+            <button class="btn" id="widgets-discard" disabled>Discard</button>
+            <button class="btn primary" id="widgets-apply" disabled>Apply</button>
+          </div>
         </div>
         <div class="readout-list" id="readout-list"></div>
       </div>

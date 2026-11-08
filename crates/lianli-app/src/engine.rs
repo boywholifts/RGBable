@@ -38,7 +38,7 @@ pub struct Config {
     pub oled_ring: Option<[u8; 3]>,
     #[serde(default)]
     pub oled: Option<OledConfig>,
-    /// Readouts drawn over each screen video, by the video's path.
+    /// Widgets drawn over each screen video, by the video's path.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub oled_modules: BTreeMap<String, Vec<OledModule>>,
     /// OpenRGB SDK server to read RAM / GPU / motherboard lighting from.
@@ -283,6 +283,7 @@ pub struct Engine {
     last_coolant: RwLock<Option<(u8, Instant)>>,
     oled_state: RwLock<String>,
     oled_stop: Mutex<Arc<AtomicBool>>,
+    oled_thread: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl Engine {
@@ -299,6 +300,7 @@ impl Engine {
             last_coolant: RwLock::new(None),
             oled_state: RwLock::new("Off".into()),
             oled_stop: Mutex::new(Arc::new(AtomicBool::new(false))),
+            oled_thread: Mutex::new(None),
         })
     }
 
@@ -957,10 +959,22 @@ impl Engine {
         let previous = std::mem::replace(&mut *self.oled_stop.lock(), stop.clone());
         previous.store(true, Ordering::Release);
         let engine = self.clone();
-        thread::Builder::new()
-            .name("oled-video".into())
-            .spawn(move || engine.oled_loop(&oled, &stop))
-            .expect("spawn oled thread");
+        let mut thread = self.oled_thread.lock();
+        let before = thread.take();
+        // the screen takes one stream at a time: the new one waits for the old one to let go
+        *thread = Some(
+            thread::Builder::new()
+                .name("oled-video".into())
+                .spawn(move || {
+                    if let Some(before) = before {
+                        let _ = before.join();
+                    }
+                    if !stop.load(Ordering::Acquire) {
+                        engine.oled_loop(&oled, &stop);
+                    }
+                })
+                .expect("spawn oled thread"),
+        );
     }
 
     // -------------------------------------------------------------- workers
@@ -1232,7 +1246,7 @@ impl Engine {
         }
     }
 
-    /// What the screen's readouts show right now.
+    /// What the screen's widgets show right now.
     pub fn readings(&self, gpu: Option<&mut oled_modules::Gpu>) -> Readings {
         let telemetry = self.telemetry.read().clone();
         let rpms: Vec<u32> = self
@@ -1318,7 +1332,7 @@ impl Engine {
 }
 
 impl Engine {
-    /// Plays the video with its readouts drawn on, encoding it as it plays: one ffmpeg reads
+    /// Plays the video with its widgets drawn on, encoding it as it plays: one ffmpeg reads
     /// the video and an overlay image this sends once a second, and its output goes straight
     /// to the screen.
     fn oled_live_loop(&self, oled: &OledConfig, modules: &[OledModule], stop: &AtomicBool) {
@@ -1342,7 +1356,7 @@ impl Engine {
                 if let Ok(output) = finished.as_ref() {
                     let errors = String::from_utf8_lossy(&output.stderr);
                     if !errors.trim().is_empty() && !stop.load(Ordering::Acquire) {
-                        warn!("ffmpeg (screen readouts): {}", errors.trim());
+                        warn!("ffmpeg (screen widgets): {}", errors.trim());
                     }
                 }
                 streamed
@@ -1351,14 +1365,14 @@ impl Engine {
                 break;
             }
             if let Err(e) = result {
-                warn!("OLED stream with readouts stopped: {e:#}; retrying in 5 s");
+                warn!("OLED stream with widgets stopped: {e:#}; retrying in 5 s");
                 *self.oled_state.write() = "Reconnecting".into();
             }
             thread::sleep(Duration::from_secs(5));
         }
     }
 
-    /// Sends ffmpeg the readouts as an upright overlay frame once a second until stopped or
+    /// Sends ffmpeg the widgets as an upright overlay frame once a second until stopped or
     /// ffmpeg goes away. The frames' timing is what paces the video to real time.
     fn feed_overlay(
         &self,
@@ -1439,7 +1453,7 @@ fn live_ffmpeg(oled: &OledConfig) -> Result<std::process::Child> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
     no_window(&mut ffmpeg);
-    info!("Playing {} on the OLED with readouts", oled.file.display());
+    info!("Playing {} on the OLED with widgets", oled.file.display());
     ffmpeg
         .spawn()
         .context("running ffmpeg (install it with: winget install Gyan.FFmpeg)")

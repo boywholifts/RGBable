@@ -1,7 +1,10 @@
-//! Live readouts (clock, temperatures, speeds) drawn over the HydroShift screen's video.
+//! Widgets (clock, temperatures, speeds, text) drawn over the HydroShift screen's video.
 
-use ab_glyph::{Font, FontVec, PxScale, ScaleFont};
+use ab_glyph::{Font, FontVec, PxScale, ScaleFont, VariableFont};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
@@ -46,6 +49,27 @@ pub struct OledModule {
     pub text: String,
     #[serde(default)]
     pub hour12: bool,
+    /// One of `FONTS`' ids, `file:` and a font file's path, or empty for the default.
+    #[serde(default)]
+    pub font: String,
+    /// Percent.
+    #[serde(default = "full")]
+    pub opacity: u8,
+    #[serde(default = "yes")]
+    pub shadow: bool,
+    /// The caption's height as a percentage of the value's.
+    #[serde(default = "caption_scale")]
+    pub caption_scale: u8,
+}
+
+fn full() -> u8 {
+    100
+}
+fn yes() -> bool {
+    true
+}
+fn caption_scale() -> u8 {
+    38
 }
 
 impl OledModule {
@@ -55,7 +79,112 @@ impl OledModule {
         self.size = self.size.clamp(20, 600);
         self.label = self.label.chars().take(40).collect();
         self.text = self.text.chars().take(60).collect();
+        self.opacity = self.opacity.clamp(10, 100);
+        self.caption_scale = self.caption_scale.clamp(15, 100);
         self
+    }
+}
+
+/// Fonts that come with RGBable, all under the SIL Open Font License (see ui/fonts), with the
+/// weight variable ones are drawn at.
+pub const FONTS: &[(&str, &str, &[u8], Option<f32>)] = &[
+    (
+        "orbitron",
+        "Orbitron",
+        include_bytes!("../ui/fonts/Orbitron.ttf"),
+        Some(700.0),
+    ),
+    (
+        "oxanium",
+        "Oxanium",
+        include_bytes!("../ui/fonts/Oxanium.ttf"),
+        Some(700.0),
+    ),
+    (
+        "rajdhani",
+        "Rajdhani",
+        include_bytes!("../ui/fonts/Rajdhani-Bold.ttf"),
+        None,
+    ),
+    (
+        "chakra",
+        "Chakra Petch",
+        include_bytes!("../ui/fonts/ChakraPetch-Bold.ttf"),
+        None,
+    ),
+    (
+        "russo",
+        "Russo One",
+        include_bytes!("../ui/fonts/RussoOne-Regular.ttf"),
+        None,
+    ),
+    (
+        "audiowide",
+        "Audiowide",
+        include_bytes!("../ui/fonts/Audiowide-Regular.ttf"),
+        None,
+    ),
+    (
+        "bebas",
+        "Bebas Neue",
+        include_bytes!("../ui/fonts/BebasNeue-Regular.ttf"),
+        None,
+    ),
+    (
+        "techmono",
+        "Share Tech Mono",
+        include_bytes!("../ui/fonts/ShareTechMono-Regular.ttf"),
+        None,
+    ),
+    (
+        "monoton",
+        "Monoton",
+        include_bytes!("../ui/fonts/Monoton-Regular.ttf"),
+        None,
+    ),
+    (
+        "pixel",
+        "Press Start 2P",
+        include_bytes!("../ui/fonts/PressStart2P-Regular.ttf"),
+        None,
+    ),
+];
+
+/// Font files that came with L-Connect, so its widgets' looks can be reused. They stay where
+/// L-Connect put them and are only read.
+pub fn lconnect_fonts() -> Vec<PathBuf> {
+    let program_files = [
+        std::env::var("ProgramFiles").unwrap_or_else(|_| r"C:\Program Files".into()),
+        std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| r"C:\Program Files (x86)".into()),
+    ];
+    let mut found = Vec::new();
+    for base in program_files {
+        for dir in [r"LIAN LI\L-Connect 3", "L-Connect 3", r"LIAN LI\L-Connect"] {
+            collect_fonts(&Path::new(&base).join(dir), 6, &mut found);
+        }
+    }
+    found.sort();
+    found.dedup();
+    found.truncate(200);
+    found
+}
+
+fn collect_fonts(dir: &Path, depth: u8, found: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if depth > 0 {
+                collect_fonts(&path, depth - 1, found);
+            }
+        } else if path
+            .extension()
+            .is_some_and(|e| e.eq_ignore_ascii_case("ttf") || e.eq_ignore_ascii_case("otf"))
+        {
+            found.push(path);
+        }
     }
 }
 
@@ -75,7 +204,7 @@ pub fn value(
 ) -> String {
     let or_dash = |v: Option<String>| v.unwrap_or_else(|| "–".into());
     match module.kind {
-        ModuleKind::Clock if module.hour12 => now.format("%-I:%M").to_string(),
+        ModuleKind::Clock if module.hour12 => now.format("%-I:%M %p").to_string(),
         ModuleKind::Clock => now.format("%H:%M").to_string(),
         ModuleKind::Date => now.format("%a %b %-d").to_string(),
         ModuleKind::Coolant => or_dash(readings.coolant_c.map(|c| format!("{c}°C"))),
@@ -87,8 +216,8 @@ pub fn value(
     }
 }
 
-fn font() -> Option<&'static FontVec> {
-    static FONT: OnceLock<Option<FontVec>> = OnceLock::new();
+fn default_font() -> Option<Arc<FontVec>> {
+    static FONT: OnceLock<Option<Arc<FontVec>>> = OnceLock::new();
     FONT.get_or_init(|| {
         let windows = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
         let candidates = [
@@ -96,13 +225,46 @@ fn font() -> Option<&'static FontVec> {
             format!(r"{windows}\Fonts\segoeuib.ttf"),
             format!(r"{windows}\Fonts\arialbd.ttf"),
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf".into(),
-            "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf".into(),
         ];
         candidates
             .iter()
             .find_map(|path| FontVec::try_from_vec(std::fs::read(path).ok()?).ok())
+            .or_else(|| bundled("rajdhani"))
+            .map(Arc::new)
     })
-    .as_ref()
+    .clone()
+}
+
+fn bundled(id: &str) -> Option<FontVec> {
+    let (_, _, bytes, weight) = FONTS.iter().find(|f| f.0 == id)?;
+    let mut font = FontVec::try_from_vec(bytes.to_vec()).ok()?;
+    if let Some(weight) = weight {
+        font.set_variation(b"wght", *weight);
+    }
+    Some(font)
+}
+
+/// The font a widget asked for, loaded once; the default if it can't be had.
+fn font(id: &str) -> Option<Arc<FontVec>> {
+    static LOADED: parking_lot::Mutex<BTreeMap<String, Option<Arc<FontVec>>>> =
+        parking_lot::Mutex::new(BTreeMap::new());
+    if id.is_empty() {
+        return default_font();
+    }
+    let loaded = LOADED
+        .lock()
+        .entry(id.to_string())
+        .or_insert_with(|| {
+            let font = match id.strip_prefix("file:") {
+                Some(path) => std::fs::read(path)
+                    .ok()
+                    .and_then(|b| FontVec::try_from_vec(b).ok()),
+                None => bundled(id),
+            };
+            font.map(Arc::new)
+        })
+        .clone();
+    loaded.or_else(default_font)
 }
 
 /// Every module drawn onto a transparent landscape frame, as straight RGBA.
@@ -112,16 +274,17 @@ pub fn render(
     now: chrono::DateTime<chrono::Local>,
 ) -> Vec<u8> {
     let mut frame = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
-    let Some(font) = font() else {
-        return frame;
-    };
     for module in modules {
+        let Some(font) = font(&module.font) else {
+            continue;
+        };
         let size = f32::from(module.size) / 1000.0 * HEIGHT as f32;
         let x = f32::from(module.x) / 1000.0 * WIDTH as f32;
         let y = f32::from(module.y) / 1000.0 * HEIGHT as f32;
+        let opacity = f32::from(module.opacity.clamp(10, 100)) / 100.0;
         let text = value(module, readings, now);
         let caption = module.label.trim();
-        let caption_size = size * 0.38;
+        let caption_size = size * f32::from(module.caption_scale) / 100.0;
         let gap = size * 0.08;
         let total = if caption.is_empty() {
             size
@@ -130,11 +293,19 @@ pub fn render(
         };
         let top = y - total / 2.0;
         let shadow = (size / 22.0).max(2.0);
+        let layers = |alpha: f32| {
+            let mut layers = Vec::new();
+            if module.shadow {
+                layers.push((shadow, [0, 0, 0], 0.6 * alpha));
+            }
+            layers.push((0.0, module.color, alpha));
+            layers
+        };
         if !caption.is_empty() {
-            for (offset, color, alpha) in [(shadow, [0, 0, 0], 0.55), (0.0, module.color, 0.75)] {
+            for (offset, color, alpha) in layers(0.75 * opacity) {
                 draw_text(
                     &mut frame,
-                    font,
+                    &font,
                     caption,
                     caption_size,
                     x + offset,
@@ -149,10 +320,10 @@ pub fn render(
         } else {
             top + caption_size + gap
         };
-        for (offset, color, alpha) in [(shadow, [0, 0, 0], 0.6), (0.0, module.color, 1.0)] {
+        for (offset, color, alpha) in layers(opacity) {
             draw_text(
                 &mut frame,
-                font,
+                &font,
                 &text,
                 size,
                 x + offset,
@@ -293,6 +464,10 @@ mod tests {
             label: String::new(),
             text: "Hi".into(),
             hour12: false,
+            font: String::new(),
+            opacity: 100,
+            shadow: true,
+            caption_scale: 38,
         }
     }
 
@@ -309,6 +484,13 @@ mod tests {
         assert_eq!(value(&module(ModuleKind::Pump), &readings, now), "–");
         assert_eq!(value(&module(ModuleKind::Text), &readings, now), "Hi");
         assert_eq!(value(&module(ModuleKind::Clock), &readings, now).len(), 5);
+    }
+
+    #[test]
+    fn every_bundled_font_loads() {
+        for (id, ..) in FONTS {
+            assert!(bundled(id).is_some(), "{id}");
+        }
     }
 
     #[test]

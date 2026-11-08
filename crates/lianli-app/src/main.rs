@@ -541,7 +541,38 @@ fn set_oled_modules(
     state.engine.set_oled_modules(file, modules);
 }
 
-/// Live readout values for the screen editor's preview.
+#[derive(serde::Serialize)]
+struct WidgetFont {
+    id: String,
+    name: String,
+    /// A font file found on this PC, which the editor loads to preview it.
+    file: Option<String>,
+}
+
+/// The fonts widgets can use: RGBable's own, then any that came with L-Connect.
+#[tauri::command(async)]
+fn widget_fonts(app: AppHandle) -> Vec<WidgetFont> {
+    let own = oled_modules::FONTS.iter().map(|(id, name, ..)| WidgetFont {
+        id: (*id).to_string(),
+        name: (*name).to_string(),
+        file: None,
+    });
+    let lconnect = oled_modules::lconnect_fonts().into_iter().map(|path| {
+        let _ = app.asset_protocol_scope().allow_file(&path);
+        let stem = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        WidgetFont {
+            id: format!("file:{}", path.display()),
+            name: format!("{stem} (L-Connect)"),
+            file: Some(path.to_string_lossy().into_owned()),
+        }
+    });
+    own.chain(lconnect).collect()
+}
+
+/// Live widget values for the screen editor's preview.
 #[tauri::command(async)]
 fn oled_readings(state: State<'_, AppState>) -> oled_modules::Readings {
     static GPU: std::sync::OnceLock<parking_lot::Mutex<oled_modules::Gpu>> =
@@ -1122,6 +1153,7 @@ fn main() {
             set_fan_mode,
             set_oled_modules,
             oled_readings,
+            widget_fonts,
             set_all_fan_modes,
             set_pump_mode,
             select_fan_profile,
