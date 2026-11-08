@@ -4,6 +4,7 @@
 
 mod effects;
 mod engine;
+mod fans;
 mod lights;
 mod oled_library;
 mod openrgb;
@@ -524,6 +525,11 @@ fn set_warmth(state: State<'_, AppState>, warmth: i8) {
 }
 
 #[tauri::command(async)]
+fn set_fan_mode(state: State<'_, AppState>, id: String, mode: fans::FanMode) {
+    state.engine.set_fan_mode(&id, mode);
+}
+
+#[tauri::command(async)]
 fn set_autostart(enabled: bool) -> Result<(), String> {
     set_autostart_impl(enabled).map_err(|e| format!("{e:#}"))?;
     AUTOSTART
@@ -1035,6 +1041,7 @@ fn main() {
             set_sequence,
             set_across,
             set_warmth,
+            set_fan_mode,
             set_clean_transitions,
             set_reverse,
             oled_palette,

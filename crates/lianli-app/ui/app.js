@@ -156,21 +156,6 @@ async function reconnect() {
 }
 
 
-// ---------------------------------------------------------------- monitor
-
-function renderMonitor(o) {
-  $("#m-pump").textContent = o.telemetry.pump_rpm ?? "–";
-  $("#m-coolant").textContent = o.telemetry.coolant_c ?? "–";
-  const grid = $("#m-fans");
-  grid.replaceChildren();
-  for (const d of o.devices.filter((d) => d.kind === "fans")) {
-    grid.append(el("div", { class: "card" }, [
-      el("div", { class: "card-title" }, d.name),
-      el("div", { class: "fanrow" }, d.rpm.map((r) => el("span", {}, `${r} rpm`))),
-    ]));
-  }
-}
-
 // ---------------------------------------------------------------- settings
 
 $("#autostart").addEventListener("change", (e) =>

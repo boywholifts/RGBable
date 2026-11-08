@@ -150,6 +150,25 @@ select { background: var(--bg); color: var(--text); border: 1px solid var(--line
 .stat-unit { color: var(--muted); font-size: 12px; }
 .fanrow { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
 .fanrow span { white-space: nowrap; background: var(--bg); border-radius: 8px; padding: 6px 8px; font-variant-numeric: tabular-nums; font-size: 13px; }
+.fan-card { display: flex; flex-direction: column; gap: 12px; }
+.fan-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.fan-head .btn { white-space: nowrap; flex-shrink: 0; }
+.fan-head .card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fan-card .fanrow { margin-top: 0; }
+.fan-fixed { display: flex; align-items: center; gap: 12px; }
+.fan-fixed input[type=range] { flex: 1; width: auto; }
+.fan-value { min-width: 44px; text-align: right; font-variant-numeric: tabular-nums; }
+.fan-curve-wrap { position: relative; }
+.fan-curve { width: 100%; height: auto; display: block; touch-action: none; }
+.fan-curve .grid-line { stroke: var(--line); stroke-width: 1; }
+.fan-curve .axis { fill: var(--muted); font-size: 10px; }
+.fan-curve .floor { fill: var(--muted); opacity: .08; }
+.fan-curve .curve { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; }
+.fan-curve .handle { fill: var(--card-hi); stroke: var(--accent); stroke-width: 2.5; cursor: grab; }
+.fan-curve .handle:active { cursor: grabbing; }
+.fan-curve .now { stroke: var(--ok); stroke-width: 1.5; stroke-dasharray: 3 3; }
+.fan-readout { position: absolute; top: 4px; left: 36px; font-variant-numeric: tabular-nums; }
+#m-fans { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
 
 /* settings toggle */
 .toggle-row { display: flex; justify-content: space-between; align-items: center; gap: 20px; cursor: pointer; }

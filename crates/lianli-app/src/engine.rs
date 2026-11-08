@@ -3,6 +3,7 @@
 //! talks to it through `Engine`'s methods.
 
 use crate::effects::{Effect, Side};
+use crate::fans::{self, Decision, FanMode};
 use crate::render::{self, Lighting};
 use anyhow::{bail, Context, Result};
 use lianli_devices::winusb::hs2_oled_led::Hs2OledLedController;
@@ -71,6 +72,9 @@ pub struct Config {
     /// White balance, -50 (cooler) to 50 (warmer).
     #[serde(default, skip_serializing_if = "is_zero_i8")]
     pub warmth: i8,
+    /// Wireless fan devices by id; a missing entry follows the motherboard.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fans: BTreeMap<String, FanMode>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -173,6 +177,9 @@ pub struct DeviceView {
     pub leds: usize,
     pub color: Option<[u8; 3]>,
     pub rpm: Vec<u16>,
+    /// Current speed of each fan, in percent.
+    pub speed: Vec<u8>,
+    pub fan_mode: FanMode,
     pub effect: Option<Effect>,
     pub outer_effect: Option<Effect>,
     pub sides: bool,
@@ -233,6 +240,7 @@ pub struct Engine {
     ring: RwLock<Option<Arc<Hs2OledLedController>>>,
     controllers: RwLock<Vec<Arc<Controller>>>,
     telemetry: RwLock<Telemetry>,
+    last_coolant: RwLock<Option<(u8, Instant)>>,
     oled_state: RwLock<String>,
     oled_stop: Mutex<Arc<AtomicBool>>,
 }
@@ -248,6 +256,7 @@ impl Engine {
             ring: RwLock::new(None),
             controllers: RwLock::new(Vec::new()),
             telemetry: RwLock::new(Telemetry::default()),
+            last_coolant: RwLock::new(None),
             oled_state: RwLock::new("Off".into()),
             oled_stop: Mutex::new(Arc::new(AtomicBool::new(false))),
         })
@@ -295,43 +304,75 @@ impl Engine {
     }
 
     const FAN_KEEPER_TICK: Duration = Duration::from_secs(1);
-    /// About 20%: the lowest speed sent to the fans, so a low board signal can't stall them.
-    const MIN_FAN_DUTY: u8 = 51;
 
     /// Wireless fans keep whatever speed they were last given, and one that resets comes back
-    /// stopped. They follow the motherboard's fan signal, which the dongle measures on its fan
-    /// cable: SL V3 fans do it themselves once told to, the others get the duty sent each
-    /// second. With no signal, a stopped fan is run at full speed rather than left still.
-    fn keep_fans_spinning(wireless: &WirelessController) {
+    /// stopped, so every fan device is given its speed each second. Motherboard mode follows
+    /// the board's fan signal, which the dongle measures on its fan cable; SL V3 fans do that
+    /// themselves once told to.
+    fn keep_fans_spinning(&self, wireless: &WirelessController) {
         wireless.set_fg_sync(true);
         let mut warned_no_signal = false;
         loop {
-            // a reading of 0 is what the dongle gives with no fan cable to the board, so it
-            // counts as no signal rather than an order to stop the fans
-            let board = wireless
-                .motherboard_pwm()
-                .filter(|&duty| duty > 0)
-                .map(|duty| duty.max(Self::MIN_FAN_DUTY));
-            if board.is_none() && !warned_no_signal {
-                warn!("the wireless dongle reports no motherboard fan signal; stopped fans run at full speed");
-            }
-            warned_no_signal = board.is_none();
+            let board = wireless.motherboard_pwm();
+            let coolant = self.last_coolant.read().map(|(c, at)| (c, at.elapsed()));
+            let modes = self.config.lock().fans.clone();
+            let mut needs_board = false;
             for device in wireless.devices().into_iter().filter(|d| d.fan_count > 0) {
-                let result = if device.fan_type.supports_hw_mobo_sync() {
-                    wireless.set_hardware_pwm_sync(&device.mac)
-                } else if let Some(duty) = board {
-                    wireless.set_fan_speeds_by_mac(&device.mac, &[duty; 4])
-                } else if device.current_pwm[..usize::from(device.fan_count.min(4))].contains(&0) {
-                    wireless.set_fan_speeds_by_mac(&device.mac, &[255; 4])
-                } else {
-                    Ok(())
+                let mode = modes.get(&device.mac_str()).cloned().unwrap_or_default();
+                let board_driven =
+                    mode == FanMode::Motherboard && device.fan_type.supports_hw_mobo_sync();
+                let result = match fans::decide(&mode, board, coolant) {
+                    _ if board_driven => wireless.set_hardware_pwm_sync(&device.mac),
+                    Decision::Duty(duty) => wireless.set_fan_speeds_by_mac(&device.mac, &[duty; 4]),
+                    Decision::KeepUnlessStopped => {
+                        needs_board = true;
+                        let running = &device.current_pwm[..usize::from(device.fan_count.min(4))];
+                        if running.contains(&0) {
+                            wireless.set_fan_speeds_by_mac(&device.mac, &[255; 4])
+                        } else {
+                            Ok(())
+                        }
+                    }
                 };
                 if let Err(e) = result {
                     debug!("{}: fan speed: {e:#}", device.mac_str());
                 }
             }
+            if needs_board && !warned_no_signal {
+                warn!("the wireless dongle reports no motherboard fan signal; stopped fans run at full speed");
+            }
+            warned_no_signal = needs_board;
             thread::sleep(Self::FAN_KEEPER_TICK);
         }
+    }
+
+    pub fn set_fan_mode(&self, id: &str, mode: FanMode) {
+        let mode = match mode {
+            FanMode::Fixed { percent } => FanMode::Fixed {
+                percent: percent.min(100),
+            },
+            FanMode::Curve { mut points } => {
+                points.truncate(8);
+                for point in &mut points {
+                    point[0] = point[0].min(100);
+                    point[1] = point[1].min(100);
+                }
+                points.sort_by_key(|p| p[0]);
+                if points.is_empty() {
+                    fans::default_curve()
+                } else {
+                    FanMode::Curve { points }
+                }
+            }
+            FanMode::Motherboard => FanMode::Motherboard,
+        };
+        self.update_config(|c| {
+            if mode == FanMode::Motherboard {
+                c.fans.remove(id);
+            } else {
+                c.fans.insert(id.to_string(), mode);
+            }
+        });
     }
 
     /// Pairs devices RGBable already knows (they are in the config) that have reset and
@@ -408,10 +449,10 @@ impl Engine {
         }
 
         {
-            let wireless = wireless.clone();
+            let (engine, wireless) = (self.clone(), wireless.clone());
             thread::Builder::new()
                 .name("fan-keeper".into())
-                .spawn(move || Self::keep_fans_spinning(&wireless))?;
+                .spawn(move || engine.keep_fans_spinning(&wireless))?;
         }
         {
             let engine = self.clone();
@@ -527,9 +568,19 @@ impl Engine {
                 } else {
                     saved.and_then(|s| s.color)
                 };
+                let fan_count = |d: &DiscoveredDevice| usize::from(d.fan_count.min(4));
                 let rpm = live
                     .get(&ctl.id)
-                    .map(|d| d.fan_rpms[..usize::from(d.fan_count.min(4))].to_vec())
+                    .map(|d| d.fan_rpms[..fan_count(d)].to_vec())
+                    .unwrap_or_default();
+                let speed = live
+                    .get(&ctl.id)
+                    .map(|d| {
+                        d.current_pwm[..fan_count(d)]
+                            .iter()
+                            .map(|&duty| fans::duty_percent(duty))
+                            .collect()
+                    })
                     .unwrap_or_default();
                 DeviceView {
                     id: ctl.id.clone(),
@@ -543,6 +594,8 @@ impl Engine {
                     leds: ctl.leds,
                     color,
                     rpm,
+                    speed,
+                    fan_mode: config.fans.get(&ctl.id).cloned().unwrap_or_default(),
                     effect: saved.and_then(|s| s.effect.clone()),
                     outer_effect: saved.and_then(|s| s.outer_effect.clone()),
                     sides: render::has_sides(ctl.profile),
@@ -996,6 +1049,9 @@ impl Engine {
             if let Some(ring) = ring {
                 let pump = ring.read_pump_rpm_raw().ok();
                 let coolant = ring.read_temps().ok().map(|(c, _)| c);
+                if let Some(celsius) = coolant.filter(|c| (1..=100).contains(c)) {
+                    *self.last_coolant.write() = Some((celsius, Instant::now()));
+                }
                 *self.telemetry.write() = Telemetry {
                     pump_rpm: pump,
                     coolant_c: coolant,
