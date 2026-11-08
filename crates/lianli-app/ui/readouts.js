@@ -175,6 +175,11 @@ function discardWidgets() {
 
 const hexOf = (rgb) => "#" + rgb.map((c) => c.toString(16).padStart(2, "0")).join("");
 
+/// The helper is set up but no reading has come for a while (it starts within a few seconds).
+function cpuTempSilent() {
+  return readouts.cpuSilentSince != null && Date.now() - readouts.cpuSilentSince > 20000;
+}
+
 async function drawCpuSetup() {
   const box = $("#cpu-setup");
   const wanted = readouts.modules.some(usesCpuTemp);
@@ -187,13 +192,15 @@ async function drawCpuSetup() {
     }
   }
   const s = readouts.cpu;
-  box.hidden = s.task && s.pawnio;
+  const silent = s.task && s.pawnio && cpuTempSilent();
+  box.hidden = s.task && s.pawnio && !silent;
   if (box.hidden) return;
   if (!s.supported) {
     box.replaceChildren(el("span", { class: "muted small" }, "CPU temperature is only supported on Intel CPUs for now."));
     return;
   }
-  const button = el("button", { class: "btn primary" }, "Set up CPU temperature");
+  const label = silent ? "Set up again" : "Set up CPU temperature";
+  const button = el("button", { class: "btn primary" }, label);
   button.addEventListener("click", async () => {
     button.disabled = true;
     button.textContent = "Waiting for the administrator prompt…";
@@ -202,10 +209,18 @@ async function drawCpuSetup() {
       readouts.cpu = null;
     } finally {
       button.disabled = false;
-      button.textContent = "Set up CPU temperature";
+      button.textContent = label;
+      readouts.cpuSilentSince = null;
       drawCpuSetup();
     }
   });
+  if (silent) {
+    box.replaceChildren(
+      el("span", { class: "muted small" }, "The CPU temperature helper isn't sending readings. Setting it up again (one administrator prompt) points it at this copy of RGBable, which fixes it after a reinstall or a move."),
+      button,
+    );
+    return;
+  }
   box.replaceChildren(
     el("span", { class: "muted small" }, "Windows only lets administrators read the CPU temperature. One administrator prompt sets up a small helper (and PawnIO, the driver OpenRGB uses, if it's missing); after that it works on its own."),
     button,
@@ -526,6 +541,12 @@ setInterval(async () => {
   } catch {
     return;
   }
+  if (readouts.modules.some(usesCpuTemp)) {
+    const wasSilent = cpuTempSilent();
+    if (readouts.values.cpu_temp_c != null) readouts.cpuSilentSince = null;
+    else readouts.cpuSilentSince ??= Date.now();
+    if (cpuTempSilent() !== wasSilent) drawCpuSetup();
+  }
   document.querySelectorAll("#oled-readouts .readout").forEach((node) => {
     const m = readouts.modules[Number(node.dataset.index)];
     if (!m) return;
@@ -611,7 +632,7 @@ $("#layout-import").addEventListener("click", async () => {
   const lines = [
     el("p", {}, `${report.imported.length} theme${report.imported.length === 1 ? "" : "s"} imported as layouts. Pick one from “Load a layout…”, then Apply.`),
     report.videos ? el("p", { class: "muted small" }, `Found the video for ${report.videos} of them: those play with their widgets already, and their folder is in the library.`) : null,
-    report.backgrounds ? el("p", { class: "muted small" }, `${report.backgrounds} still background${report.backgrounds === 1 ? "" : "s"} added to the library.`) : null,
+    report.backgrounds ? el("p", { class: "muted small" }, `${report.backgrounds} theme background${report.backgrounds === 1 ? "" : "s"} added to the library as still pictures (a single frame of the theme's video, which is all a theme file holds).`) : null,
     report.videos < report.imported.length ? el("p", { class: "muted small" }, "Themes don't contain their videos (only L-Connect's folder does), so the rest are layouts to put over any video. Picking a folder that also holds L-Connect's theme videos links them up.") : null,
     report.skipped.length ? el("p", { class: "muted small" }, `Not shown yet (RGBable doesn't read these): ${report.skipped.join(", ")}.`) : null,
     ...report.failed.map((f) => el("p", { class: "muted small" }, `Skipped ${f}`)),
