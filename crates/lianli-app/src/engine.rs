@@ -3,7 +3,7 @@
 //! talks to it through `Engine`'s methods.
 
 use crate::effects::{Effect, Side};
-use crate::fans::{self, Decision, FanMode};
+use crate::fans::{self, Decision, FanMode, FanProfile, PumpMode};
 use crate::render::{self, Lighting};
 use anyhow::{bail, Context, Result};
 use lianli_devices::winusb::hs2_oled_led::Hs2OledLedController;
@@ -72,9 +72,36 @@ pub struct Config {
     /// White balance, -50 (cooler) to 50 (warmer).
     #[serde(default, skip_serializing_if = "is_zero_i8")]
     pub warmth: i8,
-    /// Wireless fan devices by id; a missing entry follows the motherboard.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub fans: BTreeMap<String, FanMode>,
+    /// Per-device fan modes from before profiles; moved into a profile on load.
+    #[serde(default, skip_serializing)]
+    fans: BTreeMap<String, FanMode>,
+    #[serde(default)]
+    pub fan_profiles: Vec<FanProfile>,
+    #[serde(default)]
+    pub fan_profile: usize,
+}
+
+impl Config {
+    pub fn active_fan_profile(&self) -> Option<&FanProfile> {
+        self.fan_profiles.get(self.fan_profile)
+    }
+
+    fn add_fan_profiles(&mut self) {
+        if self.fan_profiles.is_empty() {
+            self.fan_profiles = fans::starter_profiles();
+            self.fan_profile = fans::STARTER_ACTIVE;
+        }
+        if !self.fans.is_empty() {
+            self.fan_profiles.push(FanProfile {
+                name: "Custom".into(),
+                all_fans: FanMode::Motherboard,
+                fans: std::mem::take(&mut self.fans),
+                pump: PumpMode::Unchanged,
+            });
+            self.fan_profile = self.fan_profiles.len() - 1;
+        }
+        self.fan_profile = self.fan_profile.min(self.fan_profiles.len() - 1);
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -147,6 +174,12 @@ fn default_fit() -> String {
 }
 
 pub fn load_config(path: &Path) -> Config {
+    let mut config = read_config(path);
+    config.add_fan_profiles();
+    config
+}
+
+fn read_config(path: &Path) -> Config {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Config::default();
     };
@@ -304,6 +337,7 @@ impl Engine {
     }
 
     const FAN_KEEPER_TICK: Duration = Duration::from_secs(1);
+    const PUMP_REFRESH: Duration = Duration::from_secs(30);
 
     /// Wireless fans keep whatever speed they were last given, and one that resets comes back
     /// stopped, so every fan device is given its speed each second. Motherboard mode follows
@@ -312,13 +346,17 @@ impl Engine {
     fn keep_fans_spinning(&self, wireless: &WirelessController) {
         wireless.set_fg_sync(true);
         let mut warned_no_signal = false;
+        let mut pump_sent: Option<(PumpMode, Instant)> = None;
         loop {
             let board = wireless.motherboard_pwm();
             let coolant = self.last_coolant.read().map(|(c, at)| (c, at.elapsed()));
-            let modes = self.config.lock().fans.clone();
+            let profile = self.config.lock().active_fan_profile().cloned();
             let mut needs_board = false;
             for device in wireless.devices().into_iter().filter(|d| d.fan_count > 0) {
-                let mode = modes.get(&device.mac_str()).cloned().unwrap_or_default();
+                let mode = profile
+                    .as_ref()
+                    .map(|p| p.fan_mode(&device.mac_str()))
+                    .unwrap_or_default();
                 let board_driven =
                     mode == FanMode::Motherboard && device.fan_type.supports_hw_mobo_sync();
                 let result = match fans::decide(&mode, board, coolant) {
@@ -342,35 +380,115 @@ impl Engine {
                 warn!("the wireless dongle reports no motherboard fan signal; stopped fans run at full speed");
             }
             warned_no_signal = needs_board;
+
+            let pump = profile.map(|p| p.pump).unwrap_or_default();
+            let due = pump_sent
+                .as_ref()
+                .is_none_or(|(sent, at)| *sent != pump || at.elapsed() >= Self::PUMP_REFRESH);
+            let ring = self.ring.read().clone();
+            if let (true, Some(ring)) = (due, ring) {
+                let result = match pump {
+                    PumpMode::Unchanged => Ok(()),
+                    PumpMode::Motherboard => ring.set_mb_sync(true),
+                    PumpMode::Fixed { rpm } => ring.set_pump_rpm(rpm),
+                };
+                match result {
+                    Ok(()) => pump_sent = Some((pump, Instant::now())),
+                    Err(e) => {
+                        debug!("pump speed: {e:#}");
+                        pump_sent = None;
+                    }
+                }
+            }
             thread::sleep(Self::FAN_KEEPER_TICK);
         }
     }
 
-    pub fn set_fan_mode(&self, id: &str, mode: FanMode) {
-        let mode = match mode {
-            FanMode::Fixed { percent } => FanMode::Fixed {
-                percent: percent.min(100),
-            },
-            FanMode::Curve { mut points } => {
-                points.truncate(8);
-                for point in &mut points {
-                    point[0] = point[0].min(100);
-                    point[1] = point[1].min(100);
-                }
-                points.sort_by_key(|p| p[0]);
-                if points.is_empty() {
-                    fans::default_curve()
-                } else {
-                    FanMode::Curve { points }
-                }
-            }
-            FanMode::Motherboard => FanMode::Motherboard,
-        };
+    fn edit_fan_profile(&self, change: impl FnOnce(&mut FanProfile)) {
         self.update_config(|c| {
-            if mode == FanMode::Motherboard {
-                c.fans.remove(id);
+            let index = c.fan_profile;
+            if let Some(profile) = c.fan_profiles.get_mut(index) {
+                change(profile);
+            }
+        });
+    }
+
+    pub fn set_fan_mode(&self, id: &str, mode: FanMode) {
+        let mode = fans::clean_fan_mode(mode);
+        self.edit_fan_profile(|p| {
+            if mode == p.all_fans {
+                p.fans.remove(id);
             } else {
-                c.fans.insert(id.to_string(), mode);
+                p.fans.insert(id.to_string(), mode);
+            }
+        });
+    }
+
+    pub fn set_all_fan_modes(&self, mode: FanMode) {
+        let mode = fans::clean_fan_mode(mode);
+        self.edit_fan_profile(|p| {
+            p.fans.clear();
+            p.all_fans = mode;
+        });
+    }
+
+    pub fn set_pump_mode(&self, mode: PumpMode) {
+        let (min, max) = Hs2OledLedController::PUMP_RPM_RANGE;
+        let mode = match mode {
+            PumpMode::Fixed { rpm } => PumpMode::Fixed {
+                rpm: rpm.clamp(min, max),
+            },
+            other => other,
+        };
+        self.edit_fan_profile(|p| p.pump = mode);
+    }
+
+    pub fn select_fan_profile(&self, index: usize) {
+        self.update_config(|c| {
+            if index < c.fan_profiles.len() {
+                c.fan_profile = index;
+            }
+        });
+    }
+
+    /// Adds a copy of the active profile under `name` and makes it active.
+    pub fn add_fan_profile(&self, name: &str) {
+        self.update_config(|c| {
+            let mut profile = c
+                .active_fan_profile()
+                .cloned()
+                .unwrap_or_else(|| FanProfile {
+                    name: String::new(),
+                    all_fans: FanMode::Motherboard,
+                    fans: BTreeMap::new(),
+                    pump: PumpMode::Unchanged,
+                });
+            profile.name = name.trim().chars().take(40).collect();
+            c.fan_profiles.push(profile);
+            c.fan_profile = c.fan_profiles.len() - 1;
+        });
+    }
+
+    pub fn rename_fan_profile(&self, index: usize, name: &str) {
+        let name: String = name.trim().chars().take(40).collect();
+        if name.is_empty() {
+            return;
+        }
+        self.update_config(|c| {
+            if let Some(profile) = c.fan_profiles.get_mut(index) {
+                profile.name = name;
+            }
+        });
+    }
+
+    /// The last profile can't be deleted.
+    pub fn delete_fan_profile(&self, index: usize) {
+        self.update_config(|c| {
+            if c.fan_profiles.len() > 1 && index < c.fan_profiles.len() {
+                c.fan_profiles.remove(index);
+                if c.fan_profile > index || c.fan_profile == c.fan_profiles.len() {
+                    c.fan_profile = c.fan_profile.saturating_sub(1);
+                }
             }
         });
     }
@@ -595,7 +713,10 @@ impl Engine {
                     color,
                     rpm,
                     speed,
-                    fan_mode: config.fans.get(&ctl.id).cloned().unwrap_or_default(),
+                    fan_mode: config
+                        .active_fan_profile()
+                        .map(|p| p.fan_mode(&ctl.id))
+                        .unwrap_or_default(),
                     effect: saved.and_then(|s| s.effect.clone()),
                     outer_effect: saved.and_then(|s| s.outer_effect.clone()),
                     sides: render::has_sides(ctl.profile),
@@ -1305,4 +1426,35 @@ fn prepare_lighting(
         render::balance_all(frame);
     }
     wireless.prepare_rgb_animation(mac, &frames.frames, frames.timing)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn loaded(json: &str) -> Config {
+        let mut config: Config = serde_json::from_str(json).unwrap();
+        config.add_fan_profiles();
+        config
+    }
+
+    #[test]
+    fn a_new_config_starts_on_the_standard_profile() {
+        let config = loaded("{}");
+        let active = config.active_fan_profile().unwrap();
+        assert_eq!(active.name, "Standard");
+        assert_eq!(active.fan_mode("aa"), FanMode::Motherboard);
+        assert_eq!(active.pump, PumpMode::Unchanged);
+    }
+
+    #[test]
+    fn fan_settings_from_before_profiles_become_the_active_profile() {
+        let config = loaded(r#"{"fans":{"aa":{"mode":"fixed","percent":40}}}"#);
+        let active = config.active_fan_profile().unwrap();
+        assert_eq!(active.name, "Custom");
+        assert_eq!(active.fan_mode("aa"), FanMode::Fixed { percent: 40 });
+        assert_eq!(active.fan_mode("bb"), FanMode::Motherboard);
+        let saved = serde_json::to_string(&config).unwrap();
+        assert_eq!(loaded(&saved).fan_profiles.len(), config.fan_profiles.len());
+    }
 }

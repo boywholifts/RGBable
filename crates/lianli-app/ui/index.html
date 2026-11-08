@@ -171,12 +171,28 @@
       <header class="page-head">
         <div>
           <h1>Cooling</h1>
-          <p class="muted">Pump and coolant readings, and how fast each wireless fan runs. Fans follow your motherboard unless you set them here.</p>
+          <p class="muted">Fan and pump speeds, saved as profiles you can switch between.</p>
         </div>
       </header>
+      <div class="profile-bar">
+        <div class="seg" id="fan-profiles"></div>
+        <button class="btn mini ghost" id="fan-profile-new">New profile</button>
+        <button class="btn mini ghost" id="fan-profile-rename">Rename</button>
+        <button class="btn mini ghost" id="fan-profile-delete">Delete</button>
+      </div>
       <div class="stats">
         <div class="card stat"><div class="stat-label">Pump</div><div class="stat-value" id="m-pump">–</div><div class="stat-unit">RPM</div></div>
         <div class="card stat"><div class="stat-label">Coolant</div><div class="stat-value" id="m-coolant">–</div><div class="stat-unit">°C</div></div>
+      </div>
+      <h2 id="m-pump-head">Pump</h2>
+      <div class="card pump-card" id="m-pump-card">
+        <div class="seg tabs" id="pump-mode">
+          <button data-mode="unchanged">Leave as is</button>
+          <button data-mode="motherboard">Motherboard</button>
+          <button data-mode="fixed">Fixed</button>
+        </div>
+        <div class="fan-fixed" id="pump-fixed"><input type="range" id="pump-rpm" step="25"><span class="fan-value" id="pump-rpm-value"></span></div>
+        <p class="muted small" id="pump-hint"></p>
       </div>
       <h2>Fans</h2>
       <div class="grid" id="m-fans"></div>

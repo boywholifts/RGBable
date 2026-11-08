@@ -55,6 +55,11 @@ struct Overview {
     oled_match_status: String,
     warmth: i8,
     clean_transitions: bool,
+    fan_profiles: Vec<String>,
+    fan_profile: usize,
+    all_fans: fans::FanMode,
+    pump: fans::PumpMode,
+    pump_range: (u16, u16),
 }
 
 fn err(e: impl std::fmt::Display) -> String {
@@ -81,11 +86,22 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
         update: state.updater.view(),
         update_channel: config.update_channel,
         manage_openrgb: config.manage_openrgb,
-        color_presets: config.color_presets,
+        color_presets: config.color_presets.clone(),
         oled_match: config.oled_match,
         oled_match_status: lights::OLED_MATCH_STATUS.lock().clone(),
         warmth: config.warmth,
         clean_transitions: !config.instant_changes,
+        fan_profiles: config.fan_profiles.iter().map(|p| p.name.clone()).collect(),
+        fan_profile: config.fan_profile,
+        all_fans: config
+            .active_fan_profile()
+            .map(|p| p.all_fans.clone())
+            .unwrap_or_default(),
+        pump: config
+            .active_fan_profile()
+            .map(|p| p.pump)
+            .unwrap_or_default(),
+        pump_range: lianli_devices::winusb::hs2_oled_led::Hs2OledLedController::PUMP_RPM_RANGE,
     })
 }
 
@@ -527,6 +543,36 @@ fn set_warmth(state: State<'_, AppState>, warmth: i8) {
 #[tauri::command(async)]
 fn set_fan_mode(state: State<'_, AppState>, id: String, mode: fans::FanMode) {
     state.engine.set_fan_mode(&id, mode);
+}
+
+#[tauri::command(async)]
+fn set_all_fan_modes(state: State<'_, AppState>, mode: fans::FanMode) {
+    state.engine.set_all_fan_modes(mode);
+}
+
+#[tauri::command(async)]
+fn set_pump_mode(state: State<'_, AppState>, mode: fans::PumpMode) {
+    state.engine.set_pump_mode(mode);
+}
+
+#[tauri::command(async)]
+fn select_fan_profile(state: State<'_, AppState>, index: usize) {
+    state.engine.select_fan_profile(index);
+}
+
+#[tauri::command(async)]
+fn add_fan_profile(state: State<'_, AppState>, name: String) {
+    state.engine.add_fan_profile(&name);
+}
+
+#[tauri::command(async)]
+fn rename_fan_profile(state: State<'_, AppState>, index: usize, name: String) {
+    state.engine.rename_fan_profile(index, &name);
+}
+
+#[tauri::command(async)]
+fn delete_fan_profile(state: State<'_, AppState>, index: usize) {
+    state.engine.delete_fan_profile(index);
 }
 
 #[tauri::command(async)]
@@ -1042,6 +1088,12 @@ fn main() {
             set_across,
             set_warmth,
             set_fan_mode,
+            set_all_fan_modes,
+            set_pump_mode,
+            select_fan_profile,
+            add_fan_profile,
+            rename_fan_profile,
+            delete_fan_profile,
             set_clean_transitions,
             set_reverse,
             oled_palette,

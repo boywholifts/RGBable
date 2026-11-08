@@ -206,6 +206,20 @@ impl Hs2OledLedController {
         Ok(())
     }
 
+    pub const PUMP_RPM_RANGE: (u16, u16) = (1600, 2735);
+
+    /// Takes the pump off the motherboard signal and runs it at `rpm`.
+    pub fn set_pump_rpm(&self, rpm: u16) -> Result<()> {
+        let (min, max) = Self::PUMP_RPM_RANGE;
+        let mut source = self.pump_source.lock();
+        self.apply_pump_source(&mut source, false)?;
+        let result = self.set_pump_output(rpm_to_output(rpm.clamp(min, max)));
+        if result.is_err() {
+            *source = None;
+        }
+        result
+    }
+
     /// GetPumpSpeed (0x62) — read pump RPM with calibration offset.
     pub fn read_pump_rpm_raw(&self) -> Result<u16> {
         let rx = self.send_and_read(&[CMD_GET_PUMP, 0, 0, 0, 0, 0, 0, 0])?;

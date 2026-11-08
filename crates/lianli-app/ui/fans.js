@@ -5,13 +5,34 @@ const CURVE_T = [20, 60];
 const DEFAULT_CURVE = [[28, 30], [32, 45], [36, 70], [40, 100]];
 const fanCards = new Map();
 let fanIds = "";
+let fanProfileKey = "";
+let pumpMode = null;
+let pumpRange = [1600, 2735];
+let profileCount = 0;
+let activeProfile = 0;
+let profileNames = [];
 
 function renderMonitor(o) {
   $("#m-pump").textContent = o.telemetry.pump_rpm ?? "–";
   $("#m-coolant").textContent = o.telemetry.coolant_c ?? "–";
+  const profileKey = JSON.stringify([o.fan_profiles, o.fan_profile]);
+  const switched = profileKey !== fanProfileKey;
+  if (switched) {
+    fanProfileKey = profileKey;
+    profileNames = o.fan_profiles;
+    profileCount = o.fan_profiles.length;
+    activeProfile = o.fan_profile;
+    pumpRange = o.pump_range;
+    renderProfiles();
+    pumpMode = structuredClone(o.pump);
+    drawPump();
+  }
+  const hasPump = o.devices.some((d) => d.kind === "ring");
+  $("#m-pump-card").hidden = !hasPump;
+  $("#m-pump-head").hidden = !hasPump;
   const fans = o.devices.filter((d) => d.kind === "fans");
   const ids = fans.map((d) => d.id).join(",");
-  if (ids !== fanIds) {
+  if (ids !== fanIds || switched) {
     fanIds = ids;
     fanCards.clear();
     const grid = $("#m-fans");
@@ -24,6 +45,68 @@ function renderMonitor(o) {
 function sendFanMode(id, mode) {
   call("set_fan_mode", { id, mode });
 }
+
+async function profileAction(cmd, args, text) {
+  await call(cmd, args, text);
+  fanProfileKey = "";
+  refresh();
+}
+
+function renderProfiles() {
+  $("#fan-profiles").replaceChildren(
+    ...profileNames.map((name, index) =>
+      el("button", { class: index === activeProfile ? "on" : "", onclick: () => index !== activeProfile && profileAction("select_fan_profile", { index }, `${name} profile on`) }, name),
+    ),
+  );
+  $("#fan-profile-delete").disabled = profileCount < 2;
+}
+
+$("#fan-profile-new").addEventListener("click", () =>
+  promptName("New profile (a copy of this one)", "", (name) => name && profileAction("add_fan_profile", { name }, `${name} added`)),
+);
+$("#fan-profile-rename").addEventListener("click", () =>
+  promptName("Rename profile", profileNames[activeProfile] ?? "", (name) => name && profileAction("rename_fan_profile", { index: activeProfile, name })),
+);
+$("#fan-profile-delete").addEventListener("click", () => {
+  const name = profileNames[activeProfile];
+  openDialog(`Delete ${name}?`, el("p", { class: "muted small" }, "Its fan and pump settings will be gone."), [
+    el("button", { class: "btn", onclick: closeDialog }, "Cancel"),
+    el("button", { class: "btn primary", onclick: () => { closeDialog(); profileAction("delete_fan_profile", { index: activeProfile }, `${name} deleted`); } }, "Delete"),
+  ]);
+});
+
+function drawPump() {
+  const [min, max] = pumpRange;
+  document.querySelectorAll("#pump-mode button").forEach((b) => b.classList.toggle("on", b.dataset.mode === pumpMode.mode));
+  const fixed = pumpMode.mode === "fixed";
+  $("#pump-fixed").hidden = !fixed;
+  const range = $("#pump-rpm");
+  range.min = String(min);
+  range.max = String(max);
+  if (fixed) {
+    range.value = String(pumpMode.rpm);
+    $("#pump-rpm-value").textContent = `${pumpMode.rpm} rpm`;
+  }
+  $("#pump-hint").textContent = {
+    unchanged: "RGBable doesn't touch the pump; it keeps the speed it was last given.",
+    motherboard: "Follows the fan header the pump is plugged into.",
+    fixed: `Runs at a steady speed, ${min} to ${max} rpm.`,
+  }[pumpMode.mode];
+}
+
+document.querySelectorAll("#pump-mode button").forEach((b) =>
+  b.addEventListener("click", () => {
+    if (b.dataset.mode === pumpMode.mode) return;
+    pumpMode = b.dataset.mode === "fixed" ? { mode: "fixed", rpm: 2000 } : { mode: b.dataset.mode };
+    drawPump();
+    call("set_pump_mode", { mode: pumpMode });
+  }),
+);
+$("#pump-rpm").addEventListener("input", (e) => ($("#pump-rpm-value").textContent = `${e.target.value} rpm`));
+$("#pump-rpm").addEventListener("change", (e) => {
+  pumpMode = { mode: "fixed", rpm: Number(e.target.value) };
+  call("set_pump_mode", { mode: pumpMode });
+});
 
 function fanCard(d) {
   let mode = structuredClone(d.fan_mode);
@@ -54,11 +137,8 @@ function fanCard(d) {
   }
 
   async function copyToAll() {
-    for (const id of fanIds.split(",")) {
-      await invoke("set_fan_mode", { id, mode }).catch((e) => toast(String(e), true));
-      fanCards.get(id)?.set(structuredClone(mode));
-    }
-    toast("All fans updated");
+    await call("set_all_fan_modes", { mode }, "All fans updated");
+    for (const card of fanCards.values()) card.set(structuredClone(mode));
   }
 
   function draw() {

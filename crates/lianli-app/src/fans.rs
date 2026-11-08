@@ -2,6 +2,7 @@
 //! HydroShift's coolant temperature.
 
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 /// About 20%: the lowest speed ever sent, so no setting or bad reading can stall a fan.
@@ -22,6 +23,88 @@ pub enum FanMode {
     Curve {
         points: Vec<[u8; 2]>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(tag = "mode", rename_all = "lowercase")]
+pub enum PumpMode {
+    /// RGBable doesn't touch the pump, so it keeps whatever speed it was last given.
+    #[default]
+    Unchanged,
+    Motherboard,
+    Fixed {
+        rpm: u16,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FanProfile {
+    pub name: String,
+    /// Fan devices without their own entry in `fans`.
+    #[serde(default)]
+    pub all_fans: FanMode,
+    #[serde(default)]
+    pub fans: BTreeMap<String, FanMode>,
+    #[serde(default)]
+    pub pump: PumpMode,
+}
+
+impl FanProfile {
+    pub fn fan_mode(&self, id: &str) -> FanMode {
+        self.fans.get(id).unwrap_or(&self.all_fans).clone()
+    }
+}
+
+/// The profiles a new install starts with; Standard, the active one, leaves fans on the
+/// motherboard and the pump alone, as before profiles existed.
+pub fn starter_profiles() -> Vec<FanProfile> {
+    let profile = |name: &str, all_fans, pump| FanProfile {
+        name: name.into(),
+        all_fans,
+        fans: BTreeMap::new(),
+        pump,
+    };
+    vec![
+        profile(
+            "Quiet",
+            FanMode::Curve {
+                points: vec![[30, 25], [35, 35], [40, 60], [45, 100]],
+            },
+            PumpMode::Fixed { rpm: 2000 },
+        ),
+        profile("Standard", FanMode::Motherboard, PumpMode::Unchanged),
+        profile(
+            "Performance",
+            FanMode::Curve {
+                points: vec![[26, 50], [32, 75], [36, 100]],
+            },
+            PumpMode::Fixed { rpm: 2735 },
+        ),
+    ]
+}
+
+pub const STARTER_ACTIVE: usize = 1;
+
+pub fn clean_fan_mode(mode: FanMode) -> FanMode {
+    match mode {
+        FanMode::Fixed { percent } => FanMode::Fixed {
+            percent: percent.min(100),
+        },
+        FanMode::Curve { mut points } => {
+            points.truncate(8);
+            for point in &mut points {
+                point[0] = point[0].min(100);
+                point[1] = point[1].min(100);
+            }
+            points.sort_by_key(|p| p[0]);
+            if points.is_empty() {
+                default_curve()
+            } else {
+                FanMode::Curve { points }
+            }
+        }
+        FanMode::Motherboard => FanMode::Motherboard,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
