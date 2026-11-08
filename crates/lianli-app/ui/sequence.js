@@ -19,7 +19,7 @@ function seqLights(o) {
 
 function renderSequence(o, force) {
   const key = JSON.stringify([o.lights.map((l) => [l.id, l.name, l.delay_ms, l.effect, l.group]), o.groups, seq.group]);
-  if (!force && (seq.dirty || key === seq.key)) return;
+  if (!force && (seq.dirty || key === seq.key || document.querySelector(".seq-row.dragging"))) return;
   seq.key = key;
   seq.items = seqLights(o);
   seq.dirty = false;
