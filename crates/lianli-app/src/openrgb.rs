@@ -322,7 +322,6 @@ impl OpenRgb {
         std::thread::Builder::new()
             .name("openrgb-effects".into())
             .spawn(move || {
-                let started = Instant::now();
                 let mut generation = u64::MAX;
                 let mut in_direct_mode = BTreeSet::new();
                 loop {
@@ -339,7 +338,7 @@ impl OpenRgb {
                         generation = animations.generation;
                         in_direct_mode.clear();
                     }
-                    let elapsed = started.elapsed().as_millis() as u64;
+                    let elapsed = crate::render::clock_ms();
                     for (&index, parts) in &animations.effects {
                         let first = in_direct_mode.insert(index);
                         if openrgb

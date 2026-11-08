@@ -443,3 +443,4 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .seq-marker.movable:hover, .seq-marker.dragging { width: 18px; height: 18px; }
 .seq-marker.dragging { cursor: grabbing; transition: none; }
 .color-chip { display: inline-block; width: 16px; height: 16px; border-radius: 5px; margin: 0 3px; vertical-align: -3px; border: 1px solid rgba(255,255,255,.2); }
+.seq-actions { position: sticky; bottom: 0; z-index: 5; margin: 0 -6px; padding: 12px 6px; background: linear-gradient(to top, var(--bg) 70%, transparent); }

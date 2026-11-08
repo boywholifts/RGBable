@@ -82,13 +82,16 @@ impl Frames {
         Ok(lianli_devices::tinyuz::compress(&raw)?.len())
     }
 
-    /// Starts the loop `delay_ms` behind, by playing its last frames first.
-    pub fn delayed(mut self, delay_ms: u32) -> Self {
-        let frame_ms = (self.timing.interval_hundredths / 160).max(1);
+    /// Starts the loop where the shared clock (less `delay_ms`) will be when the device begins
+    /// playing it. A wireless device starts its loop when its upload lands, so without this
+    /// each one would run on its own timeline.
+    pub fn on_clock(mut self, delay_ms: u32) -> Self {
+        let frame_ms = u64::from((self.timing.interval_hundredths / 160).max(1));
         let len = self.frames.len();
         if len > 1 {
-            let shift = (delay_ms / frame_ms) as usize % len;
-            self.frames.rotate_right(shift);
+            let now = (clock_ms() + UPLOAD_LATENCY_MS) as i64 - i64::from(delay_ms);
+            let shift = (now.rem_euclid((frame_ms * len as u64) as i64) as u64 / frame_ms) as usize;
+            self.frames.rotate_left(shift % len);
         }
         self
     }
@@ -373,6 +376,20 @@ fn paint(
 
 /// The loop to upload at `shrink` level: L-Connect effects come from the Lian Li renderer and
 /// are thinned out to fit; RGBable effects use longer frames until they fit `budget`.
+/// One clock for every device's effect loop, so delays, flows and turns line up across
+/// wireless fans, the OLED ring and OpenRGB devices.
+static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+pub fn clock_ms() -> u64 {
+    EPOCH
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_millis() as u64
+}
+
+/// About how long a wireless device takes from the upload being prepared to playing it.
+const UPLOAD_LATENCY_MS: u64 = 300;
+
 /// White balance for everything RGBable sends, -50 (cooler) to 50 (warmer). LEDs show full
 /// white with a blue tint, so warming takes blue (and a little green) out.
 pub static WARMTH: std::sync::atomic::AtomicI8 = std::sync::atomic::AtomicI8::new(0);

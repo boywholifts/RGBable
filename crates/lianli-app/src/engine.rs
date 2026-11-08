@@ -688,7 +688,6 @@ impl Engine {
         // How far each device's effects had to be shrunk before it accepted them.
         let mut shrink: BTreeMap<[u8; 6], u8> = BTreeMap::new();
         let mut last_verify = Instant::now();
-        let started = Instant::now();
         let mut last_ring_frame = Instant::now();
 
         loop {
@@ -697,7 +696,7 @@ impl Engine {
             for ctl in &controllers {
                 let mac = match &ctl.target {
                     Target::Ring(ring) => {
-                        self.drive_ring(ctl, ring, started, &mut last_ring_frame);
+                        self.drive_ring(ctl, ring, &mut last_ring_frame);
                         continue;
                     }
                     Target::Wireless { mac } => *mac,
@@ -838,13 +837,7 @@ impl Engine {
         }
     }
 
-    fn drive_ring(
-        &self,
-        ctl: &Controller,
-        ring: &Hs2OledLedController,
-        started: Instant,
-        last_frame: &mut Instant,
-    ) {
+    fn drive_ring(&self, ctl: &Controller, ring: &Hs2OledLedController, last_frame: &mut Instant) {
         let effect = ctl.lighting.lock().primary().map(Effect::generic);
         if let Some(effect) = effect.filter(|_| !ctl.identifying.load(Ordering::Acquire)) {
             ctl.dirty.store(false, Ordering::Release);
@@ -863,7 +856,7 @@ impl Engine {
                 turn,
                 ..effect
             };
-            let behind = started.elapsed().as_millis() as i64 - delay;
+            let behind = render::clock_ms() as i64 - delay;
             let period = u64::from(effect.period_ms().max(1));
             let phase = behind.rem_euclid(period as i64) as f32 / period as f32;
             let mut frame = effect.frame(&ctl.zones, phase);
@@ -1133,7 +1126,7 @@ fn prepare_lighting(
         frames.frames.len(),
         frames.compressed_len().unwrap_or(0)
     );
-    let frames = frames.delayed(delay_ms);
+    let frames = frames.on_clock(delay_ms);
     let mut frames = frames;
     for frame in &mut frames.frames {
         render::balance_all(frame);

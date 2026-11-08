@@ -246,7 +246,10 @@ $("#oled-match-now").addEventListener("click", async () => {
 });
 
 /// The match status with each picked color shown as a chip instead of its hex code.
+let shownMatchStatus = null;
 function showMatchStatus(text) {
+  if (text === shownMatchStatus) return;
+  shownMatchStatus = text;
   const parts = text.split(/(#[0-9a-f]{6})/i).filter(Boolean);
   $("#oled-match-status").replaceChildren(...parts.map((part) => {
     if (!/^#[0-9a-f]{6}$/i.test(part)) return part.replace(/\s+$/, " ");

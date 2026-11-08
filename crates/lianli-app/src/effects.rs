@@ -316,7 +316,7 @@ impl Effect {
                 turn: None,
                 ..self.clone()
             };
-            return (own.period_ms() as f32 / turn.len()) as u32;
+            return (own.period_ms() as f32 / stretch(turn.len())) as u32;
         }
         if self.kind == EffectKind::Lianli {
             return self.generic().period_ms();
@@ -353,7 +353,7 @@ impl Effect {
             EffectKind::Script => 4000,
         };
         let factor = [2.0, 1.4, 1.0, 0.7, 0.5][usize::from(self.speed.clamp(1, 5) - 1)];
-        (base as f32 * factor / self.travel_span().map_or(1.0, Span::len)) as u32
+        (base as f32 * factor / self.travel_span().map_or(1.0, |s| stretch(s.len()))) as u32
     }
 
     /// The LEDs at `phase` (0..1 through the loop). `zones` are the LED counts of each
@@ -456,6 +456,13 @@ impl Effect {
             .map(|i| self.frame(zones, i as f32 / count as f32))
             .collect()
     }
+}
+
+/// How much longer a loop gets when a device is one part of a flow or one of several turns.
+/// In proportion (a whole strip of 15 devices taking 15 loops) it crawled, so it grows with
+/// the square root instead and the effect moves faster through each device.
+fn stretch(share: f32) -> f32 {
+    share.sqrt()
 }
 
 fn scale(color: [u8; 3], percent: u8) -> [u8; 3] {
@@ -798,7 +805,7 @@ mod tests {
             ..across.clone()
         };
         assert_eq!(first.period_ms(), second.period_ms());
-        assert_eq!(first.period_ms(), across.period_ms() * 2);
+        assert_eq!(first.period_ms(), (across.period_ms() as f32 / stretch(0.5)) as u32);
         assert!(lit(&first.frame(&[20], 0.3)) && !lit(&second.frame(&[20], 0.3)));
         assert!(!lit(&first.frame(&[20], 0.8)) && lit(&second.frame(&[20], 0.8)));
     }
@@ -817,7 +824,7 @@ mod tests {
             }),
             ..breathing.clone()
         };
-        assert_eq!(first.period_ms(), breathing.period_ms() * 2);
+        assert_eq!(first.period_ms(), (breathing.period_ms() as f32 / stretch(0.5)) as u32);
         assert_eq!(first.frame(&[1], 0.25), breathing.frame(&[1], 0.5));
         assert_eq!(second.frame(&[1], 0.25), vec![[0, 0, 0]]);
         assert_eq!(second.frame(&[1], 0.75), breathing.frame(&[1], 0.5));
