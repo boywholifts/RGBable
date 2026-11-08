@@ -86,11 +86,12 @@ impl Frames {
     /// playing it. A wireless device starts its loop when its upload lands, so without this
     /// each one would run on its own timeline.
     pub fn on_clock(mut self, delay_ms: u32) -> Self {
-        let frame_ms = u64::from((self.timing.interval_hundredths / 160).max(1));
+        let frame_ms = f64::from(self.timing.interval_hundredths.max(1)) / 160.0;
         let len = self.frames.len();
         if len > 1 {
             let now = (clock_ms() + UPLOAD_LATENCY_MS) as i64 - i64::from(delay_ms);
-            let shift = (now.rem_euclid((frame_ms * len as u64) as i64) as u64 / frame_ms) as usize;
+            let loop_ms = frame_ms * len as f64;
+            let shift = ((now as f64).rem_euclid(loop_ms) / frame_ms) as usize;
             self.frames.rotate_left(shift % len);
         }
         self
@@ -257,14 +258,13 @@ fn generic_frames(
             .iter()
             .all(|e| e.steps(&layout.zones) == steps && e.period_ms() == period)
     });
-    let (count, interval_ms) = match stepped {
+    let count = match stepped {
         Some(steps) => {
             let step_ms = (period as f32 / steps as f32).max(1.0);
             let skip = (interval_ms as f32 / step_ms).round().max(1.0) as usize;
-            let count = (steps / skip).max(2);
-            (count, (period as f32 / count as f32).round() as u32)
+            (steps / skip).max(2)
         }
-        None => ((period / interval_ms.max(1)).max(2) as usize, interval_ms),
+        None => (period / interval_ms.max(1)).max(2) as usize,
     };
     let frames = (0..count)
         .map(|n| {
@@ -282,7 +282,11 @@ fn generic_frames(
         .collect();
     Frames {
         frames,
-        timing: RgbPlaybackTiming::from_millis(interval_ms as u16),
+        // the loop lasts exactly one effect period, so devices on the shared clock stay in step
+        timing: RgbPlaybackTiming {
+            interval_hundredths: (u64::from(period) * 160 / count as u64) as u32,
+            ..RgbPlaybackTiming::default()
+        },
     }
 }
 

@@ -404,18 +404,19 @@ impl Effect {
             let strip_leds = (count as f32 / len).round().max(1.0) as usize;
             for i in 0..count {
                 let i = if coarse { i - i % COARSE_BLOCK } else { i };
-                let mut end_to_end = start
-                    + len
-                        * if count > 1 {
-                            i as f32 / (count - 1) as f32
-                        } else {
-                            0.5
-                        };
-                let mut p = start + len * i as f32 / count.max(1) as f32;
+                let mut local_end = if count > 1 {
+                    i as f32 / (count - 1) as f32
+                } else {
+                    0.5
+                };
+                let mut local = i as f32 / count.max(1) as f32;
+                // reversed runs the other way within its own part of the strip
                 if self.reverse {
-                    p = 1.0 - p;
-                    end_to_end = 1.0 - end_to_end;
+                    local = 1.0 - local;
+                    local_end = 1.0 - local_end;
                 }
+                let p = start + len * local;
+                let end_to_end = start + len * local_end;
                 let color = match self.kind {
                     EffectKind::Static => colors[0],
                     EffectKind::Breathing => breathing(colors, phase),
@@ -423,7 +424,7 @@ impl Effect {
                     EffectKind::Rainbow => hue(phase),
                     EffectKind::RainbowWave => hue(phase + p),
                     EffectKind::Wave => gradient(colors, phase + p),
-                    EffectKind::Meteor => meteor(colors[zone % colors.len()], phase, p),
+                    EffectKind::Meteor => meteor(colors[zone % colors.len()], phase, p, len),
                     EffectKind::Twinkle => twinkle(colors, phase, led_index),
                     EffectKind::Strobe => strobe(colors, phase),
                     EffectKind::Heartbeat => heartbeat(colors, phase),
@@ -522,12 +523,15 @@ fn breathing(colors: &[[u8; 3]], t: f32) -> [u8; 3] {
 
 const METEOR_TAIL: f32 = 0.4;
 
-fn meteor(color: [u8; 3], head: f32, p: f32) -> [u8; 3] {
+/// `share` is the part of the strip this device holds: in a flow the tail stays about
+/// as long as on one device instead of lighting several devices at once.
+fn meteor(color: [u8; 3], head: f32, p: f32, share: f32) -> [u8; 3] {
+    let tail = METEOR_TAIL * share;
     let behind = (head - p).rem_euclid(1.0);
-    if behind >= METEOR_TAIL {
+    if behind >= tail {
         return [0, 0, 0];
     }
-    dim(color, (1.0 - behind / METEOR_TAIL).powi(2))
+    dim(color, (1.0 - behind / tail).powi(2))
 }
 
 fn hash(n: usize) -> u32 {
@@ -811,6 +815,14 @@ mod tests {
         );
         assert!(lit(&first.frame(&[20], 0.3)) && !lit(&second.frame(&[20], 0.3)));
         assert!(!lit(&first.frame(&[20], 0.8)) && lit(&second.frame(&[20], 0.8)));
+        let first_reversed = Effect {
+            reverse: true,
+            ..first.clone()
+        };
+        assert!(
+            lit(&first_reversed.frame(&[20], 0.3)) && !lit(&first_reversed.frame(&[20], 0.8)),
+            "a reversed device keeps its place in the chain"
+        );
     }
 
     #[test]
