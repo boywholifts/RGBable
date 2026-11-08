@@ -116,7 +116,7 @@ function drawSequence() {
   document.querySelectorAll("#seq-mode button").forEach((b) => b.classList.toggle("on", b.dataset.mode === seq.mode));
   $("#seq-mode-hint").textContent = {
     together: "Every device starts its effect at the same moment. Pick another timing to stagger, chain or alternate them.",
-    delays: "Each device loops on its own, starting this long after the top one. Drag the dots or type a delay.",
+    delays: "Each device loops on its own, starting this long after the top one. Drag the dots or type a delay; delays longer than an effect's loop wrap around.",
     flow: "The devices act as one long strip in this order: a meteor or wave runs through the first device, then into the next. Effects that light everything at once (breathing, strobe) look the same as before.",
     turns: "One device at a time, in this order: each plays its effect once in its turn and stays dark while the others play.",
   }[seq.mode];

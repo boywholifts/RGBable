@@ -87,15 +87,11 @@
         <button class="btn mini timing-only" id="seq-reverse">Reverse order</button>
         <button class="btn mini delays-only" id="seq-reset">All at once</button>
         <button class="btn mini timing-only" id="seq-preview" title="Flash each row when its effect would start">Preview</button>
+        <button class="btn mini" id="seq-discard" hidden>Discard</button>
+        <button class="btn mini primary" id="seq-save" disabled>Save</button>
       </div>
       <p class="muted small seq-hint" id="seq-mode-hint"></p>
       <div class="seq-list" id="seq-list"><div class="empty">Loading…</div></div>
-      <div class="row seq-actions">
-        <span class="muted small delays-only">Delays longer than an effect's loop wrap around, so keep them under the loop length for a clean cascade.</span>
-        <span class="grow"></span>
-        <button class="btn" id="seq-discard" hidden>Discard</button>
-        <button class="btn primary" id="seq-save" disabled>Save</button>
-      </div>
     </section>
 
     <section class="page" id="page-effects">
