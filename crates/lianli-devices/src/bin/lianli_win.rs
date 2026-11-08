@@ -16,8 +16,8 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 use anyhow::{bail, Context, Result};
-use lianli_devices::wireless::{DiscoveredDevice, WirelessController, WirelessRgbUpload};
 use lianli_devices::winusb::hs2_oled_led::Hs2OledLedController;
+use lianli_devices::wireless::{DiscoveredDevice, WirelessController, WirelessRgbUpload};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -77,7 +77,8 @@ fn default_fit() -> String {
 }
 
 fn load_config(path: &Path) -> Result<Config> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     // Windows PowerShell writes UTF-8 with a byte-order mark; serde_json rejects it.
     let text = text.trim_start_matches('\u{feff}');
     serde_json::from_str(text).with_context(|| format!("parsing {}", path.display()))
@@ -282,7 +283,11 @@ const DEVICE_TYPE_COOLER: u32 = 3;
 const DEVICE_TYPE_LEDSTRIP: u32 = 4;
 
 impl State {
-    fn new(devices: &[DiscoveredDevice], config: &Config, ring: Option<Arc<Hs2OledLedController>>) -> Self {
+    fn new(
+        devices: &[DiscoveredDevice],
+        config: &Config,
+        ring: Option<Arc<Hs2OledLedController>>,
+    ) -> Self {
         let mut controllers = Vec::new();
         let mut sorted: Vec<&DiscoveredDevice> = devices.iter().collect();
         sorted.sort_by_key(|d| d.mac);
@@ -297,17 +302,29 @@ impl State {
                 .iter()
                 .enumerate()
                 .map(|(i, &n)| {
-                    let label = if is_fan { format!("Fan {}", i + 1) } else { format!("Zone {}", i + 1) };
+                    let label = if is_fan {
+                        format!("Fan {}", i + 1)
+                    } else {
+                        format!("Zone {}", i + 1)
+                    };
                     (label, n)
                 })
                 .collect();
-            let fallback = format!("{} {}", device.fan_type.display_name(), &device.mac_str()[..8]);
+            let fallback = format!(
+                "{} {}",
+                device.fan_type.display_name(),
+                &device.mac_str()[..8]
+            );
             controllers.push(Controller {
                 name: format!(
                     "Lian Li {}",
                     saved.and_then(|s| s.name.clone()).unwrap_or(fallback)
                 ),
-                device_type: if is_fan { DEVICE_TYPE_COOLER } else { DEVICE_TYPE_LEDSTRIP },
+                device_type: if is_fan {
+                    DEVICE_TYPE_COOLER
+                } else {
+                    DEVICE_TYPE_LEDSTRIP
+                },
                 zones,
                 target: Target::Wireless { mac: device.mac },
                 default_color: saved.and_then(|s| s.color),
@@ -361,15 +378,19 @@ fn rgb_writer(wireless: &WirelessController, state: &State, stop: &AtomicBool) {
                     }
                 }
                 Target::Wireless { mac } => {
-                    if last_sent.get(mac).is_some_and(|(at, _)| at.elapsed() < MIN_INTERVAL) {
+                    if last_sent
+                        .get(mac)
+                        .is_some_and(|(at, _)| at.elapsed() < MIN_INTERVAL)
+                    {
                         continue;
                     }
                     ctl.dirty.store(false, Ordering::Release);
                     let colors = ctl.colors.lock().clone();
                     match wireless
                         .prepare_rgb_upload(mac, &[colors], 5000)
-                        .and_then(|upload| wireless.send_rgb_upload(mac, &upload, 4).map(|()| upload))
-                    {
+                        .and_then(|upload| {
+                            wireless.send_rgb_upload(mac, &upload, 4).map(|()| upload)
+                        }) {
                         Ok(upload) => {
                             last_sent.insert(*mac, (Instant::now(), upload));
                         }
@@ -435,7 +456,11 @@ fn oled_loop(oled: &OledConfig, stop: &AtomicBool) {
 /// screen, rotate 90 into the panel's 1080x2288 frame, encode like the daemon.
 /// The result is cached next to the config and reused while the source is unchanged.
 fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
-    anyhow::ensure!(oled.file.is_file(), "{} does not exist", oled.file.display());
+    anyhow::ensure!(
+        oled.file.is_file(),
+        "{} does not exist",
+        oled.file.display()
+    );
     let fps = oled.fps.clamp(1, 60);
     let source_modified = std::fs::metadata(&oled.file)?.modified()?;
     let cache_dir = std::env::temp_dir().join("lianli-win");
@@ -472,8 +497,22 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
         .arg("-i")
         .arg(&oled.file)
         .args(["-vf", &format!("{fit},transpose=1,fps={fps}")])
-        .args(["-r", &fps.to_string(), "-c:v", "libx264", "-preset", "ultrafast"])
-        .args(["-x264opts", "bframes=0", "-threads", "4", "-pix_fmt", "yuv420p"])
+        .args([
+            "-r",
+            &fps.to_string(),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+        ])
+        .args([
+            "-x264opts",
+            "bframes=0",
+            "-threads",
+            "4",
+            "-pix_fmt",
+            "yuv420p",
+        ])
         .args(["-color_range", "pc", "-an", "-f", "h264"])
         .arg(&output);
     #[cfg(windows)]
@@ -482,7 +521,9 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
         ffmpeg.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
     info!("Encoding {} for the OLED...", oled.file.display());
-    let status = ffmpeg.status().context("running ffmpeg (winget install Gyan.FFmpeg)")?;
+    let status = ffmpeg
+        .status()
+        .context("running ffmpeg (winget install Gyan.FFmpeg)")?;
     anyhow::ensure!(status.success(), "ffmpeg failed with {status}");
     Ok(output)
 }
@@ -546,15 +587,25 @@ fn serve_client(mut stream: TcpStream, state: &State) -> Result<()> {
 
         match id {
             PKT_REQUEST_PROTOCOL_VERSION => {
-                let client = payload.get(..4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+                let client = payload
+                    .get(..4)
+                    .map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
                 version = client.min(SERVER_PROTOCOL);
                 send(&mut stream, 0, id, &SERVER_PROTOCOL.to_le_bytes())?;
             }
             PKT_SET_CLIENT_NAME => {
-                info!("OpenRGB client: {}", String::from_utf8_lossy(&payload).trim_end_matches('\0'));
+                info!(
+                    "OpenRGB client: {}",
+                    String::from_utf8_lossy(&payload).trim_end_matches('\0')
+                );
             }
             PKT_REQUEST_CONTROLLER_COUNT => {
-                send(&mut stream, 0, id, &(state.controllers.len() as u32).to_le_bytes())?;
+                send(
+                    &mut stream,
+                    0,
+                    id,
+                    &(state.controllers.len() as u32).to_le_bytes(),
+                )?;
             }
             PKT_REQUEST_CONTROLLER_DATA => {
                 if let Some(ctl) = state.controllers.get(dev) {
@@ -749,7 +800,12 @@ fn selftest_openrgb() -> Result<()> {
             for ctl in &state.controllers {
                 if ctl.dirty.swap(false, Ordering::AcqRel) {
                     let c = ctl.colors.lock();
-                    info!("{} <- first LED {:?}, {} LEDs", ctl.name, c.first(), c.len());
+                    info!(
+                        "{} <- first LED {:?}, {} LEDs",
+                        ctl.name,
+                        c.first(),
+                        c.len()
+                    );
                 }
             }
         });

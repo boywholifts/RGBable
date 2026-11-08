@@ -59,7 +59,9 @@ fn main() -> Result<()> {
         "oled-ruler-png" => {
             let landscape = args.get(1).map(String::as_str) == Some("landscape");
             let out = args.get(2).context("missing output path")?;
-            ruler_image(landscape).save(out).with_context(|| format!("writing {out}"))?;
+            ruler_image(landscape)
+                .save(out)
+                .with_context(|| format!("writing {out}"))?;
             println!("Saved ruler to {out}");
             return Ok(());
         }
@@ -74,8 +76,12 @@ fn main() -> Result<()> {
     }
 
     let mut wireless = WirelessController::new();
-    wireless.connect().context("connecting to the wireless dongle")?;
-    wireless.start_polling().context("starting wireless discovery")?;
+    wireless
+        .connect()
+        .context("connecting to the wireless dongle")?;
+    wireless
+        .start_polling()
+        .context("starting wireless discovery")?;
     let deadline = Instant::now() + Duration::from_secs(8);
     while wireless.discovered_device_count() == 0 && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
@@ -98,7 +104,9 @@ fn main() -> Result<()> {
             let hold: u64 = args.get(3).map(|s| s.parse()).transpose()?.unwrap_or(15);
             set_fan(&wireless, &device, percent, hold)
         }
-        other => bail!("unknown command `{other}` (list | color | fan | locate | oled-ring | oled-image)"),
+        other => bail!(
+            "unknown command `{other}` (list | color | fan | locate | oled-ring | oled-image)"
+        ),
     };
     wireless.stop();
     result
@@ -121,7 +129,10 @@ fn print_devices(devices: &[DiscoveredDevice]) {
 fn pick(devices: &[DiscoveredDevice], which: Option<&String>) -> Result<DiscoveredDevice> {
     let which = which.context("missing device index or MAC (see `list`)")?;
     if let Ok(index) = which.parse::<usize>() {
-        return devices.get(index).cloned().context("no device at that index");
+        return devices
+            .get(index)
+            .cloned()
+            .context("no device at that index");
     }
     devices
         .iter()
@@ -148,7 +159,11 @@ fn set_color(wireless: &WirelessController, device: &DiscoveredDevice, rgb: [u8;
         .rgb_zone_led_counts(device.fan_count)
         .iter()
         .sum();
-    println!("Setting {} ({:?}, {leds} LEDs) to {rgb:?}", device.mac_str(), device.fan_type);
+    println!(
+        "Setting {} ({:?}, {leds} LEDs) to {rgb:?}",
+        device.mac_str(),
+        device.fan_type
+    );
     let upload = wireless.prepare_rgb_upload(&device.mac, &[vec![rgb; leds]], 5000)?;
     const ATTEMPTS: u32 = 3;
     for attempt in 1..=ATTEMPTS {
@@ -162,14 +177,22 @@ fn set_color(wireless: &WirelessController, device: &DiscoveredDevice, rgb: [u8;
             std::thread::sleep(Duration::from_millis(100));
         }
         if attempt < ATTEMPTS {
-            println!("  no confirmation yet, re-sending (attempt {}/{ATTEMPTS})", attempt + 1);
+            println!(
+                "  no confirmation yet, re-sending (attempt {}/{ATTEMPTS})",
+                attempt + 1
+            );
         }
     }
     println!("Sent {ATTEMPTS} times, but the device never confirmed (check it visually).");
     Ok(())
 }
 
-fn set_fan(wireless: &WirelessController, device: &DiscoveredDevice, percent: u8, hold: u64) -> Result<()> {
+fn set_fan(
+    wireless: &WirelessController,
+    device: &DiscoveredDevice,
+    percent: u8,
+    hold: u64,
+) -> Result<()> {
     anyhow::ensure!(device.fan_count > 0, "that device has no fans");
     let percent = percent.min(100);
     let duty = ((u16::from(percent) * 255 + 50) / 100) as u8;
@@ -177,7 +200,10 @@ fn set_fan(wireless: &WirelessController, device: &DiscoveredDevice, percent: u8
     for slot in pwm.iter_mut().take(usize::from(device.fan_count)) {
         *slot = duty;
     }
-    println!("Holding {} at {percent}% (duty {duty}) for {hold} s", device.mac_str());
+    println!(
+        "Holding {} at {percent}% (duty {duty}) for {hold} s",
+        device.mac_str()
+    );
     let end = Instant::now() + Duration::from_secs(hold);
     let mut last_print = Instant::now() - Duration::from_secs(10);
     while Instant::now() < end {
@@ -185,7 +211,10 @@ fn set_fan(wireless: &WirelessController, device: &DiscoveredDevice, percent: u8
         if last_print.elapsed() >= Duration::from_secs(2) {
             last_print = Instant::now();
             if let Some(now) = wireless.device_by_mac(&device.mac) {
-                println!("  rpm={:?} reported pwm={:?}", now.fan_rpms, now.current_pwm);
+                println!(
+                    "  rpm={:?} reported pwm={:?}",
+                    now.fan_rpms, now.current_pwm
+                );
             }
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -204,7 +233,11 @@ fn locate(wireless: &WirelessController, devices: &[DiscoveredDevice]) -> Result
     let mut groups: Vec<&DiscoveredDevice> = devices.iter().filter(|d| d.fan_count >= 2).collect();
     groups.sort_by_key(|d| d.mac);
     for (device, (name, rgb)) in groups.iter().zip(COLOURS) {
-        println!("LOCATE {} ({} fans) = {name}", device.mac_str(), device.fan_count);
+        println!(
+            "LOCATE {} ({} fans) = {name}",
+            device.mac_str(),
+            device.fan_count
+        );
         set_color(wireless, device, rgb)?;
     }
     Ok(())
@@ -220,7 +253,8 @@ fn find_wired(pid: u16) -> Result<lianli_devices::detect::DetectedDevice> {
 fn oled_ring(rgb: [u8; 3]) -> Result<()> {
     use lianli_devices::winusb::hs2_oled_led::Hs2OledLedController;
     let det = find_wired(0x8051)?;
-    let led = Hs2OledLedController::new(det.device).context("opening OLED LED MCU (is L-Connect closed?)")?;
+    let led = Hs2OledLedController::new(det.device)
+        .context("opening OLED LED MCU (is L-Connect closed?)")?;
     println!("Setting OLED ambient ring (45 LEDs) to {rgb:?}");
     led.send_rgb_frame(&[rgb; 45])?;
     println!("Sent.");
@@ -256,10 +290,17 @@ fn oled_image(path: Option<&str>) -> Result<()> {
     let img = match path {
         None => test_card(W, H),
         Some(p) => {
-            let src = image::open(p).with_context(|| format!("opening {p}"))?.to_rgb8();
+            let src = image::open(p)
+                .with_context(|| format!("opening {p}"))?
+                .to_rgb8();
             // The panel is landscape; accept landscape art by rotating it into the portrait frame.
-            let src = if src.width() > src.height() { image::imageops::rotate90(&src) } else { src };
-            let resized = image::imageops::resize(&src, W, H, image::imageops::FilterType::Lanczos3);
+            let src = if src.width() > src.height() {
+                image::imageops::rotate90(&src)
+            } else {
+                src
+            };
+            let resized =
+                image::imageops::resize(&src, W, H, image::imageops::FilterType::Lanczos3);
             resized
         }
     };
@@ -280,7 +321,8 @@ fn oled_image(path: Option<&str>) -> Result<()> {
 fn send_oled_png(png: &[u8]) -> Result<()> {
     use lianli_devices::winusb::lcd::WinUsbLcdDevice;
     let det = find_wired(0xA068)?;
-    let mut lcd = WinUsbLcdDevice::open(det.device, 0xA068).context("opening OLED (is L-Connect closed?)")?;
+    let mut lcd =
+        WinUsbLcdDevice::open(det.device, 0xA068).context("opening OLED (is L-Connect closed?)")?;
     lcd.send_frame_verified(png).context("sending frame")?;
     println!("Frame shown on the OLED.");
     Ok(())
@@ -291,7 +333,11 @@ fn send_oled_png(png: &[u8]) -> Result<()> {
 /// with a thin white cross through the centre.
 fn oled_card(landscape: bool) -> Result<()> {
     use std::io::Cursor;
-    let (w, h) = if landscape { (2288u32, 1080u32) } else { (1080u32, 2288u32) };
+    let (w, h) = if landscape {
+        (2288u32, 1080u32)
+    } else {
+        (1080u32, 2288u32)
+    };
     let img = image::RgbImage::from_fn(w, h, |x, y| {
         if x.abs_diff(w / 2) < 6 || y.abs_diff(h / 2) < 6 {
             return image::Rgb([255, 255, 255]);
@@ -349,7 +395,11 @@ fn ruler_image(landscape: bool) -> image::RgbImage {
     ];
     const LONG: u32 = 2288;
     const SHORT: u32 = 1080;
-    let (w, h) = if landscape { (LONG, SHORT) } else { (SHORT, LONG) };
+    let (w, h) = if landscape {
+        (LONG, SHORT)
+    } else {
+        (SHORT, LONG)
+    };
     image::RgbImage::from_fn(w, h, |x, y| {
         let (along, across) = if landscape { (x, y) } else { (y, x) };
         let stripe = (along * 8 / LONG).min(7) as usize;
@@ -368,7 +418,8 @@ fn oled_video(file: &str, seconds: Option<u64>, fps: f32) -> Result<()> {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Arc;
     let det = find_wired(0xA068)?;
-    let mut lcd = WinUsbLcdDevice::open(det.device, 0xA068).context("opening OLED (is L-Connect closed?)")?;
+    let mut lcd =
+        WinUsbLcdDevice::open(det.device, 0xA068).context("opening OLED (is L-Connect closed?)")?;
     let stop = Arc::new(AtomicBool::new(false));
     let timer = seconds.map(|seconds| {
         let stop = stop.clone();
@@ -401,7 +452,13 @@ struct PlayOptions {
 
 fn parse_play_options(args: &[String]) -> Result<PlayOptions> {
     let mut file = None;
-    let mut options = PlayOptions { file: String::new(), seconds: None, fps: 30, contain: false, rotate: 90 };
+    let mut options = PlayOptions {
+        file: String::new(),
+        seconds: None,
+        fps: 30,
+        contain: false,
+        rotate: 90,
+    };
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         let mut value = |name: &str| it.next().with_context(|| format!("{name} needs a value"));
@@ -436,7 +493,11 @@ fn parse_play_options(args: &[String]) -> Result<PlayOptions> {
 fn play_filter(options: &PlayOptions) -> String {
     const W: u32 = 2288;
     const H: u32 = 1080;
-    let (w, h) = if options.rotate == 90 || options.rotate == 270 { (W, H) } else { (H, W) };
+    let (w, h) = if options.rotate == 90 || options.rotate == 270 {
+        (W, H)
+    } else {
+        (H, W)
+    };
     let fit = if options.contain {
         format!("scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black")
     } else {
@@ -473,8 +534,22 @@ fn oled_play(args: &[String]) -> Result<()> {
         .arg("-i")
         .arg(&options.file)
         .args(["-vf", &play_filter(&options)])
-        .args(["-r", &options.fps.to_string(), "-c:v", "libx264", "-preset", "ultrafast"])
-        .args(["-x264opts", "bframes=0", "-threads", "4", "-pix_fmt", "yuv420p"])
+        .args([
+            "-r",
+            &options.fps.to_string(),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+        ])
+        .args([
+            "-x264opts",
+            "bframes=0",
+            "-threads",
+            "4",
+            "-pix_fmt",
+            "yuv420p",
+        ])
         .args(["-color_range", "pc", "-an", "-f", "h264"])
         .arg(&output);
     println!(
@@ -491,5 +566,9 @@ fn oled_play(args: &[String]) -> Result<()> {
     let size = std::fs::metadata(&output)?.len();
     println!("Encoded {} KiB of H.264.", size / 1024);
 
-    oled_video(&output.to_string_lossy(), options.seconds, options.fps as f32)
+    oled_video(
+        &output.to_string_lossy(),
+        options.seconds,
+        options.fps as f32,
+    )
 }

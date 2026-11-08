@@ -1996,7 +1996,8 @@ pub fn read_only_snapshot() -> Result<Vec<SnapshotRecord>> {
         cmd[1] = pages;
         let mut response = vec![0u8; usize::from(pages) * 512];
         rx.read_flush();
-        rx.write(&cmd, USB_TIMEOUT).context("sending GetDev query")?;
+        rx.write(&cmd, USB_TIMEOUT)
+            .context("sending GetDev query")?;
         let len = rx.read_silence_checked(
             &mut response,
             Duration::from_millis(100),
@@ -2013,7 +2014,9 @@ pub fn read_only_snapshot() -> Result<Vec<SnapshotRecord>> {
         let mut records = Vec::with_capacity(count);
         for idx in 0..count {
             let offset = 4 + idx * 42;
-            let Some(chunk) = response.get(offset..offset + 42) else { break };
+            let Some(chunk) = response.get(offset..offset + 42) else {
+                break;
+            };
             let mut raw = [0u8; 42];
             raw.copy_from_slice(chunk);
             let master = parse_master_record(chunk);
@@ -2022,7 +2025,11 @@ pub fn read_only_snapshot() -> Result<Vec<SnapshotRecord>> {
             } else {
                 None
             };
-            records.push(SnapshotRecord { raw, device, master });
+            records.push(SnapshotRecord {
+                raw,
+                device,
+                master,
+            });
         }
         return Ok(records);
     }

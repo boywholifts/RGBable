@@ -1275,15 +1275,19 @@ impl Engine {
                     .collect()
             })
             .unwrap_or_default();
-        let (gpu_temp_c, gpu_load) = gpu.map_or((None, None), |g| g.read());
+        let gpu = gpu.map(|g| g.read()).unwrap_or_default();
         Readings {
             coolant_c: telemetry.coolant_c,
             cpu_temp_c: cpu
                 .then(|| crate::cpu_temp::read(self.config_path.parent()?))
                 .flatten(),
             pump_rpm: telemetry.pump_rpm,
-            gpu_temp_c,
-            gpu_load,
+            gpu_temp_c: gpu.temp_c,
+            gpu_load: gpu.load,
+            gpu_power_w: gpu.power_w,
+            gpu_clock_mhz: gpu.clock_mhz,
+            cpu_load: crate::system_load::cpu_load(),
+            ram_load: crate::system_load::ram_load(),
             fans_rpm: (!rpms.is_empty()).then(|| rpms.iter().sum::<u32>() / rpms.len() as u32),
         }
     }
@@ -1338,7 +1342,7 @@ impl Engine {
                 warn!("OLED stream stopped: {e:#}; retrying in 5 s");
                 *self.oled_state.write() = "Reconnecting".into();
             }
-            thread::sleep(Duration::from_secs(5));
+            sleep_unless_stopped(Duration::from_secs(5), stop);
         }
     }
 }
@@ -1352,10 +1356,12 @@ impl Engine {
         while !stop.load(Ordering::Acquire) {
             *self.oled_state.write() = "Playing".into();
             let result = live_ffmpeg(oled).and_then(|mut ffmpeg| {
-                let mut overlay_in = ffmpeg.stdin.take().context("ffmpeg's input")?;
+                let overlay_in = ffmpeg.stdin.take().context("ffmpeg's input")?;
                 let mut video_out = ffmpeg.stdout.take().context("ffmpeg's output")?;
                 let streamed = thread::scope(|scope| {
-                    scope.spawn(|| self.feed_overlay(modules, &mut overlay_in, stop));
+                    // closing ffmpeg's overlay input when stopped is what lets it run on
+                    // and unblock the reader below
+                    scope.spawn(move || self.feed_overlay(modules, overlay_in, stop));
                     let streamed = find_wired(0x1CBE, 0xA068)
                         .and_then(|det| WinUsbLcdDevice::open(det.device, 0xA068))
                         .and_then(|mut lcd| {
@@ -1380,7 +1386,7 @@ impl Engine {
                 warn!("OLED stream with widgets stopped: {e:#}; retrying in 5 s");
                 *self.oled_state.write() = "Reconnecting".into();
             }
-            thread::sleep(Duration::from_secs(5));
+            sleep_unless_stopped(Duration::from_secs(5), stop);
         }
     }
 
@@ -1389,14 +1395,14 @@ impl Engine {
     fn feed_overlay(
         &self,
         modules: &[OledModule],
-        into: &mut impl std::io::Write,
+        mut into: impl std::io::Write,
         stop: &AtomicBool,
     ) {
         let mut gpu = modules
             .iter()
-            .any(|m| m.kind.uses_gpu())
+            .any(|m| m.reading().uses_gpu())
             .then(oled_modules::Gpu::new);
-        let cpu = modules.iter().any(|m| m.kind.uses_cpu());
+        let cpu = modules.iter().any(|m| m.reading().uses_cpu());
         let mut next = Instant::now();
         while !stop.load(Ordering::Acquire) {
             let readings = self.readings(gpu.as_mut(), cpu);
@@ -1410,6 +1416,13 @@ impl Engine {
             next += Duration::from_secs(1);
             thread::sleep(next.saturating_duration_since(Instant::now()));
         }
+    }
+}
+
+fn sleep_unless_stopped(duration: Duration, stop: &AtomicBool) {
+    let until = Instant::now() + duration;
+    while !stop.load(Ordering::Acquire) && Instant::now() < until {
+        thread::sleep(Duration::from_millis(100));
     }
 }
 

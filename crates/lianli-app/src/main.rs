@@ -6,7 +6,11 @@ mod cpu_temp;
 mod effects;
 mod engine;
 mod fans;
+#[allow(dead_code)]
+mod lconnect_theme;
 mod lights;
+#[allow(dead_code)]
+mod nrbf;
 mod oled_library;
 mod oled_modules;
 mod openrgb;
@@ -14,6 +18,7 @@ mod openrgb_host;
 mod palette;
 mod render;
 mod script;
+mod system_load;
 mod updater;
 
 use anyhow::Context;

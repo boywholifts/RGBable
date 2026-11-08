@@ -27,12 +27,14 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 ureq = { version = "2", features = ["json"] }
 ab_glyph = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["png"] }
+ttf-parser = "0.25"
 chrono = { workspace = true }
 nvml-wrapper = "0.11"
 rhai = { version = "1", features = ["sync", "f32_float", "no_custom_syntax"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Diagnostics_ToolHelp", "Win32_System_IO", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [features]
 default = ["custom-protocol"]

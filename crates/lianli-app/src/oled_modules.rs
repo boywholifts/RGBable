@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 /// The video as RGBable lays it out, before it is turned upright for the panel.
 pub const WIDTH: u32 = 2288;
 pub const HEIGHT: u32 = 1080;
-pub const MAX_MODULES: usize = 12;
+pub const MAX_MODULES: usize = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -25,16 +25,39 @@ pub enum ModuleKind {
     GpuLoad,
     Fans,
     Text,
+    CpuLoad,
+    RamLoad,
+    GpuPower,
+    GpuClock,
+    /// A picture (`file`), stretched over `w` × `h`.
+    Image,
+    /// A bar filled by another reading (`source`).
+    Bar,
 }
 
 impl ModuleKind {
     pub fn uses_gpu(self) -> bool {
-        matches!(self, Self::GpuTemp | Self::GpuLoad)
+        matches!(
+            self,
+            Self::GpuTemp | Self::GpuLoad | Self::GpuPower | Self::GpuClock
+        )
     }
 
     pub fn uses_cpu(self) -> bool {
         self == Self::CpuTemp
     }
+}
+
+/// Which point of a widget `x` and `y` place: its middle, or the top of its text at its left
+/// edge, middle or right edge (how L-Connect lays text out).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Anchor {
+    #[default]
+    Center,
+    TopLeft,
+    TopCenter,
+    TopRight,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -65,6 +88,40 @@ pub struct OledModule {
     /// The caption's height as a percentage of the value's.
     #[serde(default = "caption_scale")]
     pub caption_scale: u8,
+    #[serde(default)]
+    pub anchor: Anchor,
+    /// Readouts show their unit (°C, RPM, %); off where the theme prints it separately.
+    #[serde(default = "yes")]
+    pub unit: bool,
+    /// The clock's or date's layout, as L-Connect names them: "h:m:s", "Y-M-D".
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub format: String,
+    /// An image widget's picture file.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub file: String,
+    /// An image's or bar's size, in thousandths of the frame's width and height.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub w: u16,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub h: u16,
+    /// What fills a bar.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<ModuleKind>,
+    /// A bar's empty part.
+    #[serde(default = "bar_back")]
+    pub back: [u8; 3],
+    /// A segmented bar's block and gap widths, in pixels of the frame.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub block: u16,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub gap: u16,
+}
+
+fn is_zero(v: &u16) -> bool {
+    *v == 0
+}
+fn bar_back() -> [u8; 3] {
+    [40, 40, 48]
 }
 
 fn full() -> u8 {
@@ -78,6 +135,33 @@ fn caption_scale() -> u8 {
 }
 
 impl OledModule {
+    pub fn new(kind: ModuleKind) -> Self {
+        Self {
+            kind,
+            x: 500,
+            y: 500,
+            size: 100,
+            color: [255, 255, 255],
+            label: String::new(),
+            text: String::new(),
+            hour12: false,
+            font: String::new(),
+            opacity: full(),
+            shadow: yes(),
+            caption_scale: caption_scale(),
+            anchor: Anchor::default(),
+            unit: yes(),
+            format: String::new(),
+            file: String::new(),
+            w: 0,
+            h: 0,
+            source: None,
+            back: bar_back(),
+            block: 0,
+            gap: 0,
+        }
+    }
+
     pub fn cleaned(mut self) -> Self {
         self.x = self.x.min(1000);
         self.y = self.y.min(1000);
@@ -86,7 +170,26 @@ impl OledModule {
         self.text = self.text.chars().take(60).collect();
         self.opacity = self.opacity.clamp(10, 100);
         self.caption_scale = self.caption_scale.clamp(15, 100);
+        self.w = self.w.min(1000);
+        self.h = self.h.min(1000);
+        self.format = self.format.chars().take(20).collect();
+        self.block = self.block.min(500);
+        self.gap = self.gap.min(500);
+        if self
+            .source
+            .is_some_and(|s| matches!(s, ModuleKind::Bar | ModuleKind::Image | ModuleKind::Text))
+        {
+            self.source = None;
+        }
         self
+    }
+
+    /// The reading this widget shows.
+    pub fn reading(&self) -> ModuleKind {
+        match self.kind {
+            ModuleKind::Bar => self.source.unwrap_or(ModuleKind::CpuLoad),
+            kind => kind,
+        }
     }
 }
 
@@ -201,6 +304,56 @@ pub struct Readings {
     pub gpu_temp_c: Option<u32>,
     pub gpu_load: Option<u32>,
     pub fans_rpm: Option<u32>,
+    pub cpu_load: Option<u32>,
+    pub ram_load: Option<u32>,
+    pub gpu_power_w: Option<u32>,
+    pub gpu_clock_mhz: Option<u32>,
+}
+
+impl Readings {
+    /// A reading as a number and its unit.
+    fn number(&self, kind: ModuleKind) -> Option<(String, &'static str)> {
+        let n = |v: Option<u32>, unit| v.map(|v| (v.to_string(), unit));
+        match kind {
+            ModuleKind::Coolant => n(self.coolant_c.map(u32::from), "°C"),
+            ModuleKind::CpuTemp => n(self.cpu_temp_c, "°C"),
+            ModuleKind::Pump => n(self.pump_rpm.map(u32::from), " RPM"),
+            ModuleKind::GpuTemp => n(self.gpu_temp_c, "°C"),
+            ModuleKind::GpuLoad => n(self.gpu_load, "%"),
+            ModuleKind::Fans => n(self.fans_rpm, " RPM"),
+            ModuleKind::CpuLoad => n(self.cpu_load, "%"),
+            ModuleKind::RamLoad => n(self.ram_load, "%"),
+            ModuleKind::GpuPower => n(self.gpu_power_w, " W"),
+            ModuleKind::GpuClock => self
+                .gpu_clock_mhz
+                .map(|mhz| (format!("{:.2}", f64::from(mhz) / 1000.0), " GHz")),
+            _ => None,
+        }
+    }
+
+    /// How full a bar showing `kind` is, 0 to 1.
+    pub fn fraction(&self, kind: ModuleKind) -> Option<f32> {
+        let of = |v: Option<u32>, full: f32| v.map(|v| (v as f32 / full).clamp(0.0, 1.0));
+        match kind {
+            ModuleKind::Coolant => of(self.coolant_c.map(u32::from), 60.0),
+            ModuleKind::CpuTemp | ModuleKind::GpuTemp => of(
+                if kind == ModuleKind::CpuTemp {
+                    self.cpu_temp_c
+                } else {
+                    self.gpu_temp_c
+                },
+                100.0,
+            ),
+            ModuleKind::Pump => of(self.pump_rpm.map(u32::from), 3000.0),
+            ModuleKind::Fans => of(self.fans_rpm, 2500.0),
+            ModuleKind::GpuLoad => of(self.gpu_load, 100.0),
+            ModuleKind::CpuLoad => of(self.cpu_load, 100.0),
+            ModuleKind::RamLoad => of(self.ram_load, 100.0),
+            ModuleKind::GpuPower => of(self.gpu_power_w, 600.0),
+            ModuleKind::GpuClock => of(self.gpu_clock_mhz, 3000.0),
+            _ => None,
+        }
+    }
 }
 
 pub fn value(
@@ -208,18 +361,34 @@ pub fn value(
     readings: &Readings,
     now: chrono::DateTime<chrono::Local>,
 ) -> String {
-    let or_dash = |v: Option<String>| v.unwrap_or_else(|| "–".into());
     match module.kind {
-        ModuleKind::Clock if module.hour12 => now.format("%-I:%M %p").to_string(),
-        ModuleKind::Clock => now.format("%H:%M").to_string(),
-        ModuleKind::Date => now.format("%a %b %-d").to_string(),
-        ModuleKind::Coolant => or_dash(readings.coolant_c.map(|c| format!("{c}°C"))),
-        ModuleKind::CpuTemp => or_dash(readings.cpu_temp_c.map(|c| format!("{c}°C"))),
-        ModuleKind::Pump => or_dash(readings.pump_rpm.map(|r| format!("{r} RPM"))),
-        ModuleKind::GpuTemp => or_dash(readings.gpu_temp_c.map(|c| format!("{c}°C"))),
-        ModuleKind::GpuLoad => or_dash(readings.gpu_load.map(|p| format!("{p}%"))),
-        ModuleKind::Fans => or_dash(readings.fans_rpm.map(|r| format!("{r} RPM"))),
+        ModuleKind::Clock => {
+            let seconds = module.format.contains('s');
+            let layout = match (module.hour12, seconds) {
+                (true, true) => "%-I:%M:%S %p",
+                (true, false) => "%-I:%M %p",
+                (false, true) => "%H:%M:%S",
+                (false, false) => "%H:%M",
+            };
+            now.format(layout).to_string()
+        }
+        ModuleKind::Date => {
+            let layout = match module.format.as_str() {
+                "Y-M-D" => "%Y-%m-%d",
+                "M-D" => "%m-%d",
+                "D/M/Y" => "%d/%m/%Y",
+                "M/D/Y" => "%m/%d/%Y",
+                _ => "%a %b %-d",
+            };
+            now.format(layout).to_string()
+        }
         ModuleKind::Text => module.text.clone(),
+        ModuleKind::Image | ModuleKind::Bar => String::new(),
+        kind => match readings.number(kind) {
+            Some((number, unit)) if module.unit => format!("{number}{unit}"),
+            Some((number, _)) => number,
+            None => "–".into(),
+        },
     }
 }
 
@@ -282,99 +451,250 @@ pub fn render(
 ) -> Vec<u8> {
     let mut frame = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
     for module in modules {
-        let Some(font) = font(&module.font) else {
-            continue;
-        };
-        let size = f32::from(module.size) / 1000.0 * HEIGHT as f32;
+        let opacity = f32::from(module.opacity.clamp(10, 100)) / 100.0;
         let x = f32::from(module.x) / 1000.0 * WIDTH as f32;
         let y = f32::from(module.y) / 1000.0 * HEIGHT as f32;
-        let opacity = f32::from(module.opacity.clamp(10, 100)) / 100.0;
-        let text = value(module, readings, now);
-        let caption = module.label.trim();
-        let caption_size = size * f32::from(module.caption_scale) / 100.0;
-        let gap = size * 0.08;
-        let total = if caption.is_empty() {
-            size
-        } else {
-            size + gap + caption_size
-        };
-        let top = y - total / 2.0;
-        let shadow = (size / 22.0).max(2.0);
-        let layers = |alpha: f32| {
-            let mut layers = Vec::new();
-            if module.shadow {
-                layers.push((shadow, [0, 0, 0], 0.6 * alpha));
+        let w = f32::from(module.w) / 1000.0 * WIDTH as f32;
+        let h = f32::from(module.h) / 1000.0 * HEIGHT as f32;
+        match module.kind {
+            ModuleKind::Image => draw_image(&mut frame, module, x, y, w, h, opacity),
+            ModuleKind::Bar => {
+                let filled = readings.fraction(module.reading()).unwrap_or(0.0);
+                draw_bar(&mut frame, module, x, y, w, h, filled, opacity);
             }
-            layers.push((0.0, module.color, alpha));
-            layers
-        };
-        if !caption.is_empty() {
-            for (offset, color, alpha) in layers(0.75 * opacity) {
-                draw_text(
-                    &mut frame,
-                    &font,
-                    caption,
-                    caption_size,
-                    x + offset,
-                    top + offset,
-                    color,
-                    alpha,
-                );
-            }
-        }
-        let value_top = if caption.is_empty() {
-            top
-        } else {
-            top + caption_size + gap
-        };
-        for (offset, color, alpha) in layers(opacity) {
-            draw_text(
-                &mut frame,
-                &font,
-                &text,
-                size,
-                x + offset,
-                value_top + offset,
-                color,
-                alpha,
-            );
+            _ => draw_readout(&mut frame, module, readings, now, x, y, opacity),
         }
     }
     frame
 }
 
-/// Draws `text` centered on `center_x`, its line box starting at `top`.
+/// Where a widget's box starts, given its anchor point and size.
+fn top_left(anchor: Anchor, x: f32, y: f32, w: f32, h: f32) -> (f32, f32) {
+    match anchor {
+        Anchor::Center => (x - w / 2.0, y - h / 2.0),
+        Anchor::TopLeft => (x, y),
+        Anchor::TopCenter => (x - w / 2.0, y),
+        Anchor::TopRight => (x - w, y),
+    }
+}
+
+fn draw_readout(
+    frame: &mut [u8],
+    module: &OledModule,
+    readings: &Readings,
+    now: chrono::DateTime<chrono::Local>,
+    x: f32,
+    y: f32,
+    opacity: f32,
+) {
+    let Some(font) = font(&module.font) else {
+        return;
+    };
+    let size = f32::from(module.size) / 1000.0 * HEIGHT as f32;
+    let text = value(module, readings, now);
+    let caption = module.label.trim();
+    let caption_size = size * f32::from(module.caption_scale) / 100.0;
+    let gap = size * 0.08;
+    let total = if caption.is_empty() {
+        size
+    } else {
+        size + gap + caption_size
+    };
+    let top = match module.anchor {
+        Anchor::Center => y - total / 2.0,
+        _ => y,
+    };
+    let shadow = (size / 22.0).max(2.0);
+    let layers = |alpha: f32| {
+        let mut layers = Vec::new();
+        if module.shadow {
+            layers.push((shadow, [0, 0, 0], 0.6 * alpha));
+        }
+        layers.push((0.0, module.color, alpha));
+        layers
+    };
+    let left_of = |line: &str, size: f32| {
+        let width = text_width(&font, line, size);
+        top_left(module.anchor, x, 0.0, width, 0.0).0
+    };
+    if !caption.is_empty() {
+        let left = left_of(caption, caption_size);
+        for (offset, color, alpha) in layers(0.75 * opacity) {
+            draw_text(
+                frame,
+                &font,
+                caption,
+                caption_size,
+                left + offset,
+                top + offset,
+                color,
+                alpha,
+            );
+        }
+    }
+    let value_top = if caption.is_empty() {
+        top
+    } else {
+        top + caption_size + gap
+    };
+    let left = left_of(&text, size);
+    for (offset, color, alpha) in layers(opacity) {
+        draw_text(
+            frame,
+            &font,
+            &text,
+            size,
+            left + offset,
+            value_top + offset,
+            color,
+            alpha,
+        );
+    }
+}
+
+fn text_width(font: &FontVec, text: &str, size: f32) -> f32 {
+    let scaled = font.as_scaled(PxScale::from(size));
+    let mut width = 0.0;
+    let mut previous = None;
+    for c in text.chars() {
+        let id = scaled.glyph_id(c);
+        if let Some(previous) = previous {
+            width += scaled.kern(previous, id);
+        }
+        width += scaled.h_advance(id);
+        previous = Some(id);
+    }
+    width
+}
+
+fn blend(frame: &mut [u8], px: i64, py: i64, color: [u8; 3], alpha: f32) {
+    if px < 0 || py < 0 || px >= i64::from(WIDTH) || py >= i64::from(HEIGHT) {
+        return;
+    }
+    let a = alpha.clamp(0.0, 1.0);
+    if a <= 0.0 {
+        return;
+    }
+    let i = ((py as u32 * WIDTH + px as u32) * 4) as usize;
+    let under = f32::from(frame[i + 3]) / 255.0;
+    let out = a + under * (1.0 - a);
+    for (channel, &c) in color.iter().enumerate() {
+        let mixed = (f32::from(c) * a + f32::from(frame[i + channel]) * under * (1.0 - a)) / out;
+        frame[i + channel] = mixed.round() as u8;
+    }
+    frame[i + 3] = (out * 255.0).round() as u8;
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_bar(
+    frame: &mut [u8],
+    module: &OledModule,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    filled: f32,
+    opacity: f32,
+) {
+    let (left, top) = top_left(module.anchor, x, y, w, h);
+    let (left, top, w, h) = (
+        left.round() as i64,
+        top.round() as i64,
+        w.round() as i64,
+        h.round() as i64,
+    );
+    let fill_to = (w as f32 * filled).round() as i64;
+    let block = i64::from(module.block);
+    let gap = i64::from(module.gap);
+    for dx in 0..w.max(0) {
+        let in_gap = block > 0 && dx % (block + gap) >= block;
+        if in_gap {
+            continue;
+        }
+        let lit = if block > 0 {
+            // a segment lights once the fill reaches its middle
+            let start = dx - dx % (block + gap);
+            start + block / 2 < fill_to
+        } else {
+            dx < fill_to
+        };
+        let color = if lit { module.color } else { module.back };
+        for dy in 0..h.max(0) {
+            blend(frame, left + dx, top + dy, color, opacity);
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_image(frame: &mut [u8], module: &OledModule, x: f32, y: f32, w: f32, h: f32, opacity: f32) {
+    let (w, h) = (w.round().max(1.0) as u32, h.round().max(1.0) as u32);
+    let Some(image) = image(&module.file, w, h) else {
+        return;
+    };
+    let (left, top) = top_left(module.anchor, x, y, w as f32, h as f32);
+    let (left, top) = (left.round() as i64, top.round() as i64);
+    for (ix, iy, pixel) in image.enumerate_pixels() {
+        let [r, g, b, a] = pixel.0;
+        if a > 0 {
+            blend(
+                frame,
+                left + i64::from(ix),
+                top + i64::from(iy),
+                [r, g, b],
+                f32::from(a) / 255.0 * opacity,
+            );
+        }
+    }
+}
+
+type Pictures = BTreeMap<(String, u32, u32), Option<Arc<image::RgbaImage>>>;
+
+/// A picture scaled to `w` × `h`, loaded once per size.
+fn image(file: &str, w: u32, h: u32) -> Option<Arc<image::RgbaImage>> {
+    static LOADED: parking_lot::Mutex<Pictures> = parking_lot::Mutex::new(BTreeMap::new());
+    let mut loaded = LOADED.lock();
+    if loaded.len() > 64 {
+        loaded.clear();
+    }
+    loaded
+        .entry((file.to_string(), w, h))
+        .or_insert_with(|| {
+            let picture = image::open(file).ok()?.to_rgba8();
+            let picture = if picture.dimensions() == (w, h) {
+                picture
+            } else {
+                image::imageops::resize(&picture, w, h, image::imageops::FilterType::Triangle)
+            };
+            Some(Arc::new(picture))
+        })
+        .clone()
+}
+
+/// Draws `text` with its line box starting at `left`, `top`.
 #[allow(clippy::too_many_arguments)]
 fn draw_text(
     frame: &mut [u8],
     font: &FontVec,
     text: &str,
     size: f32,
-    center_x: f32,
+    left: f32,
     top: f32,
     color: [u8; 3],
     alpha: f32,
 ) {
     let scaled = font.as_scaled(PxScale::from(size));
-    let mut glyphs = Vec::new();
     let mut caret = 0.0f32;
     let mut previous = None;
+    let baseline = top + scaled.ascent();
     for c in text.chars() {
         let id = scaled.glyph_id(c);
         if let Some(previous) = previous {
             caret += scaled.kern(previous, id);
         }
-        glyphs.push(id.with_scale_and_position(PxScale::from(size), ab_glyph::point(caret, 0.0)));
+        let glyph = id
+            .with_scale_and_position(PxScale::from(size), ab_glyph::point(left + caret, baseline));
         caret += scaled.h_advance(id);
         previous = Some(id);
-    }
-    let left = center_x - caret / 2.0;
-    let baseline = top + scaled.ascent();
-    for glyph in glyphs {
-        let glyph = ab_glyph::Glyph {
-            position: ab_glyph::point(glyph.position.x + left, baseline),
-            ..glyph
-        };
         let Some(outlined) = font.outline_glyph(glyph) else {
             continue;
         };
@@ -382,22 +702,7 @@ fn draw_text(
         outlined.draw(|gx, gy, coverage| {
             let px = bounds.min.x as i64 + i64::from(gx);
             let py = bounds.min.y as i64 + i64::from(gy);
-            if px < 0 || py < 0 || px >= i64::from(WIDTH) || py >= i64::from(HEIGHT) {
-                return;
-            }
-            let a = (coverage * alpha).clamp(0.0, 1.0);
-            if a <= 0.0 {
-                return;
-            }
-            let i = ((py as u32 * WIDTH + px as u32) * 4) as usize;
-            let under = f32::from(frame[i + 3]) / 255.0;
-            let out = a + under * (1.0 - a);
-            for (channel, &c) in color.iter().enumerate() {
-                let mixed =
-                    (f32::from(c) * a + f32::from(frame[i + channel]) * under * (1.0 - a)) / out;
-                frame[i + channel] = mixed.round() as u8;
-            }
-            frame[i + 3] = (out * 255.0).round() as u8;
+            blend(frame, px, py, color, coverage * alpha);
         });
     }
 }
@@ -417,10 +722,18 @@ pub fn rotate_clockwise(frame: &[u8]) -> Vec<u8> {
     out
 }
 
-/// NVIDIA GPU temperature and load, read through the driver's NVML library.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct GpuReading {
+    pub temp_c: Option<u32>,
+    pub load: Option<u32>,
+    pub power_w: Option<u32>,
+    pub clock_mhz: Option<u32>,
+}
+
+/// NVIDIA GPU readings, through the driver's NVML library.
 pub struct Gpu {
     nvml: Option<nvml_wrapper::Nvml>,
-    last: Option<(Instant, Option<u32>, Option<u32>)>,
+    last: Option<(Instant, GpuReading)>,
 }
 
 impl Gpu {
@@ -433,26 +746,26 @@ impl Gpu {
         Self { nvml, last: None }
     }
 
-    /// Temperature in °C and load in percent of the first GPU.
-    pub fn read(&mut self) -> (Option<u32>, Option<u32>) {
-        if let Some((at, temp, load)) = self.last {
+    /// The first GPU's readings, at most every couple of seconds.
+    pub fn read(&mut self) -> GpuReading {
+        if let Some((at, reading)) = self.last {
             if at.elapsed() < Self::EVERY {
-                return (temp, load);
+                return reading;
             }
         }
+        use nvml_wrapper::enum_wrappers::device::{Clock, TemperatureSensor};
         let reading = self
             .nvml
             .as_ref()
             .and_then(|nvml| nvml.device_by_index(0).ok())
-            .map(|gpu| {
-                let temp = gpu
-                    .temperature(nvml_wrapper::enum_wrappers::device::TemperatureSensor::Gpu)
-                    .ok();
-                let load = gpu.utilization_rates().ok().map(|u| u.gpu);
-                (temp, load)
+            .map(|gpu| GpuReading {
+                temp_c: gpu.temperature(TemperatureSensor::Gpu).ok(),
+                load: gpu.utilization_rates().ok().map(|u| u.gpu),
+                power_w: gpu.power_usage().ok().map(|mw| mw / 1000),
+                clock_mhz: gpu.clock_info(Clock::Graphics).ok(),
             })
-            .unwrap_or((None, None));
-        self.last = Some((Instant::now(), reading.0, reading.1));
+            .unwrap_or_default();
+        self.last = Some((Instant::now(), reading));
         reading
     }
 }
@@ -463,18 +776,9 @@ mod tests {
 
     fn module(kind: ModuleKind) -> OledModule {
         OledModule {
-            kind,
-            x: 500,
-            y: 500,
             size: 200,
-            color: [255, 255, 255],
-            label: String::new(),
             text: "Hi".into(),
-            hour12: false,
-            font: String::new(),
-            opacity: 100,
-            shadow: true,
-            caption_scale: 38,
+            ..OledModule::new(kind)
         }
     }
 

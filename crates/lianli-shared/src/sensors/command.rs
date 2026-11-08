@@ -311,7 +311,9 @@ fn output_until(mut command: Command, timeout: Duration, stop: &AtomicBool) -> R
                 }
                 Ok(length) => output.extend_from_slice(&buffer[..length]),
                 Err(error) if error.kind() == ErrorKind::Interrupted => {}
-                Err(error) => break Err(anyhow::Error::new(error).context("Reading sensor command output")),
+                Err(error) => {
+                    break Err(anyhow::Error::new(error).context("Reading sensor command output"))
+                }
             }
         };
         let _ = sender.send(result);
@@ -331,7 +333,9 @@ fn output_until(mut command: Command, timeout: Duration, stop: &AtomicBool) -> R
         std::thread::sleep(Duration::from_millis(10));
     };
     // A grandchild can keep the pipe open after the child exits; never wait past the deadline.
-    let remaining = deadline.saturating_duration_since(Instant::now()).max(Duration::from_millis(1));
+    let remaining = deadline
+        .saturating_duration_since(Instant::now())
+        .max(Duration::from_millis(1));
     let output = receiver
         .recv_timeout(remaining)
         .map_err(|_| anyhow::anyhow!("Sensor command timed out"))??;

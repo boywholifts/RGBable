@@ -17,7 +17,11 @@ fn main() -> anyhow::Result<()> {
     let live = std::env::args().any(|arg| arg == "--live");
     println!(
         "lianli-probe ({}), libusb {:?}",
-        if live { "live read-only queries" } else { "enumerate only" },
+        if live {
+            "live read-only queries"
+        } else {
+            "enumerate only"
+        },
         rusb::version()
     );
 
@@ -39,7 +43,9 @@ fn main() -> anyhow::Result<()> {
     println!("\nWireless dongle:");
     let mut any = false;
     for device in lianli_transport::usb_context::devices()?.iter() {
-        let Ok(desc) = device.device_descriptor() else { continue };
+        let Ok(desc) = device.device_descriptor() else {
+            continue;
+        };
         let id = (desc.vendor_id(), desc.product_id());
         let role = if WIRELESS_TX.contains(&id) {
             "TX"
@@ -82,7 +88,11 @@ fn live_wireless() {
                 } else if let Some(d) = &r.device {
                     println!(
                         "  [{i}] {}  type={:?}  device_type={}  fans={}  fan_type_bytes={:?}",
-                        d.mac_str(), d.fan_type, d.device_type, d.fan_count, d.fan_types
+                        d.mac_str(),
+                        d.fan_type,
+                        d.device_type,
+                        d.fan_count,
+                        d.fan_types
                     );
                     println!(
                         "       rpm={:?} pwm={:?} master={:02x?} ch={} coolant={:?} mb_sync_light={} pwm_line={}",
@@ -127,5 +137,9 @@ fn live_hs2_led(detected: &[lianli_devices::detect::DetectedDevice]) {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect::<Vec<_>>().join(" ")
+    bytes
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
