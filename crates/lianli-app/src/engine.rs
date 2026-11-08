@@ -1030,6 +1030,17 @@ impl Engine {
                 if resend.is_none() && !dirty {
                     continue;
                 }
+                // A device still taking in one upload can freeze on a frame if the next one
+                // starts over it, as when an inner and an outer effect change back to back.
+                // The newer lighting waits for the first to land (or time out).
+                if let Some(State::Pending { upload, sent, .. }) = states.get(&mac) {
+                    if dirty
+                        && sent.elapsed() < CONFIRM_WAIT
+                        && !wireless.rgb_upload_applied(&mac, upload.effect_index())
+                    {
+                        continue;
+                    }
+                }
 
                 match wireless.mb_rgb_ready_for_upload(&mac) {
                     Ok(true) => {}
