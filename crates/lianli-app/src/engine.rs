@@ -1158,7 +1158,7 @@ impl Engine {
                 turn,
                 ..effect
             };
-            let behind = render::clock_ms() as i64 - delay;
+            let behind = render::clock_ms() - delay;
             let period = u64::from(effect.period_ms().max(1));
             let phase = behind.rem_euclid(period as i64) as f32 / period as f32;
             let mut frame = effect.frame(&ctl.zones, phase);
@@ -1388,6 +1388,22 @@ const MAX_SHRINK: u8 = 3;
 
 /// Static colors go up as one frame; effects as a loop the device plays by itself, drawn
 /// on the device's real layout and made smaller until it fits the size budget.
+/// A recent reading of the dongle's RF master clock that wireless loops play on. Read again
+/// every so often, so a difference in speed between it and the PC's clock can't build up.
+fn master_clock(wireless: &WirelessController) -> Option<(u32, Instant)> {
+    const REREAD: Duration = Duration::from_secs(30);
+    static READING: Mutex<Option<(u32, Instant)>> = Mutex::new(None);
+    let mut reading = READING.lock();
+    if reading.is_none_or(|(_, at)| at.elapsed() >= REREAD) {
+        match wireless.read_rgb_clock() {
+            Ok(clock) if clock.0 != 0 => *reading = Some(clock),
+            Ok(_) => {}
+            Err(e) => debug!("reading the RF master clock: {e:#}"),
+        }
+    }
+    *reading
+}
+
 fn prepare_lighting(
     wireless: &WirelessController,
     ctl: &Controller,
@@ -1431,7 +1447,7 @@ fn prepare_lighting(
         frames.frames.len(),
         frames.compressed_len().unwrap_or(0)
     );
-    let frames = frames.on_clock(delay_ms);
+    let frames = frames.on_clock(delay_ms, master_clock(wireless));
     let mut frames = frames;
     for frame in &mut frames.frames {
         render::balance_all(frame);

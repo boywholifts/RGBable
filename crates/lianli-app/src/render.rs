@@ -12,6 +12,8 @@ use lianli_shared::rgb::{
     RgbDirection, RgbEffect, RgbPlaybackTiming, RgbRegionConfig, RgbRenderFamily, RgbRenderProfile,
     RgbScope,
 };
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::time::Instant;
 
 const SL_V4_POSITIONS: usize = 13;
 const SL_V4_SLOTS_PER_FAN: usize = 26;
@@ -82,18 +84,24 @@ impl Frames {
         Ok(lianli_devices::tinyuz::compress(&raw)?.len())
     }
 
-    /// Starts the loop where the shared clock (less `delay_ms`) will be when the device begins
-    /// playing it. A wireless device starts its loop when its upload lands, so without this
-    /// each one would run on its own timeline.
-    pub fn on_clock(mut self, delay_ms: u32) -> Self {
-        let frame_ms = f64::from(self.timing.interval_hundredths.max(1)) / 160.0;
+    /// Rotates the loop so it plays in step with `clock_ms`, `delay_ms` behind it. Wireless
+    /// devices play frame `ticks * 100 / interval` of the RF master clock, whenever the upload
+    /// landed, so with a reading of that clock every device lines up exactly; without one the
+    /// upload is assumed to start playing `UPLOAD_LATENCY_MS` from now.
+    pub fn on_clock(mut self, delay_ms: u32, master: Option<(u32, Instant)>) -> Self {
         let len = self.frames.len();
-        if len > 1 {
-            let now = (clock_ms() + UPLOAD_LATENCY_MS) as i64 - i64::from(delay_ms);
-            let loop_ms = frame_ms * len as f64;
-            let shift = ((now as f64).rem_euclid(loop_ms) / frame_ms) as usize;
-            self.frames.rotate_left(shift % len);
+        if len < 2 {
+            return self;
         }
+        let interval = f64::from(self.timing.interval_hundredths.max(1));
+        let frame_ms = interval / 160.0;
+        let (now_ms, playing) = match master {
+            Some((ticks, sampled)) => (clock_ms_at(sampled), f64::from(ticks) * 100.0 / interval),
+            None => (clock_ms() + UPLOAD_LATENCY_MS, 0.0),
+        };
+        let wanted = (now_ms - i64::from(delay_ms)) as f64 / frame_ms;
+        let shift = (wanted - playing).round().rem_euclid(len as f64) as usize;
+        self.frames.rotate_left(shift % len);
         self
     }
 
@@ -382,13 +390,26 @@ fn paint(
 /// are thinned out to fit; RGBable effects use longer frames until they fit `budget`.
 /// One clock for every device's effect loop, so delays, flows and turns line up across
 /// wireless fans, the OLED ring and OpenRGB devices.
-static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+/// Where `clock_ms` reads zero, in milliseconds after `EPOCH`; moved to start every effect over.
+static ORIGIN_MS: AtomicI64 = AtomicI64::new(0);
 
-pub fn clock_ms() -> u64 {
-    EPOCH
-        .get_or_init(std::time::Instant::now)
-        .elapsed()
-        .as_millis() as u64
+pub fn clock_ms() -> i64 {
+    clock_ms_at(Instant::now())
+}
+
+pub fn clock_ms_at(at: Instant) -> i64 {
+    let epoch = *EPOCH.get_or_init(Instant::now);
+    at.saturating_duration_since(epoch).as_millis() as i64 - ORIGIN_MS.load(Ordering::Relaxed)
+}
+
+/// Starts every effect over from its beginning `lead_ms` from now.
+pub fn restart_clock(lead_ms: i64) {
+    let epoch = *EPOCH.get_or_init(Instant::now);
+    ORIGIN_MS.store(
+        epoch.elapsed().as_millis() as i64 + lead_ms,
+        Ordering::Relaxed,
+    );
 }
 
 /// Longest loop sent to a wireless device. Lian Li's own effects stay well under this;
@@ -396,7 +417,7 @@ pub fn clock_ms() -> u64 {
 const MAX_WIRELESS_FRAMES: usize = 360;
 
 /// About how long a wireless device takes from the upload being prepared to playing it.
-const UPLOAD_LATENCY_MS: u64 = 300;
+const UPLOAD_LATENCY_MS: i64 = 300;
 
 /// White balance for everything RGBable sends, -50 (cooler) to 50 (warmer). LEDs show full
 /// white with a blue tint, so warming takes blue (and a little green) out.
@@ -596,6 +617,39 @@ pub fn lianli_effects() -> Vec<LianliEffect> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The frame a device plays when the master clock reads `ticks`.
+    fn playing(frames: &Frames, ticks: u32) -> u8 {
+        let index = u64::from(ticks) * 100 / u64::from(frames.timing.interval_hundredths);
+        frames.frames[(index % frames.frames.len() as u64) as usize][0][0]
+    }
+
+    #[test]
+    fn loops_play_in_step_with_the_shared_clock_whatever_the_master_clock_reads() {
+        let loop_of = || Frames {
+            frames: (0..10u8).map(|i| vec![[i, 0, 0]]).collect(),
+            timing: RgbPlaybackTiming {
+                interval_hundredths: 16_000,
+                ..RgbPlaybackTiming::default()
+            },
+        };
+        let now = Instant::now();
+        let expected = |delay: i64| ((clock_ms_at(now) - delay).rem_euclid(1000) / 100) as u8;
+        for ticks in [0u32, 37, 1_234_567, 4_000_000_000] {
+            let aligned = loop_of().on_clock(0, Some((ticks, now)));
+            let got = playing(&aligned, ticks);
+            assert!(
+                got.abs_diff(expected(0)) <= 1 || got.abs_diff(expected(0)) == 9,
+                "ticks {ticks}: {got}"
+            );
+            let delayed = loop_of().on_clock(300, Some((ticks, now)));
+            let got = playing(&delayed, ticks);
+            assert!(
+                got.abs_diff(expected(300)) <= 1 || got.abs_diff(expected(300)) == 9,
+                "ticks {ticks}: {got}"
+            );
+        }
+    }
 
     fn sl_v4(fans: u8) -> RgbRenderProfile {
         RgbRenderProfile {

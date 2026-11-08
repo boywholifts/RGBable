@@ -95,13 +95,13 @@ impl LedPart {
 }
 
 /// The device frame `elapsed_ms` into its effects.
-pub fn compose(parts: &[LedPart], elapsed_ms: u64) -> Vec<[u8; 3]> {
+pub fn compose(parts: &[LedPart], elapsed_ms: i64) -> Vec<[u8; 3]> {
     let mut frame = Vec::new();
     for part in parts {
         match part.effect.as_ref().filter(|e| e.is_animated()) {
             Some(effect) => {
                 let period = u64::from(effect.period_ms().max(1));
-                let behind = elapsed_ms as i64 - i64::from(part.delay_ms);
+                let behind = elapsed_ms - i64::from(part.delay_ms);
                 let phase = behind.rem_euclid(period as i64) as f32 / period as f32;
                 frame.extend(effect.frame(&part.zones, phase));
             }

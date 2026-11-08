@@ -484,6 +484,14 @@ pub fn set_sequence(engine: &Engine, openrgb: &OpenRgb, entries: &[SequenceEntry
             })
             .collect()
     });
+    // Saving starts every effect over, so a flow begins at the first device; the start waits
+    // about as long as sending each wireless device its loop takes.
+    let wireless = entries
+        .iter()
+        .filter(|e| !e.id.starts_with(OPENRGB_PREFIX))
+        .count() as i64;
+    crate::render::restart_clock(500 + 500 * wireless);
+    engine.relight_all();
     relight_all(engine, openrgb, &changed)
 }
 
