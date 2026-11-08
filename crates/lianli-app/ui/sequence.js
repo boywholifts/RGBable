@@ -234,18 +234,21 @@ function drawSequence() {
 }
 
 /// Flashes each row when its effect would start (or as the effect reaches it), to check
-/// the order before saving.
+/// the order before saving. Pressing it again starts over rather than piling up.
+let previewTimers = [];
 function previewSequence() {
+  previewTimers.forEach(clearTimeout);
+  document.querySelectorAll(".seq-row.flash").forEach((row) => row.classList.remove("flash"));
   const moving = seq.items.filter((i) => i.animated);
-  document.querySelectorAll(".seq-row").forEach((row, i) => {
+  previewTimers = [...document.querySelectorAll(".seq-row")].flatMap((row, i) => {
     const item = seq.items[i];
-    if (!item.animated) return;
+    if (!item || !item.animated) return [];
     const at = seq.mode === "delays" ? item.delay : moving.indexOf(item) * 400;
-    setTimeout(() => {
+    return [setTimeout(() => {
       row.classList.remove("flash");
       void row.offsetWidth;
       row.classList.add("flash");
-    }, at);
+    }, at)];
   });
 }
 
