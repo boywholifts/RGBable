@@ -570,3 +570,5 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .fan-pick-grid { max-height: 60vh; overflow: auto; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 .fan-thumb { aspect-ratio: 1; }
 .nav[hidden] { display: none; }
+.startup-locked { margin-top: 10px; }
+.startup-locked[hidden] { display: none; }

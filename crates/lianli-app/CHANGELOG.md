@@ -8,7 +8,9 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 
 - Fan screens: the round LCDs of SL-INF and TL Wireless LCD fans play a video, GIF or picture each, turned to any angle. The tab shows only when they're connected. L-Connect's fan screen videos and pictures can be imported into the library (new, still being tested).
 - Videos sent from OLEDable join the library.
-- Startup lighting: apply a chosen profile every time RGBable starts instead of the last lighting.
+- Startup lighting: a profile the PC shows from power-on until you sign in (and, if you like, while it's locked). RGBable puts it on when Windows shuts down or restarts, and your own lighting comes back once you've signed in.
+- Per-device color temperature, for a device that looks warmer or cooler than the rest.
+- Changing a single device's lighting goes dark first, like All Devices and groups, when "Go dark before changing lighting" is on.
 - Power-on lighting: store a plain or breathing version of the current colors in OpenRGB devices that can keep a mode in their own memory, so they match from power-on.
 - Fan screens can store a power-on picture.
 

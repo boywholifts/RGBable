@@ -18,6 +18,7 @@ mod openrgb_host;
 mod palette;
 mod render;
 mod script;
+mod standby;
 mod system_load;
 mod updater;
 mod wired;
@@ -70,6 +71,7 @@ struct Overview {
     lighting_profiles: Vec<LightingProfileView>,
     lighting_profile: Option<String>,
     startup_profile: Option<String>,
+    startup_profile_when_locked: bool,
     all_off: bool,
     /// LCD fan screens connected right now; the Fan screens page shows only when there are some.
     fan_screens: usize,
@@ -123,6 +125,7 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
             .collect(),
         lighting_profile: config.lighting_profile.clone(),
         startup_profile: config.startup_profile.clone(),
+        startup_profile_when_locked: config.startup_profile_when_locked,
         all_off: config.all_off,
         fan_screens: state.engine.fan_screens.count(),
         all_fans: config
@@ -1022,28 +1025,11 @@ fn apply_lighting_profile(state: State<'_, AppState>, name: String) -> Result<()
     Ok(())
 }
 
-/// Puts the startup profile's lighting and video in place before anything is shown.
-fn apply_startup_profile(engine: &Engine) {
-    engine.update_config(|c| {
-        let name = c.startup_profile.clone()?;
-        let Some(profile) = c.lighting_profiles.iter().find(|p| p.name == name).cloned() else {
-            tracing::warn!("startup profile {name} no longer exists");
-            return None;
-        };
-        info!("applying startup profile {name}");
-        if let Some(oled) = lighting_profiles::screen_change(c, &profile).cloned() {
-            c.oled = Some(oled);
-        }
-        lighting_profiles::apply(c, &profile);
-        c.lighting_profile = Some(name);
-        Some(())
-    });
-}
-
 #[tauri::command(async)]
-fn set_startup_profile(state: State<'_, AppState>, name: Option<String>) {
+fn set_startup_profile(state: State<'_, AppState>, name: Option<String>, when_locked: bool) {
     state.engine.update_config(|c| {
         c.startup_profile = name.filter(|n| c.lighting_profiles.iter().any(|p| &p.name == n));
+        c.startup_profile_when_locked = when_locked;
     });
 }
 
@@ -1675,7 +1661,7 @@ fn main() {
     }
     info!("RGBable starting, data in {}", dir.display());
     let engine = Engine::new(config_path);
-    apply_startup_profile(&engine);
+    standby::restore(&engine);
     render::WARMTH.store(engine.config().warmth, std::sync::atomic::Ordering::Relaxed);
     engine.start();
 
@@ -1688,6 +1674,7 @@ fn main() {
     openrgb.start_animator();
     connect_openrgb_in_background(engine.clone(), openrgb.clone(), true);
     watch_vial(engine.clone(), openrgb.clone());
+    standby::watch(engine.clone(), openrgb.clone());
 
     let updater = Arc::new(Updater::default());
     if cfg!(not(debug_assertions)) {

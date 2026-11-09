@@ -288,14 +288,15 @@
         <div class="toggle-row">
           <div>
             <div class="card-title">Startup lighting</div>
-            <div class="muted small">What RGBable puts on when it starts.</div>
+            <div class="muted small">A profile the PC shows from the moment it turns on until you sign in. When Windows shuts down or restarts, RGBable puts it on the devices; your own lighting comes back once you've signed in.</div>
           </div>
           <select id="startup-profile"></select>
         </div>
+        <label class="check startup-locked"><input type="checkbox" id="startup-locked" /> Also show it while the PC is locked</label>
       </div>
       <div class="card">
         <div class="card-title">Power-on lighting</div>
-        <p class="muted small">Your Lian Li fans and Strimers keep their last effect by themselves. This stores a plain or breathing version of the current colors in the motherboard, ARGB headers, RAM and GPU too, so they match from power-on until RGBable starts. Devices write it to their own memory, so save it when you've settled on a look rather than after every change.</p>
+        <p class="muted small">Your Lian Li fans and Strimers keep their last effect by themselves. This stores a plain or breathing version of the colors (the startup profile's, if you've picked one) in the motherboard, ARGB headers, RAM and GPU too, so they match from power-on until RGBable starts. Devices write it to their own memory, so save it when you've settled on a look rather than after every change.</p>
         <div class="row">
           <div class="seg" id="power-on-mode">
             <button data-mode="static" class="on">Plain</button>

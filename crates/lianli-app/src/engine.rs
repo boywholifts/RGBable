@@ -111,6 +111,13 @@ pub struct Config {
     /// A lighting profile applied every time RGBable starts, instead of the last lighting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_profile: Option<String>,
+    /// Shows the startup profile while the PC is locked too, not only while it's off.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub startup_profile_when_locked: bool,
+    /// The lighting from before the startup profile was put on for shutdown or the lock
+    /// screen, to put back when the user is back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before_standby: Option<Box<crate::lighting_profiles::LightingProfile>>,
 }
 
 /// The `oled_modules` key of the layout every video without its own uses.
@@ -1092,6 +1099,32 @@ impl Engine {
     /// Turns devices off without touching their saved lighting, then waits (at most
     /// `timeout`) until the wireless ones have confirmed it, so a new effect can start on
     /// all of them from dark instead of replacing the old one device by device.
+    /// Waits until every wireless device has confirmed the lighting it was last given.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn wait_for_lighting(&self, timeout: Duration) {
+        let targets: Vec<Arc<Controller>> = self
+            .controllers
+            .read()
+            .iter()
+            .filter(|c| matches!(c.target, Target::Wireless { .. }))
+            .cloned()
+            .collect();
+        for ctl in targets.iter().filter(|c| c.dirty.load(Ordering::Acquire)) {
+            ctl.settled.store(false, Ordering::Release);
+        }
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if targets
+                .iter()
+                .all(|c| c.settled.load(Ordering::Acquire) && !c.dirty.load(Ordering::Acquire))
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        warn!("not every wireless device confirmed its lighting in time");
+    }
+
     pub fn blank_and_wait(&self, ids: &[String], timeout: Duration) {
         let targets: Vec<Arc<Controller>> = self
             .controllers

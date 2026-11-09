@@ -353,18 +353,28 @@ $("#clean-transitions").addEventListener("change", (e) => invoke("set_clean_tran
 function renderStartupProfile(o) {
   const select = $("#startup-profile");
   const names = (o.lighting_profiles || []).map((p) => p.name);
-  const key = JSON.stringify([names, o.startup_profile]);
+  const key = JSON.stringify([names, o.startup_profile, o.startup_profile_when_locked]);
   if (select.dataset.key === key) return;
   select.dataset.key = key;
   select.replaceChildren(
-    el("option", { value: "" }, "The last lighting used"),
+    el("option", { value: "" }, "None: keep my lighting"),
     ...names.map((n) => el("option", { value: n }, `Profile: ${n}`)),
   );
   select.value = o.startup_profile || "";
+  $("#startup-locked").checked = !!o.startup_profile_when_locked;
+  $(".startup-locked").hidden = !o.startup_profile;
+}
+
+function saveStartupProfile(note) {
+  const name = $("#startup-profile").value || null;
+  $(".startup-locked").hidden = !name;
+  return call("set_startup_profile", { name, whenLocked: $("#startup-locked").checked }, note);
 }
 
 $("#startup-profile").addEventListener("change", (e) =>
-  call("set_startup_profile", { name: e.target.value || null }, e.target.value ? `${e.target.value} at startup` : "Last lighting at startup"));
+  saveStartupProfile(e.target.value ? `${e.target.value} at startup` : "No startup profile"));
+$("#startup-locked").addEventListener("change", (e) =>
+  saveStartupProfile(e.target.checked ? "Shown while locked too" : "Only shown while the PC is off"));
 
 let powerOnMode = "static";
 document.querySelectorAll("#power-on-mode button").forEach((b) =>

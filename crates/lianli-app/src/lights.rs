@@ -528,7 +528,16 @@ pub struct PowerOnSaved {
 /// Stores a plain or breathing version of each OpenRGB device's lighting in the device
 /// itself, then puts every device back under RGBable's control.
 pub fn save_power_on_lighting(engine: &Engine, openrgb: &OpenRgb, breathing: bool) -> PowerOnSaved {
-    let config = engine.config();
+    // with a startup profile, the PC boots showing it, so that's what these should match
+    let mut config = engine.config();
+    if let Some(profile) = config
+        .startup_profile
+        .as_ref()
+        .and_then(|name| config.lighting_profiles.iter().find(|p| &p.name == name))
+        .cloned()
+    {
+        crate::lighting_profiles::apply(&mut config, &profile);
+    }
     let mut result = PowerOnSaved::default();
     for device in openrgb.view().devices {
         let id = openrgb_id(&device);

@@ -42,7 +42,7 @@ RGBable is unofficial and not affiliated with Lian Li. It is built on [lian-li-l
 - Pump speed, coolant temperature and fan RPM at a glance.
 
 **App**
-- Tray app that starts with Windows, restores your lighting and screen (or a startup profile you pick), and updates itself from GitHub Releases (Stable or Dev channel).
+- Tray app that starts with Windows, restores your lighting and screen, and can show a startup profile from power-on until you sign in, and updates itself from GitHub Releases (Stable or Dev channel).
 - **Power-on lighting**: stores a plain or breathing version of your colors in the motherboard, ARGB headers, RAM and GPU, so the build matches from power-on until RGBable starts. Lian Li wireless fans keep their last effect by themselves.
 - First-run setup wizard that blinks each device so you can name, group and sync it.
 
