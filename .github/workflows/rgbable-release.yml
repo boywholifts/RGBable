@@ -93,8 +93,13 @@ jobs:
         shell: pwsh
         working-directory: crates/lianli-app
         run: |
-          npx --yes @tauri-apps/cli@^2 bundle --bundles nsis
-          if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
+          # the bundler downloads NSIS helpers from GitHub, which sometimes times out
+          foreach ($attempt in 1..3) {
+            npx --yes @tauri-apps/cli@^2 bundle --bundles nsis
+            if ($LASTEXITCODE -eq 0) { break }
+            if ($attempt -eq 3) { throw 'Installer build failed' }
+            Start-Sleep -Seconds (20 * $attempt)
+          }
           New-Item -ItemType Directory -Force ../../dist | Out-Null
           Copy-Item ../../target/release/bundle/nsis/*-setup.exe ../../dist/
           Copy-Item ../../target/release/rgbable.exe "../../dist/RGBable-$env:APP_VERSION-portable.exe"
