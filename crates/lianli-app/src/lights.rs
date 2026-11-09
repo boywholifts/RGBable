@@ -889,9 +889,19 @@ pub fn adopt_group_lighting(
 /// With clean transitions on, the devices about to change go dark first and the new
 /// lighting starts on all of them together, instead of each switching as it is reached.
 fn go_dark(engine: &Engine, openrgb: &OpenRgb, ids: &[String]) {
-    if engine.config().instant_changes {
-        return;
+    if !engine.config().instant_changes {
+        darken(engine, openrgb, ids);
     }
+}
+
+/// Turns every light off and waits until they are, so a new lighting profile starts on
+/// all of them together.
+pub fn blackout(engine: &Engine, openrgb: &OpenRgb) {
+    let ids: Vec<String> = lights(engine, openrgb).into_iter().map(|l| l.id).collect();
+    darken(engine, openrgb, &ids);
+}
+
+fn darken(engine: &Engine, openrgb: &OpenRgb, ids: &[String]) {
     let mut boards = std::collections::BTreeSet::new();
     for id in ids.iter().filter(|id| id.starts_with(OPENRGB_PREFIX)) {
         boards.insert(split_id(id).0.to_string());

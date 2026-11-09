@@ -974,6 +974,15 @@ fn save_lighting_profile(
 #[tauri::command(async)]
 fn apply_lighting_profile(state: State<'_, AppState>, name: String) -> Result<(), String> {
     let engine = &state.engine;
+    if !engine
+        .config()
+        .lighting_profiles
+        .iter()
+        .any(|p| p.name == name)
+    {
+        return Err(format!("No lighting profile named {name}"));
+    }
+    lights::blackout(engine, &state.openrgb);
     let screen = engine.update_config(|c| {
         let profile = c
             .lighting_profiles
