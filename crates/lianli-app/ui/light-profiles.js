@@ -39,7 +39,7 @@ function saveLightProfileDialog() {
   const input = el("input", { class: "text", maxlength: "40", placeholder: "Name" });
   const screen = el("label", { class: "check" }, [
     el("input", { type: "checkbox" }),
-    screenVideo ? `Also put ${screenVideo} on the HydroShift screen` : "Also save the screen video (nothing is playing now)",
+    screenVideo ? "Include the current video" : "Include the current video (nothing is playing)",
   ]);
   const box = screen.querySelector("input");
   box.disabled = !screenVideo;
