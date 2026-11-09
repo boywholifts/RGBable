@@ -181,6 +181,9 @@ pub struct DeviceConfig {
     /// Lights off; the saved lighting stays for when it's turned back on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub off: bool,
+    /// Its own white balance (-50 cooler to 50 warmer) instead of the global one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warmth: Option<i8>,
 }
 
 fn is_zero_i8(value: &i8) -> bool {
@@ -311,6 +314,8 @@ struct Controller {
     identifying: AtomicBool,
     /// Turned off: shows black whatever its lighting is.
     dark: AtomicBool,
+    /// Its own white balance, or render::GLOBAL_WARMTH.
+    warmth: std::sync::atomic::AtomicI8,
     /// The device has confirmed (or was given up on for) its latest lighting.
     settled: AtomicBool,
 }
@@ -898,6 +903,7 @@ impl Engine {
                 dirty: AtomicBool::new(false),
                 identifying: AtomicBool::new(false),
                 dark: AtomicBool::new(false),
+                warmth: std::sync::atomic::AtomicI8::new(render::GLOBAL_WARMTH),
                 settled: AtomicBool::new(true),
             }));
         }
@@ -917,6 +923,7 @@ impl Engine {
                 dirty: AtomicBool::new(false),
                 identifying: AtomicBool::new(false),
                 dark: AtomicBool::new(false),
+                warmth: std::sync::atomic::AtomicI8::new(render::GLOBAL_WARMTH),
                 settled: AtomicBool::new(true),
             }));
         }
@@ -937,6 +944,7 @@ impl Engine {
                 dirty: AtomicBool::new(false),
                 identifying: AtomicBool::new(false),
                 dark: AtomicBool::new(false),
+                warmth: std::sync::atomic::AtomicI8::new(render::GLOBAL_WARMTH),
                 settled: AtomicBool::new(true),
             }));
         }
@@ -1140,7 +1148,14 @@ impl Engine {
         let config = self.config();
         for ctl in self.controllers.read().iter() {
             let dark = config.all_off || config.devices.get(&ctl.id).is_some_and(|d| d.off);
-            if ctl.dark.swap(dark, Ordering::AcqRel) != dark {
+            let warmth = config
+                .devices
+                .get(&ctl.id)
+                .and_then(|d| d.warmth)
+                .unwrap_or(render::GLOBAL_WARMTH);
+            let changed = ctl.dark.swap(dark, Ordering::AcqRel)
+                != dark | (ctl.warmth.swap(warmth, Ordering::AcqRel) != warmth);
+            if changed {
                 ctl.settled.store(false, Ordering::Release);
                 ctl.dirty.store(true, Ordering::Release);
             }
@@ -1547,13 +1562,13 @@ impl Engine {
             let period = u64::from(effect.period_ms().max(1));
             let phase = behind.rem_euclid(period as i64) as f32 / period as f32;
             let mut frame = effect.frame(&ctl.zones, phase);
-            render::balance_all(&mut frame);
+            render::balance_with(&mut frame, ctl.warmth.load(Ordering::Relaxed));
             if let Err(e) = ring.send_rgb_frame(&frame) {
                 warn!("OLED ring: {e:#}");
             }
         } else if ctl.dirty.swap(false, Ordering::AcqRel) {
             let mut colors = ctl.shown_colors();
-            render::balance_all(&mut colors);
+            render::balance_with(&mut colors, ctl.warmth.load(Ordering::Relaxed));
             if let Err(e) = ring.send_rgb_frame(&colors) {
                 warn!("OLED ring: {e:#}");
             }
@@ -2057,7 +2072,7 @@ fn prepare_lighting(
     let base = ctl.shown_colors();
     if lighting.is_static() || ctl.identifying.load(Ordering::Acquire) {
         let mut base = base;
-        render::balance_all(&mut base);
+        render::balance_with(&mut base, ctl.warmth.load(Ordering::Relaxed));
         return wireless.prepare_rgb_upload(mac, &[base], 5000);
     }
     let frames = if shrink < MAX_SHRINK {
@@ -2083,7 +2098,7 @@ fn prepare_lighting(
     let frames = frames.on_clock(delay_ms, master_clock(wireless));
     let mut frames = frames;
     for frame in &mut frames.frames {
-        render::balance_all(frame);
+        render::balance_with(frame, ctl.warmth.load(Ordering::Relaxed));
     }
     wireless.prepare_rgb_animation(mac, &frames.frames, frames.timing)
 }

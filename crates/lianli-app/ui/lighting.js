@@ -155,6 +155,34 @@ function effectSummary(l) {
   return "Color";
 }
 
+/// A device's own white balance, for one that looks too warm or cool next to the rest.
+function warmthDialog(l) {
+  const global = last ? last.warmth || 0 : 0;
+  const own = el("input", { type: "checkbox" });
+  own.checked = l.warmth == null;
+  const slider = el("input", { type: "range", min: "-50", max: "50", step: "5", value: String(l.warmth ?? global), style: "flex: 1" });
+  const label = el("span", { class: "muted small warmth-value" });
+  let timer = null;
+  const draw = () => {
+    slider.disabled = own.checked;
+    label.textContent = own.checked ? `${warmthLabel(global)} (the global setting)` : warmthLabel(Number(slider.value));
+  };
+  const save = () => {
+    draw();
+    clearTimeout(timer);
+    timer = setTimeout(() => call("set_device_warmth", { id: l.id, warmth: own.checked ? null : Number(slider.value) }).then(rerender), 250);
+  };
+  own.addEventListener("change", save);
+  slider.addEventListener("input", save);
+  draw();
+  openDialog(`Color temperature: ${l.name}`, [
+    el("p", { class: "muted small" }, "LEDs differ: one device can look warmer or cooler than the rest. This sets its own white balance; the rest keep the global one from Settings."),
+    el("label", { class: "check" }, [own, "Use the global setting"]),
+    el("div", { class: "row" }, [el("span", { class: "muted small" }, "Cooler"), slider, el("span", { class: "muted small" }, "Warmer")]),
+    label,
+  ], [el("button", { class: "btn primary", onclick: closeDialog }, "Done")]);
+}
+
 function setOff(l, off) {
   return call("set_off", { id: l.id, off }, off ? `${l.name} off` : `${l.name} on`).then(rerender);
 }
@@ -183,6 +211,7 @@ function deviceMenu(l, anchor) {
   const groups = last ? last.groups : [];
   const items = [
     { label: l.off ? "Turn on" : "Turn off", onClick: () => setOff(l, !l.off) },
+    { label: "Color temperature…", onClick: () => warmthDialog(l) },
     { label: "Change effect…", onClick: () => openDrawer({ type: "dev", id: l.id }) },
     { label: "Rename…", onClick: () => promptName(`Rename ${l.name}`, l.name, (name) => call("rename", { id: l.id, name }, "Renamed").then(rerender)) },
     { label: "Identify (blink)", onClick: () => call("identify", { id: l.id }, `Blinking ${l.name}`) },
@@ -223,6 +252,7 @@ function rowBadges(l) {
   else if (l.span) badges.push(el("span", { class: "badge", title: "Moving effects run across all its fans" }, icon("across")));
   if (l.delay_ms) badges.push(el("span", { class: "badge", title: `Starts ${(l.delay_ms / 1000).toFixed(1)} s behind` }, [icon("clock"), `${(l.delay_ms / 1000).toFixed(1)}s`]));
   if (!l.sync) badges.push(el("span", { class: "tag off", title: "All Devices leaves this device alone" }, "Not synced"));
+  if (l.warmth != null) badges.push(el("span", { class: "tag", title: "Has its own color temperature" }, l.warmth === 0 ? "Neutral" : l.warmth > 0 ? "Warmer" : "Cooler"));
   if (l.off) badges.push(el("span", { class: "tag off", title: "Turned off: its lighting comes back when it's turned on" }, "Off"));
   return badges;
 }

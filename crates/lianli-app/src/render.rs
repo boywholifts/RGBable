@@ -475,8 +475,16 @@ fn balance(color: [u8; 3], warmth: i8) -> [u8; 3] {
     [0, 1, 2].map(|i| (f32::from(color[i]) * gains[i]).round() as u8)
 }
 
-pub fn balance_all(colors: &mut [[u8; 3]]) {
-    let warmth = WARMTH.load(std::sync::atomic::Ordering::Relaxed);
+/// A device's own warmth meaning "follow the global setting".
+pub const GLOBAL_WARMTH: i8 = i8::MIN;
+
+/// White balance with a device's own warmth, or the global one for [`GLOBAL_WARMTH`].
+pub fn balance_with(colors: &mut [[u8; 3]], own: i8) {
+    let warmth = if own == GLOBAL_WARMTH {
+        WARMTH.load(std::sync::atomic::Ordering::Relaxed)
+    } else {
+        own
+    };
     if warmth != 0 {
         for c in colors {
             *c = balance(*c, warmth);

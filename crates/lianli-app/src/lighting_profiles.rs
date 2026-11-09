@@ -28,6 +28,8 @@ pub struct SavedLight {
     pub reversed: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub off: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warmth: Option<i8>,
 }
 
 impl SavedLight {
@@ -42,6 +44,7 @@ impl SavedLight {
             turn: device.turn,
             reversed: device.reversed,
             off: device.off,
+            warmth: device.warmth,
         }
     }
 
@@ -55,6 +58,7 @@ impl SavedLight {
         device.turn = self.turn;
         device.reversed = self.reversed;
         device.off = self.off;
+        device.warmth = self.warmth;
     }
 }
 

@@ -30,6 +30,8 @@ pub struct LightView {
     pub hidden: bool,
     /// Its own off switch (all lighting can also be off at once).
     pub off: bool,
+    /// Its own white balance, when it doesn't follow the global one.
+    pub warmth: Option<i8>,
     /// OpenRGB zones whose LED count the user can set (addressable headers).
     pub zones: Vec<ZoneView>,
     pub delay_ms: u32,
@@ -108,6 +110,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 group: group_of(&config, &d.id),
                 hidden: false,
                 off: false,
+                warmth: None,
                 default_name: d.default_name,
                 name: d.name,
                 id: d.id,
@@ -171,6 +174,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 group: group_of(&config, &id),
                 hidden: false,
                 off: false,
+                warmth: None,
                 id: id.clone(),
             });
         }
@@ -214,6 +218,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 group: group_of(&config, &header),
                 hidden: false,
                 off: false,
+                warmth: None,
                 id: header,
             });
         }
@@ -225,6 +230,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
         light.turn = saved.and_then(|d| d.turn);
         light.hidden = saved.is_some_and(|d| d.hidden);
         light.off = saved.is_some_and(|d| d.off);
+        light.warmth = saved.and_then(|d| d.warmth);
     }
     list
 }
@@ -232,6 +238,23 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
 /// Whether a light (an OpenRGB device or one of its headers) shows black.
 fn is_off(config: &Config, id: &str) -> bool {
     config.all_off || config.devices.get(id).is_some_and(|d| d.off)
+}
+
+/// Gives a device its own white balance, or (None) puts it back on the global one.
+pub fn set_device_warmth(
+    engine: &Engine,
+    openrgb: &OpenRgb,
+    id: &str,
+    warmth: Option<i8>,
+) -> Result<()> {
+    let warmth = warmth.map(|w| w.clamp(-50, 50));
+    engine.update_config(|c| c.devices.entry(id.to_string()).or_default().warmth = warmth);
+    engine.apply_darkness();
+    if id.starts_with(OPENRGB_PREFIX) {
+        let device = openrgb_device(openrgb, id).context("that OpenRGB device is not connected")?;
+        push_device(engine, openrgb, &device)?;
+    }
+    Ok(())
 }
 
 /// Turns one device's lights off or back on; its lighting is kept.
@@ -341,6 +364,11 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
             let keys = device.keys.as_ref().map(|k| k.slice(start, leds));
             start += leds;
             LedPart {
+                warmth: config
+                    .devices
+                    .get(&source)
+                    .and_then(|d| d.warmth)
+                    .unwrap_or(crate::render::GLOBAL_WARMTH),
                 zones,
                 keys,
                 effect: saved.and_then(|s| s.effect.clone()).map(|e| Effect {
@@ -888,7 +916,7 @@ pub fn adopt_group_lighting(
 
 /// With clean transitions on, the devices about to change go dark first and the new
 /// lighting starts on all of them together, instead of each switching as it is reached.
-fn go_dark(engine: &Engine, openrgb: &OpenRgb, ids: &[String]) {
+pub fn go_dark(engine: &Engine, openrgb: &OpenRgb, ids: &[String]) {
     if !engine.config().instant_changes {
         darken(engine, openrgb, ids);
     }

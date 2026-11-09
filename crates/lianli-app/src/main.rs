@@ -174,6 +174,15 @@ fn set_off(state: State<'_, AppState>, id: String, off: bool) -> Result<(), Stri
 }
 
 #[tauri::command(async)]
+fn set_device_warmth(
+    state: State<'_, AppState>,
+    id: String,
+    warmth: Option<i8>,
+) -> Result<(), String> {
+    lights::set_device_warmth(&state.engine, &state.openrgb, &id, warmth).map_err(chain)
+}
+
+#[tauri::command(async)]
 fn set_all_off(state: State<'_, AppState>, off: bool) {
     lights::set_all_off(&state.engine, &state.openrgb, off);
 }
@@ -195,6 +204,7 @@ fn set_delay(state: State<'_, AppState>, id: String, delay_ms: u32) -> Result<()
 
 #[tauri::command(async)]
 fn set_color(state: State<'_, AppState>, id: String, color: [u8; 3]) -> Result<(), String> {
+    lights::go_dark(&state.engine, &state.openrgb, std::slice::from_ref(&id));
     lights::set_color(&state.engine, &state.openrgb, &id, color).map_err(chain)
 }
 
@@ -216,6 +226,7 @@ async fn set_all(
 
 #[tauri::command(async)]
 fn set_effect(state: State<'_, AppState>, id: String, effect: Effect) -> Result<(), String> {
+    lights::go_dark(&state.engine, &state.openrgb, std::slice::from_ref(&id));
     lights::set_effect(&state.engine, &state.openrgb, &id, effect).map_err(chain)
 }
 
@@ -1759,6 +1770,7 @@ fn main() {
             set_reverse,
             set_off,
             set_all_off,
+            set_device_warmth,
             fan_screens,
             set_startup_profile,
             save_power_on_lighting,

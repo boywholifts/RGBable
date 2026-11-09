@@ -182,6 +182,8 @@ pub struct LedPart {
     pub effect: Option<Effect>,
     pub color: [u8; 3],
     pub delay_ms: u32,
+    /// Its own white balance, or render::GLOBAL_WARMTH.
+    pub warmth: i8,
 }
 
 impl LedPart {
@@ -194,6 +196,7 @@ impl LedPart {
 pub fn compose(parts: &[LedPart], elapsed_ms: i64) -> Vec<[u8; 3]> {
     let mut frame = Vec::new();
     for part in parts {
+        let start = frame.len();
         match part.effect.as_ref().filter(|e| e.is_animated()) {
             Some(effect) => {
                 let period = u64::from(effect.period_ms().max(1));
@@ -206,8 +209,8 @@ pub fn compose(parts: &[LedPart], elapsed_ms: i64) -> Vec<[u8; 3]> {
             }
             None => frame.extend(std::iter::repeat_n(part.color, part.leds())),
         }
+        crate::render::balance_with(&mut frame[start..], part.warmth);
     }
-    crate::render::balance_all(&mut frame);
     frame
 }
 
