@@ -31,6 +31,7 @@ function seqLights(o) {
       flow: partial(l.span),
       turns: partial(l.turn),
       multi: multiZone(l),
+      off: !!l.off,
       light: l,
     }))
     .sort((a, b) =>
@@ -42,7 +43,7 @@ function seqLights(o) {
 }
 
 function renderSequence(o, force) {
-  const key = JSON.stringify([o.lights.map((l) => [l.id, l.name, l.delay_ms, l.span, l.turn, l.effect, l.outer_effect, l.group, l.hidden]), o.groups, seq.group]);
+  const key = JSON.stringify([o.lights.map((l) => [l.id, l.name, l.delay_ms, l.span, l.turn, l.effect, l.outer_effect, l.group, l.hidden, l.off]), o.groups, seq.group]);
   if (!force && (seq.dirty || key === seq.key || document.querySelector(".seq-row.dragging, .seq-marker.dragging"))) return;
   seq.key = key;
   seq.items = seqLights(o);
@@ -170,6 +171,15 @@ function drawSequence() {
       changed();
     });
 
+    const power = el("button", { class: "icon-btn switchable power-btn" + (item.off ? "" : " on"), title: item.off ? "Off: click to turn on" : "Turn off" }, icon("power"));
+    power.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await call("set_off", { id: item.id, off: !item.off }, item.off ? `${item.name} on` : `${item.name} off`);
+      item.off = !item.off;
+      item.light = { ...item.light, off: item.off };
+      drawSequence();
+    });
+
     const more = el("button", { class: "icon-btn more-btn", title: "Rename, LED count, group and more (or right-click)" }, "⋯");
     more.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -194,18 +204,19 @@ function drawSequence() {
       track.append(marker);
     }
 
-    const row = el("div", { class: "seq-row" + (item.animated ? "" : " still"), draggable: "true" }, [
+    const row = el("div", { class: "seq-row" + (item.animated ? "" : " still") + (item.off ? " is-off" : ""), draggable: "true" }, [
       el("span", { class: "seq-handle", title: "Drag to change the order" }, "⋮⋮"),
       el("span", { class: "seq-order" }, String(index + 1)),
       el("div", { class: "row-text" }, [
         el("div", { class: "row-name" }, item.name),
-        el("div", { class: "row-sub" }, item.animated ? item.sub : "Plain color, nothing to move"),
+        el("div", { class: "row-sub" }, item.off ? "Off" : item.animated ? item.sub : "Plain color, nothing to move"),
       ]),
       seq.mode === "flow" ? el("div", { class: "seq-spacer" }) : track,
       el("label", { class: "seq-delay", title: "Start delay" }, [input, el("span", { class: "muted small" }, "ms")]),
       speed,
       across,
       reverse,
+      power,
       more,
     ]);
     row.addEventListener("dragstart", (e) => {

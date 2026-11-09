@@ -17,12 +17,12 @@ function renderLightProfiles(o) {
   screenVideo = o.oled && o.oled.file ? o.oled.file : null;
   lightProfiles = o.lighting_profiles || [];
   lightProfile = lightProfiles.some((p) => p.name === o.lighting_profile) ? o.lighting_profile : null;
-  const key = JSON.stringify([lightProfiles, lightProfile]);
+  const key = JSON.stringify([lightProfiles, lightProfile, !!o.all_off]);
   if (key === renderLightProfiles.key) return;
   renderLightProfiles.key = key;
   const current = lightProfiles.find((p) => p.name === lightProfile);
   $("#light-profile-current").replaceChildren(
-    ...(current ? [current.name, current.screen ? filmStrip() : null].filter(Boolean) : [lightProfiles.length ? "Choose" : "None"]),
+    ...(allOff ? ["Lights off"] : current ? [current.name, current.screen ? filmStrip() : null].filter(Boolean) : [lightProfiles.length ? "Choose" : "None"]),
   );
 }
 
@@ -38,13 +38,13 @@ function profileLabel(p) {
 
 $("#light-profile-pick").addEventListener("click", (e) => {
   e.stopPropagation();
-  const items = [];
+  const items = [{ label: "Lights off", checked: allOff, onClick: () => setAllOff(!allOff) }, "-"];
   if (lightProfiles.length) {
     items.push({ header: "Lighting profiles" });
     for (const p of lightProfiles) {
       items.push({
         label: profileLabel(p),
-        checked: p.name === lightProfile,
+        checked: !allOff && p.name === lightProfile,
         onClick: () => confirmLightProfile(p),
       });
     }

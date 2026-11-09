@@ -28,6 +28,8 @@ pub struct LightView {
     pub group: Option<String>,
     /// Kept off the device lists until shown; also left out of Sync everything.
     pub hidden: bool,
+    /// Its own off switch (all lighting can also be off at once).
+    pub off: bool,
     /// OpenRGB zones whose LED count the user can set (addressable headers).
     pub zones: Vec<ZoneView>,
     pub delay_ms: u32,
@@ -105,6 +107,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 sync: saved.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &d.id),
                 hidden: false,
+                off: false,
                 default_name: d.default_name,
                 name: d.name,
                 id: d.id,
@@ -167,6 +170,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 sync: saved.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &id),
                 hidden: false,
+                off: false,
                 id: id.clone(),
             });
         }
@@ -209,6 +213,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 sync: own.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &header),
                 hidden: false,
+                off: false,
                 id: header,
             });
         }
@@ -219,8 +224,32 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
         light.span = saved.and_then(|d| d.span);
         light.turn = saved.and_then(|d| d.turn);
         light.hidden = saved.is_some_and(|d| d.hidden);
+        light.off = saved.is_some_and(|d| d.off);
     }
     list
+}
+
+/// Whether a light (an OpenRGB device or one of its headers) shows black.
+fn is_off(config: &Config, id: &str) -> bool {
+    config.all_off || config.devices.get(id).is_some_and(|d| d.off)
+}
+
+/// Turns one device's lights off or back on; its lighting is kept.
+pub fn set_off(engine: &Engine, openrgb: &OpenRgb, id: &str, off: bool) -> Result<()> {
+    engine.update_config(|c| c.devices.entry(id.to_string()).or_default().off = off);
+    engine.apply_darkness();
+    if id.starts_with(OPENRGB_PREFIX) {
+        let device = openrgb_device(openrgb, id).context("that OpenRGB device is not connected")?;
+        push_device(engine, openrgb, &device)?;
+    }
+    Ok(())
+}
+
+/// Turns every light off, or back to what each device is set to.
+pub fn set_all_off(engine: &Engine, openrgb: &OpenRgb, off: bool) {
+    engine.update_config(|c| c.all_off = off);
+    engine.apply_darkness();
+    sync_openrgb_effects(engine, openrgb);
 }
 
 pub fn groups(engine: &Engine) -> Vec<GroupView> {
@@ -289,7 +318,8 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
     if zoned == device.leds {
         for (index, zone) in device.zones.iter().enumerate().filter(|(_, z)| z.leds > 0) {
             let own = header_id(&device_id, index);
-            let source = if is_header(zone) && has_lighting(config, &own) {
+            let source = if is_header(zone) && (has_lighting(config, &own) || is_off(config, &own))
+            {
                 own
             } else {
                 device_id.clone()
@@ -305,7 +335,8 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
     let mut start = 0;
     runs.into_iter()
         .map(|(source, zones)| {
-            let saved = config.devices.get(&source);
+            let dark = is_off(config, &source);
+            let saved = config.devices.get(&source).filter(|_| !dark);
             let leds: usize = zones.iter().sum();
             let keys = device.keys.as_ref().map(|k| k.slice(start, leds));
             start += leds;
@@ -317,10 +348,14 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
                     turn: saved.and_then(|s| s.turn).or(board_turn),
                     ..e
                 }),
-                color: saved
-                    .and_then(|s| s.color)
-                    .or(device.first_color)
-                    .unwrap_or([0, 0, 0]),
+                color: if dark {
+                    [0, 0, 0]
+                } else {
+                    saved
+                        .and_then(|s| s.color)
+                        .or(device.first_color)
+                        .unwrap_or([0, 0, 0])
+                },
                 delay_ms: saved
                     .map(|s| s.delay_ms)
                     .filter(|&d| d > 0)
@@ -345,7 +380,11 @@ fn push_device(engine: &Engine, openrgb: &OpenRgb, device: &OrgbDevice) -> Resul
     openrgb.stop_animation(device.index);
     let device_id = openrgb_id(device);
     let touched = has_lighting(&config, &device_id)
-        || (0..device.zones.len()).any(|z| has_lighting(&config, &header_id(&device_id, z)));
+        || is_off(&config, &device_id)
+        || (0..device.zones.len()).any(|z| {
+            let header = header_id(&device_id, z);
+            has_lighting(&config, &header) || is_off(&config, &header)
+        });
     if touched {
         openrgb.set_leds(device.index, &compose(&parts, 0), true)?;
     }

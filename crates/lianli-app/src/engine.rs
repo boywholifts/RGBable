@@ -37,6 +37,9 @@ const WIRELESS_SLOWEST_FRAME_MS: u32 = 640;
 pub struct Config {
     #[serde(default)]
     pub devices: BTreeMap<String, DeviceConfig>,
+    /// Every light off, whatever each device is set to.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all_off: bool,
     #[serde(default)]
     pub oled_ring: Option<[u8; 3]>,
     #[serde(default)]
@@ -165,6 +168,9 @@ pub struct DeviceConfig {
     /// Runs effects the other way to everything else, kept when Sync everything sets a new one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reversed: bool,
+    /// Lights off; the saved lighting stays for when it's turned back on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub off: bool,
 }
 
 fn is_zero_i8(value: &i8) -> bool {
@@ -293,6 +299,8 @@ struct Controller {
     colors: Mutex<Vec<[u8; 3]>>,
     dirty: AtomicBool,
     identifying: AtomicBool,
+    /// Turned off: shows black whatever its lighting is.
+    dark: AtomicBool,
     /// The device has confirmed (or was given up on for) its latest lighting.
     settled: AtomicBool,
 }
@@ -301,6 +309,27 @@ impl Controller {
     fn set_all(&self, color: [u8; 3]) {
         *self.colors.lock() = vec![color; self.leds];
         self.dirty.store(true, Ordering::Release);
+    }
+
+    fn is_dark(&self) -> bool {
+        self.dark.load(Ordering::Acquire) && !self.identifying.load(Ordering::Acquire)
+    }
+
+    /// The lighting to send: none while it's turned off.
+    fn shown_lighting(&self) -> Lighting {
+        if self.is_dark() {
+            Lighting::default()
+        } else {
+            self.lighting.lock().clone()
+        }
+    }
+
+    fn shown_colors(&self) -> Vec<[u8; 3]> {
+        if self.is_dark() {
+            vec![[0, 0, 0]; self.leds]
+        } else {
+            self.colors.lock().clone()
+        }
     }
 }
 
@@ -679,6 +708,7 @@ impl Engine {
                 ctl.dirty.store(true, Ordering::Release);
             }
         }
+        self.apply_darkness();
     }
 
     /// Wired devices animate their lighting themselves: each gets its effect (or color)
@@ -694,10 +724,9 @@ impl Engine {
                 if part.leds == 0 || !ctl.dirty.swap(false, Ordering::AcqRel) {
                     continue;
                 }
-                let lighting = ctl.lighting.lock().primary().cloned();
+                let lighting = ctl.shown_lighting().primary().cloned();
                 let color = ctl
-                    .colors
-                    .lock()
+                    .shown_colors()
                     .first()
                     .copied()
                     .unwrap_or([255, 255, 255]);
@@ -850,6 +879,7 @@ impl Engine {
                 colors: Mutex::new(vec![[0, 0, 0]; leds]),
                 dirty: AtomicBool::new(false),
                 identifying: AtomicBool::new(false),
+                dark: AtomicBool::new(false),
                 settled: AtomicBool::new(true),
             }));
         }
@@ -868,6 +898,7 @@ impl Engine {
                 colors: Mutex::new(vec![[0, 0, 0]; RING_LEDS]),
                 dirty: AtomicBool::new(false),
                 identifying: AtomicBool::new(false),
+                dark: AtomicBool::new(false),
                 settled: AtomicBool::new(true),
             }));
         }
@@ -887,6 +918,7 @@ impl Engine {
                 colors: Mutex::new(vec![[0, 0, 0]; leds]),
                 dirty: AtomicBool::new(false),
                 identifying: AtomicBool::new(false),
+                dark: AtomicBool::new(false),
                 settled: AtomicBool::new(true),
             }));
         }
@@ -1080,6 +1112,20 @@ impl Engine {
                 .map(|d| Lighting::from_saved(d.effect.clone(), d.outer_effect.clone()))
                 .unwrap_or_default();
             ctl.dirty.store(true, Ordering::Release);
+        }
+        self.apply_darkness();
+    }
+
+    /// Turns devices off or back on to match the settings: each device's own switch and
+    /// the switch for all of them.
+    pub fn apply_darkness(&self) {
+        let config = self.config();
+        for ctl in self.controllers.read().iter() {
+            let dark = config.all_off || config.devices.get(&ctl.id).is_some_and(|d| d.off);
+            if ctl.dark.swap(dark, Ordering::AcqRel) != dark {
+                ctl.settled.store(false, Ordering::Release);
+                ctl.dirty.store(true, Ordering::Release);
+            }
         }
     }
 
@@ -1305,7 +1351,7 @@ impl Engine {
                         } else if sent.elapsed() < CONFIRM_WAIT {
                             None
                         } else if *sends >= SHRINK_AFTER_SENDS
-                            && !ctl.lighting.lock().is_static()
+                            && !ctl.shown_lighting().is_static()
                             && shrink.get(&mac).copied().unwrap_or(0) < MAX_SHRINK
                         {
                             let level = shrink.get(&mac).copied().unwrap_or(0) + 1;
@@ -1461,7 +1507,7 @@ impl Engine {
     }
 
     fn drive_ring(&self, ctl: &Controller, ring: &Hs2OledLedController, last_frame: &mut Instant) {
-        let effect = ctl.lighting.lock().primary().map(Effect::generic);
+        let effect = ctl.shown_lighting().primary().map(Effect::generic);
         if let Some(effect) = effect.filter(|_| !ctl.identifying.load(Ordering::Acquire)) {
             ctl.dirty.store(false, Ordering::Release);
             if last_frame.elapsed() < RING_FRAME {
@@ -1488,7 +1534,7 @@ impl Engine {
                 warn!("OLED ring: {e:#}");
             }
         } else if ctl.dirty.swap(false, Ordering::AcqRel) {
-            let mut colors = ctl.colors.lock().clone();
+            let mut colors = ctl.shown_colors();
             render::balance_all(&mut colors);
             if let Err(e) = ring.send_rgb_frame(&colors) {
                 warn!("OLED ring: {e:#}");
@@ -1982,7 +2028,7 @@ fn prepare_lighting(
     span: Option<crate::effects::Span>,
     turn: Option<crate::effects::Span>,
 ) -> Result<WirelessRgbUpload> {
-    let mut lighting = ctl.lighting.lock().clone();
+    let mut lighting = ctl.shown_lighting();
     for effect in [&mut lighting.inner, &mut lighting.outer]
         .into_iter()
         .flatten()
@@ -1990,7 +2036,7 @@ fn prepare_lighting(
         effect.span = span;
         effect.turn = turn;
     }
-    let base = ctl.colors.lock().clone();
+    let base = ctl.shown_colors();
     if lighting.is_static() || ctl.identifying.load(Ordering::Acquire) {
         let mut base = base;
         render::balance_all(&mut base);

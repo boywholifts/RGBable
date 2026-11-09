@@ -68,6 +68,7 @@ struct Overview {
     fan_profile: usize,
     lighting_profiles: Vec<LightingProfileView>,
     lighting_profile: Option<String>,
+    all_off: bool,
     all_fans: fans::FanMode,
     pump: fans::PumpMode,
     pump_range: (u16, u16),
@@ -117,6 +118,7 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
             })
             .collect(),
         lighting_profile: config.lighting_profile.clone(),
+        all_off: config.all_off,
         all_fans: config
             .active_fan_profile()
             .map(|p| p.all_fans.clone())
@@ -158,6 +160,16 @@ fn set_across(state: State<'_, AppState>, id: String, across: bool) -> Result<()
 #[tauri::command(async)]
 fn set_reverse(state: State<'_, AppState>, id: String, reverse: bool) -> Result<(), String> {
     lights::set_reverse(&state.engine, &state.openrgb, &id, reverse).map_err(chain)
+}
+
+#[tauri::command(async)]
+fn set_off(state: State<'_, AppState>, id: String, off: bool) -> Result<(), String> {
+    lights::set_off(&state.engine, &state.openrgb, &id, off).map_err(chain)
+}
+
+#[tauri::command(async)]
+fn set_all_off(state: State<'_, AppState>, off: bool) {
+    lights::set_all_off(&state.engine, &state.openrgb, off);
 }
 
 #[tauri::command(async)]
@@ -1572,6 +1584,8 @@ fn main() {
             delete_fan_profile,
             set_clean_transitions,
             set_reverse,
+            set_off,
+            set_all_off,
             set_speed,
             set_hidden,
             oled_palette,
@@ -1616,7 +1630,14 @@ fn main() {
             )?;
             let restart_item =
                 MenuItem::with_id(app, "restart", "Restart RGBable", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &restart_item, &quit])?;
+            let lights_item = MenuItem::with_id(
+                app,
+                "lights",
+                "Turn all lighting off or on",
+                true,
+                None::<&str>,
+            )?;
+            let menu = Menu::with_items(app, &[&show, &lights_item, &restart_item, &quit])?;
             let mut tray = TrayIconBuilder::with_id("rgbable")
                 .tooltip("RGBable")
                 .menu(&menu)
@@ -1624,6 +1645,16 @@ fn main() {
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => show_main(app),
                     "quit" => app.exit(0),
+                    "lights" => {
+                        if let Some(state) = tauri::Manager::try_state::<AppState>(app) {
+                            let engine = state.engine.clone();
+                            let openrgb = state.openrgb.clone();
+                            std::thread::spawn(move || {
+                                let off = !engine.config().all_off;
+                                lights::set_all_off(&engine, &openrgb, off);
+                            });
+                        }
+                    }
                     "restart" => {
                         let app = app.clone();
                         std::thread::spawn(move || {

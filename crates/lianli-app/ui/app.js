@@ -295,6 +295,7 @@ async function refresh() {
   status.textContent = text;
   status.className = "status " + (o.status === "Ready" ? "ok" : o.status.startsWith("Error") ? "bad" : "");
 
+  renderAllOff(o);
   renderLights(o);
   renderLightProfiles(o);
   maybeStartWizard(o);

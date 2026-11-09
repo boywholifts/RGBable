@@ -26,6 +26,8 @@ pub struct SavedLight {
     pub turn: Option<Span>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reversed: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub off: bool,
 }
 
 impl SavedLight {
@@ -39,6 +41,7 @@ impl SavedLight {
             span: device.span,
             turn: device.turn,
             reversed: device.reversed,
+            off: device.off,
         }
     }
 
@@ -51,6 +54,7 @@ impl SavedLight {
         device.span = self.span;
         device.turn = self.turn;
         device.reversed = self.reversed;
+        device.off = self.off;
     }
 }
 
@@ -80,6 +84,9 @@ pub struct LightingProfile {
     /// leave the screen alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oled: Option<OledConfig>,
+    /// Every light off; applying a profile without it turns them back on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub all_off: bool,
 }
 
 /// Every device's and group's lighting as the settings have it now.
@@ -109,6 +116,7 @@ pub fn capture(config: &Config, name: &str) -> LightingProfile {
         warmth: config.warmth,
         oled_match: config.oled_match,
         oled: config.oled.clone(),
+        all_off: config.all_off,
     }
 }
 
@@ -147,6 +155,7 @@ pub fn apply(config: &mut Config, profile: &LightingProfile) {
     config.oled_ring = profile.oled_ring;
     config.warmth = profile.warmth;
     config.oled_match = profile.oled_match;
+    config.all_off = profile.all_off;
 }
 
 #[cfg(test)]

@@ -46,12 +46,16 @@
           <h1>Lighting</h1>
           <p class="muted">Choose everything, a group or a device to change its lighting.</p>
         </div>
-        <button class="btn profile-pick" id="light-profile-pick" title="Lighting profiles">
-          <span class="muted small">Profile</span>
-          <span class="profile-current" id="light-profile-current">None</span>
-          <span class="caret">▾</span>
-        </button>
+        <div class="head-actions">
+          <button class="btn all-off" title="Turn every light off, or back on"></button>
+          <button class="btn profile-pick" id="light-profile-pick" title="Lighting profiles">
+            <span class="muted small">Profile</span>
+            <span class="profile-current" id="light-profile-current">None</span>
+            <span class="caret">▾</span>
+          </button>
+        </div>
       </header>
+      <div class="card all-off-note" hidden>All lighting is off. Each device keeps its lighting for when it's back on. <button class="btn mini primary all-on">Turn on</button></div>
 
       <div class="card everything" id="everything"></div>
 
@@ -71,9 +75,13 @@
       <header class="page-head">
         <div>
           <h1>Devices</h1>
-          <p class="muted">Every device in one list: choose how their effects are timed against each other, drag rows to set the order, and flip directions. ⋯ has rename, LED count and groups.</p>
+          <p class="muted">Every device in one list: choose how their effects are timed against each other, drag rows to set the order, flip directions and turn devices off. ⋯ has rename, LED count and groups.</p>
+        </div>
+        <div class="head-actions">
+          <button class="btn all-off" title="Turn every light off, or back on"></button>
         </div>
       </header>
+      <div class="card all-off-note" hidden>All lighting is off. Each device keeps its lighting for when it's back on. <button class="btn mini primary all-on">Turn on</button></div>
       <div class="card seq-bar">
         <div class="seg" id="seq-mode" title="How the devices are timed against each other">
           <button data-mode="together">Together</button>

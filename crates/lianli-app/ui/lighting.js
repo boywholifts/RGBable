@@ -155,9 +155,34 @@ function effectSummary(l) {
   return "Color";
 }
 
+function setOff(l, off) {
+  return call("set_off", { id: l.id, off }, off ? `${l.name} off` : `${l.name} on`).then(rerender);
+}
+
+/// The buttons that turn every light off or on, on the Lighting and Devices pages.
+let allOff = false;
+function renderAllOff(o) {
+  allOff = !!o.all_off;
+  for (const b of document.querySelectorAll(".all-off")) {
+    b.replaceChildren(icon("power"), allOff ? "Turn lighting on" : "All lighting off");
+    b.classList.toggle("on", allOff);
+  }
+  for (const n of document.querySelectorAll(".all-off-note")) n.hidden = !allOff;
+}
+
+function setAllOff(off) {
+  return call("set_all_off", { off }, off ? "All lighting off" : "Lighting back on").then(() => {
+    renderLightProfiles.key = "";
+    refresh();
+  });
+}
+for (const b of document.querySelectorAll(".all-off")) b.addEventListener("click", () => setAllOff(!allOff));
+for (const b of document.querySelectorAll(".all-on")) b.addEventListener("click", () => setAllOff(false));
+
 function deviceMenu(l, anchor) {
   const groups = last ? last.groups : [];
   const items = [
+    { label: l.off ? "Turn on" : "Turn off", onClick: () => setOff(l, !l.off) },
     { label: "Change effect…", onClick: () => openDrawer({ type: "dev", id: l.id }) },
     { label: "Rename…", onClick: () => promptName(`Rename ${l.name}`, l.name, (name) => call("rename", { id: l.id, name }, "Renamed").then(rerender)) },
     { label: "Identify (blink)", onClick: () => call("identify", { id: l.id }, `Blinking ${l.name}`) },
@@ -198,6 +223,7 @@ function rowBadges(l) {
   else if (l.span) badges.push(el("span", { class: "badge", title: "Moving effects run across all its fans" }, icon("across")));
   if (l.delay_ms) badges.push(el("span", { class: "badge", title: `Starts ${(l.delay_ms / 1000).toFixed(1)} s behind` }, [icon("clock"), `${(l.delay_ms / 1000).toFixed(1)}s`]));
   if (!l.sync) badges.push(el("span", { class: "tag off", title: "Sync everything leaves this device alone" }, "Not synced"));
+  if (l.off) badges.push(el("span", { class: "tag off", title: "Turned off: its lighting comes back when it's turned on" }, "Off"));
   return badges;
 }
 
@@ -209,12 +235,18 @@ function deviceRow(l) {
   });
   const box = swatch(l.color, (rgb) => call("set_color", { id: l.id, color: rgb }, `${l.name} updated`).then(rerender), l.effect || l.outer_effect);
   box.addEventListener("click", (e) => e.stopPropagation());
-  const row = el("div", { class: "device-row", draggable: "true", "data-id": l.id, title: "Change this device's lighting" }, [
+  const power = el("button", { class: "icon-btn switchable power-btn" + (l.off ? "" : " on"), title: l.off ? "Off: click to turn on" : "Turn off" }, icon("power"));
+  power.addEventListener("click", (e) => {
+    e.stopPropagation();
+    setOff(l, !l.off);
+  });
+  const row = el("div", { class: "device-row" + (l.off ? " is-off" : ""), draggable: "true", "data-id": l.id, title: "Change this device's lighting" }, [
     box,
     el("div", { class: "row-text" }, [
       el("div", { class: "row-name with-badges" }, [el("span", { class: "name-text", title: l.name }, l.name), ...rowBadges(l)]),
       el("div", { class: "row-sub" }, `${l.kind === "header" ? "ARGB header" : l.kind} · ${effectSummary(l)}`),
     ]),
+    power,
     more,
   ]);
   row.addEventListener("click", () => openDrawer({ type: "dev", id: l.id }));
