@@ -16,8 +16,15 @@ function showOnScreen(path) {
     return;
   }
   const media = isImageFile(path) || /\.gif$/i.test(path)
-    ? el("img", { src: assetUrl(path), alt: "" })
-    : el("video", { src: assetUrl(path), autoplay: "", loop: "", muted: "", playsinline: "" });
+    ? el("img", { alt: "" })
+    : el("video", { autoplay: "", loop: "", muted: "", playsinline: "" });
+  // the file only becomes readable once the app has allowed it; right after a start the
+  // library may not have done that yet
+  invoke("allow_oled_preview", { file: path })
+    .catch(() => {})
+    .finally(() => {
+      if (oled.shownKey === key) media.src = assetUrl(path);
+    });
   if (media.tagName === "VIDEO") media.muted = true;
   media.style.objectFit = oled.fit;
   // L-Connect keeps some videos the way the panel sits (1080 × 2288); the screen plays them upright
@@ -119,6 +126,14 @@ function renderOled(state, initial) {
   $("#oled-match").checked = !!match;
   if (match) $("#oled-match-count").value = String(match);
   if (state.file !== oled.current) {
+    // changed from elsewhere (a lighting profile, say): show what's playing now, not an
+    // older preview
+    if (!initial && oled.current !== undefined) {
+      oled.selected = null;
+      oled.fit = state.fit;
+      oled.fps = state.fps;
+      $("#oled-fps").value = String(state.fps);
+    }
     oled.current = state.file;
     if (oled.selected === oled.current) oled.selected = null;
   }

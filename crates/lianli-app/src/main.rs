@@ -522,6 +522,12 @@ fn set_oled_link(state: State<'_, AppState>, linked: bool) {
         .update_config(|c| c.oled_hide_oledable = !linked);
 }
 
+/// Lets the screen preview read a file the user picked or that is playing.
+#[tauri::command(async)]
+fn allow_oled_preview(app: AppHandle, file: String) {
+    allow_preview(&app, std::path::Path::new(&file));
+}
+
 #[tauri::command(async)]
 fn prepare_oled(app: AppHandle, file: String, fit: String, fps: u32) {
     let file = PathBuf::from(file);
@@ -1436,6 +1442,7 @@ fn main() {
             pick_media,
             set_oled,
             prepare_oled,
+            allow_oled_preview,
             restart_app,
             set_delay,
             set_sequence,
