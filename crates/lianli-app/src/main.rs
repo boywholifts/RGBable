@@ -50,6 +50,8 @@ struct Overview {
     oled: OledView,
     openrgb: OrgbView,
     autostart: bool,
+    /// Windows has RGBable turned off in its Startup apps.
+    autostart_blocked: bool,
     data_dir: String,
     lights: Vec<LightView>,
     groups: Vec<GroupView>,
@@ -88,6 +90,7 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
         oled: state.engine.oled(),
         openrgb: state.openrgb.view(),
         autostart: autostart_cached(),
+        autostart_blocked: AUTOSTART_BLOCKED.load(std::sync::atomic::Ordering::Relaxed),
         data_dir: data_dir().to_string_lossy().into_owned(),
         lights: lights::lights(&state.engine, &state.openrgb),
         groups: lights::groups(&state.engine),
@@ -928,8 +931,11 @@ fn delete_fan_profile(state: State<'_, AppState>, index: usize) {
 }
 
 #[tauri::command(async)]
-fn set_autostart(enabled: bool) -> Result<(), String> {
+fn set_autostart(state: State<'_, AppState>, enabled: bool) -> Result<(), String> {
     set_autostart_impl(enabled).map_err(|e| format!("{e:#}"))?;
+    state
+        .engine
+        .update_config(|c| c.start_with_windows = Some(enabled));
     AUTOSTART
         .get_or_init(|| std::sync::atomic::AtomicBool::new(enabled))
         .store(enabled, std::sync::atomic::Ordering::Release);
@@ -1243,7 +1249,72 @@ fn reg(args: &[&str]) -> std::io::Result<std::process::Output> {
 }
 
 fn autostart_enabled() -> bool {
-    cfg!(windows) && reg(&["query", RUN_KEY, "/v", "RGBable"]).is_ok_and(|o| o.status.success())
+    run_entry().is_some()
+}
+
+/// The command Windows runs at logon for RGBable, if it has one.
+fn run_entry() -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let output = reg(&["query", RUN_KEY, "/v", "RGBable"]).ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+static AUTOSTART_BLOCKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Windows keeps its own on/off switch per startup entry (Task Manager > Startup apps); an
+/// odd first byte means turned off.
+fn startup_disabled_by_windows() -> bool {
+    const APPROVED: &str =
+        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
+    let Ok(output) = reg(&["query", APPROVED, "/v", "RGBable"]) else {
+        return false;
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.split_whitespace()
+        .skip_while(|w| *w != "REG_BINARY")
+        .nth(1)
+        .and_then(|hex| u8::from_str_radix(hex.get(..2)?, 16).ok())
+        .is_some_and(|flag| flag & 1 == 1)
+}
+
+/// Puts the start-at-logon entry back when the user wants it but it's gone or points at an
+/// older exe: an update's uninstall step removes it, and installs can move the exe.
+fn keep_autostart(engine: &Engine) {
+    let wanted = match engine.config().start_with_windows {
+        Some(wanted) => wanted,
+        None => {
+            // settings from before this was remembered: whatever the registry says now
+            let wanted = autostart_enabled();
+            engine.update_config(|c| c.start_with_windows = Some(wanted));
+            wanted
+        }
+    };
+    if !wanted {
+        return;
+    }
+    let exe = std::env::current_exe()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let current = run_entry();
+    if current.as_deref().is_none_or(|entry| !entry.contains(&exe)) {
+        match set_autostart_impl(true) {
+            Ok(()) => info!("put RGBable's start-with-Windows entry back"),
+            Err(e) => tracing::warn!("restoring start with Windows: {e:#}"),
+        }
+    }
+    AUTOSTART
+        .get_or_init(|| std::sync::atomic::AtomicBool::new(true))
+        .store(true, std::sync::atomic::Ordering::Release);
+    let blocked = startup_disabled_by_windows();
+    if blocked {
+        tracing::warn!("Windows has RGBable turned off in Startup apps");
+    }
+    AUTOSTART_BLOCKED.store(blocked, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn set_autostart_impl(enabled: bool) -> anyhow::Result<()> {
@@ -1411,6 +1482,11 @@ fn main() {
     let engine = Engine::new(config_path);
     render::WARMTH.store(engine.config().warmth, std::sync::atomic::Ordering::Relaxed);
     engine.start();
+
+    {
+        let engine = engine.clone();
+        std::thread::spawn(move || keep_autostart(&engine));
+    }
 
     let openrgb = Arc::new(OpenRgb::new());
     openrgb.start_animator();

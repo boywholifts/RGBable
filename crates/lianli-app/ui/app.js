@@ -304,6 +304,7 @@ async function refresh() {
   renderUpdate(o.update);
   if (initial) {
     $("#autostart").checked = o.autostart;
+    $("#autostart-blocked").hidden = !(o.autostart && o.autostart_blocked);
     $("#warmth").value = String(o.warmth || 0);
     $("#clean-transitions").checked = o.clean_transitions;
     $("#warmth-value").textContent = warmthLabel(o.warmth || 0);

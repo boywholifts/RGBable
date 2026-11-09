@@ -542,3 +542,4 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .profile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
 .film-wrap { display: inline-flex; color: var(--accent-2); }
 .film { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.warn-note { color: #f5b759; margin-top: 10px; }

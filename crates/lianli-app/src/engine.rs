@@ -91,6 +91,10 @@ pub struct Config {
     pub fan_profile: usize,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lighting_profiles: Vec<crate::lighting_profiles::LightingProfile>,
+    /// Whether the user wants RGBable to start with Windows: the registry entry is put back
+    /// from this on every start, since updates and Windows can remove it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_with_windows: Option<bool>,
     /// The lighting profile last applied or saved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lighting_profile: Option<String>,
