@@ -1,7 +1,8 @@
-//! The startup profile: lighting the PC shows while it's off (and, if chosen, locked). When
-//! Windows shuts down or restarts, the profile goes onto the devices; the Lian Li wireless
-//! devices keep their last effect through a power cycle, so it's what the build boots
-//! with. When RGBable starts after sign-in, or the PC is unlocked, the lighting from
+//! Startup lighting: what the PC shows while it's off (and, if chosen, locked), either a
+//! lighting profile or everything dark. When Windows asks to shut down or restart, it goes
+//! onto the devices: the Lian Li wireless devices keep their last effect through a power
+//! cycle, and on a restart every other device keeps its last frame, so it's what the build
+//! boots with. When RGBable starts after sign-in, or the PC is unlocked, the lighting from
 //! before comes back.
 
 use crate::engine::Engine;
@@ -16,7 +17,13 @@ use tracing::info;
 /// How long shutdown waits for the wireless devices to confirm the profile.
 const CONFIRM_WAIT: Duration = Duration::from_secs(8);
 
-/// Puts the startup profile on, keeping the lighting from before. Returns once the
+/// Whether there's startup lighting to put on.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn wanted(config: &crate::engine::Config) -> bool {
+    config.startup_dark || config.startup_profile.is_some()
+}
+
+/// Puts the startup lighting on, keeping the lighting from before. Returns once the
 /// wireless devices have it, so the PC can switch off.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn enter(engine: &Engine, openrgb: &OpenRgb, why: &str) {
@@ -24,20 +31,33 @@ pub fn enter(engine: &Engine, openrgb: &OpenRgb, why: &str) {
         if c.before_standby.is_some() {
             return None;
         }
-        let name = c.startup_profile.clone()?;
-        let profile = c
-            .lighting_profiles
-            .iter()
-            .find(|p| p.name == name)
-            .cloned()?;
+        let profile = if c.startup_dark {
+            None
+        } else {
+            let name = c.startup_profile.clone()?;
+            Some(
+                c.lighting_profiles
+                    .iter()
+                    .find(|p| p.name == name)
+                    .cloned()?,
+            )
+        };
         c.before_standby = Some(Box::new(lighting_profiles::capture(c, "before standby")));
-        lighting_profiles::apply(c, &profile);
-        Some(name)
+        match profile {
+            Some(profile) => {
+                lighting_profiles::apply(c, &profile);
+                Some(format!("the startup profile {}", profile.name))
+            }
+            None => {
+                c.all_off = true;
+                Some("everything dark".to_string())
+            }
+        }
     });
-    let Some(name) = applied else {
+    let Some(what) = applied else {
         return;
     };
-    info!("{why}: showing the startup profile {name}");
+    info!("{why}: showing {what}");
     relight(engine, openrgb);
     engine.wait_for_lighting(CONFIRM_WAIT);
 }
@@ -152,20 +172,22 @@ mod windows_watch {
             return DefWindowProcW(hwnd, msg, wparam, lparam);
         };
         match msg {
+            // done when Windows asks rather than when it says the session is over: by then
+            // the app's own window has already shut RGBable down
             WM_QUERYENDSESSION => {
-                if engine.config().startup_profile.is_some() {
+                if super::wanted(&engine.config()) {
                     let reason = wide("Setting up your startup lighting");
                     ShutdownBlockReasonCreate(hwnd, reason.as_ptr());
+                    super::enter(engine, openrgb, "Windows is shutting down");
+                    ShutdownBlockReasonDestroy(hwnd);
                 }
                 1
             }
             WM_ENDSESSION => {
-                // Windows ends the process soon after this returns, so the profile goes on
-                // before it does
-                if wparam != 0 {
-                    super::enter(engine, openrgb, "Windows is shutting down");
+                // the shutdown was called off (another app refused): back to the lighting
+                if wparam == 0 {
+                    super::leave(engine, openrgb);
                 }
-                ShutdownBlockReasonDestroy(hwnd);
                 0
             }
             WM_WTSSESSION_CHANGE => {
@@ -225,6 +247,15 @@ mod tests {
         assert_eq!(after.devices["fan"].name.as_deref(), Some("Top"));
         assert!(after.before_standby.is_none());
         assert!(!restore(&restarted));
+
+        // dark instead of a profile: everything off, then back as it was
+        restarted.update_config(|c| c.startup_dark = true);
+        enter(&restarted, &openrgb, "test");
+        assert!(restarted.config().all_off);
+        leave(&restarted, &openrgb);
+        let back = restarted.config();
+        assert!(!back.all_off);
+        assert_eq!(back.devices["fan"].color, Some([0, 0, 255]));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

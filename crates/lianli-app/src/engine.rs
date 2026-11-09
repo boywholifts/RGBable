@@ -111,6 +111,9 @@ pub struct Config {
     /// A lighting profile applied every time RGBable starts, instead of the last lighting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub startup_profile: Option<String>,
+    /// Every light off from shutdown until sign-in, instead of a startup profile.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub startup_dark: bool,
     /// Shows the startup profile while the PC is locked too, not only while it's off.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub startup_profile_when_locked: bool,

@@ -538,6 +538,9 @@ pub fn save_power_on_lighting(engine: &Engine, openrgb: &OpenRgb, breathing: boo
     {
         crate::lighting_profiles::apply(&mut config, &profile);
     }
+    if config.startup_dark {
+        config.all_off = true;
+    }
     let mut result = PowerOnSaved::default();
     for device in openrgb.view().devices {
         let id = openrgb_id(&device);

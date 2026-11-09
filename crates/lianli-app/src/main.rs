@@ -72,6 +72,7 @@ struct Overview {
     lighting_profile: Option<String>,
     startup_profile: Option<String>,
     startup_profile_when_locked: bool,
+    startup_dark: bool,
     all_off: bool,
     /// LCD fan screens connected right now; the Fan screens page shows only when there are some.
     fan_screens: usize,
@@ -126,6 +127,7 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
         lighting_profile: config.lighting_profile.clone(),
         startup_profile: config.startup_profile.clone(),
         startup_profile_when_locked: config.startup_profile_when_locked,
+        startup_dark: config.startup_dark,
         all_off: config.all_off,
         fan_screens: state.engine.fan_screens.count(),
         all_fans: config
@@ -1026,9 +1028,16 @@ fn apply_lighting_profile(state: State<'_, AppState>, name: String) -> Result<()
 }
 
 #[tauri::command(async)]
-fn set_startup_profile(state: State<'_, AppState>, name: Option<String>, when_locked: bool) {
+fn set_startup_profile(
+    state: State<'_, AppState>,
+    name: Option<String>,
+    dark: bool,
+    when_locked: bool,
+) {
     state.engine.update_config(|c| {
-        c.startup_profile = name.filter(|n| c.lighting_profiles.iter().any(|p| &p.name == n));
+        c.startup_dark = dark;
+        c.startup_profile =
+            name.filter(|n| !dark && c.lighting_profiles.iter().any(|p| &p.name == n));
         c.startup_profile_when_locked = when_locked;
     });
 }

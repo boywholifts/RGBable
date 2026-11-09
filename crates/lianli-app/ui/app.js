@@ -353,26 +353,30 @@ $("#clean-transitions").addEventListener("change", (e) => invoke("set_clean_tran
 function renderStartupProfile(o) {
   const select = $("#startup-profile");
   const names = (o.lighting_profiles || []).map((p) => p.name);
-  const key = JSON.stringify([names, o.startup_profile, o.startup_profile_when_locked]);
+  const key = JSON.stringify([names, o.startup_profile, o.startup_dark, o.startup_profile_when_locked]);
   if (select.dataset.key === key) return;
   select.dataset.key = key;
   select.replaceChildren(
     el("option", { value: "" }, "None: keep my lighting"),
+    el("option", { value: DARK_AT_STARTUP }, "Dark until I sign in"),
     ...names.map((n) => el("option", { value: n }, `Profile: ${n}`)),
   );
-  select.value = o.startup_profile || "";
+  select.value = o.startup_dark ? DARK_AT_STARTUP : o.startup_profile || "";
   $("#startup-locked").checked = !!o.startup_profile_when_locked;
-  $(".startup-locked").hidden = !o.startup_profile;
+  $(".startup-locked").hidden = !select.value;
 }
 
+const DARK_AT_STARTUP = "__dark__";
+
 function saveStartupProfile(note) {
-  const name = $("#startup-profile").value || null;
-  $(".startup-locked").hidden = !name;
-  return call("set_startup_profile", { name, whenLocked: $("#startup-locked").checked }, note);
+  const value = $("#startup-profile").value;
+  const dark = value === DARK_AT_STARTUP;
+  $(".startup-locked").hidden = !value;
+  return call("set_startup_profile", { name: dark ? null : value || null, dark, whenLocked: $("#startup-locked").checked }, note);
 }
 
 $("#startup-profile").addEventListener("change", (e) =>
-  saveStartupProfile(e.target.value ? `${e.target.value} at startup` : "No startup profile"));
+  saveStartupProfile(e.target.value === DARK_AT_STARTUP ? "Dark until you sign in" : e.target.value ? `${e.target.value} at startup` : "No startup lighting"));
 $("#startup-locked").addEventListener("change", (e) =>
   saveStartupProfile(e.target.checked ? "Shown while locked too" : "Only shown while the PC is off"));
 
