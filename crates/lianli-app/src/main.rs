@@ -1611,6 +1611,21 @@ fn watch_vial(engine: Arc<Engine>, openrgb: Arc<OpenRgb>) {
 /// (OpenRGB closed or restarted, which hands the boards back their own effects) is
 /// reconnected every few seconds, starting the managed OpenRGB again if it isn't running.
 /// Runs for the life of the app.
+/// OpenRGB devices RGBable has settings for that OpenRGB doesn't list now.
+fn missing_openrgb_devices(config: &engine::Config, listed: &[String]) -> Vec<String> {
+    let known: std::collections::BTreeSet<&str> = config
+        .devices
+        .keys()
+        .filter_map(|id| id.strip_prefix(lights::OPENRGB_PREFIX))
+        .filter_map(|rest| rest.rsplit_once('@').map(|(name, _)| name))
+        .collect();
+    known
+        .into_iter()
+        .filter(|name| !listed.iter().any(|l| l == name))
+        .map(str::to_string)
+        .collect()
+}
+
 fn watch_openrgb_devices(engine: &Arc<Engine>, openrgb: &Arc<OpenRgb>) {
     use std::time::{Duration, Instant};
     const RECONNECT_EVERY: Duration = Duration::from_secs(5);
@@ -1623,7 +1638,21 @@ fn watch_openrgb_devices(engine: &Arc<Engine>, openrgb: &Arc<OpenRgb>) {
     let mut lost_at: Option<Instant> = None;
     let mut host_started_at: Option<Instant> = None;
     let mut listed_at = Instant::now();
+    let mut rescans_at = vec![Duration::from_secs(60), Duration::from_secs(20)];
     loop {
+        if rescans_at.last().is_some_and(|at| started.elapsed() >= *at) {
+            rescans_at.pop();
+            let missing = missing_openrgb_devices(&engine.config(), &openrgb.device_names());
+            if openrgb.is_connected() && !missing.is_empty() {
+                tracing::info!(
+                    "OpenRGB hasn't found {} yet; asking it to look again",
+                    missing.join(", ")
+                );
+                if let Err(e) = openrgb.rescan() {
+                    tracing::warn!("asking OpenRGB to look for devices: {e:#}");
+                }
+            }
+        }
         let every = if started.elapsed() < Duration::from_secs(90) {
             Duration::from_secs(3)
         } else {

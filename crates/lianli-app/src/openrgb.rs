@@ -27,6 +27,7 @@ const PKT_SET_CLIENT_NAME: u32 = 50;
 const PKT_UPDATE_LEDS: u32 = 1050;
 const PKT_SET_CUSTOM_MODE: u32 = 1100;
 const PKT_RESIZE_ZONE: u32 = 1000;
+const PKT_REQUEST_RESCAN_DEVICES: u32 = 140;
 pub const DEFAULT_PORTS: [u16; 2] = [6742, 6743];
 
 #[derive(Debug, Clone, Serialize)]
@@ -243,6 +244,19 @@ impl OpenRgb {
     /// starts its server before detection finishes, and devices can be plugged in later.
     pub fn is_connected(&self) -> bool {
         self.stream.lock().is_some()
+    }
+
+    pub fn device_names(&self) -> Vec<String> {
+        self.devices.read().iter().map(|d| d.name.clone()).collect()
+    }
+
+    /// Asks OpenRGB to look for devices again. It only looks once when it starts, so a device
+    /// that wasn't ready that early in boot stays missing until asked. No reply is awaited:
+    /// the device list check notices what it finds.
+    pub fn rescan(&self) -> Result<()> {
+        let mut guard = self.stream.lock();
+        let (stream, _) = guard.as_mut().context("not connected to OpenRGB")?;
+        send(stream, 0, PKT_REQUEST_RESCAN_DEVICES, &[])
     }
 
     pub fn device_list_changed(&self) -> Result<bool> {
