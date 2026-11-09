@@ -19,7 +19,8 @@
         "resizable": true,
         "visible": false,
         "dragDropEnabled": false,
-        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-direct-composition-video-overlays"
+        "backgroundColor": "#0b0910",
+        "additionalBrowserArgs": "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection,CalculateNativeWinOcclusion --disable-direct-composition-video-overlays"
       }
     ],
     "security": { "csp": null, "assetProtocol": { "enable": true, "scope": [] } }
