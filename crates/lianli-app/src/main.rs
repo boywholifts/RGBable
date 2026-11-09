@@ -1714,6 +1714,21 @@ fn watch_vial(engine: Arc<Engine>, openrgb: Arc<OpenRgb>) {
 /// (OpenRGB closed or restarted, which hands the boards back their own effects) is
 /// reconnected every few seconds, starting the managed OpenRGB again if it isn't running.
 /// Runs for the life of the app.
+/// OpenRGB devices RGBable has settings for that OpenRGB doesn't list now.
+fn missing_openrgb_devices(config: &engine::Config, listed: &[String]) -> Vec<String> {
+    let known: std::collections::BTreeSet<&str> = config
+        .devices
+        .keys()
+        .filter_map(|id| id.strip_prefix(lights::OPENRGB_PREFIX))
+        .filter_map(|rest| rest.rsplit_once('@').map(|(name, _)| name))
+        .collect();
+    known
+        .into_iter()
+        .filter(|name| !listed.iter().any(|l| l == name))
+        .map(str::to_string)
+        .collect()
+}
+
 fn watch_openrgb_devices(engine: &Arc<Engine>, openrgb: &Arc<OpenRgb>) {
     use std::time::{Duration, Instant};
     const RECONNECT_EVERY: Duration = Duration::from_secs(5);
@@ -1726,14 +1741,46 @@ fn watch_openrgb_devices(engine: &Arc<Engine>, openrgb: &Arc<OpenRgb>) {
     let mut lost_at: Option<Instant> = None;
     let mut host_started_at: Option<Instant> = None;
     let mut listed_at = Instant::now();
+    // OpenRGB started at logon can still be finding devices, or put its own lighting on them
+    // once it has: for a while after each (re)connect every device is sent its lighting again
+    const SETTLING: Duration = Duration::from_secs(180);
+    const RESEND_EVERY: Duration = Duration::from_secs(10);
+    let mut sent_at = Instant::now();
+    let mut rescans_at = vec![Duration::from_secs(60), Duration::from_secs(25)];
+    let mut rescanned_at: Option<Instant> = None;
     loop {
+        if rescans_at.last().is_some_and(|at| started.elapsed() >= *at) {
+            rescans_at.pop();
+            let missing = missing_openrgb_devices(&engine.config(), &openrgb.device_names());
+            if openrgb.is_connected() && !missing.is_empty() {
+                tracing::info!(
+                    "OpenRGB hasn't found {} yet; asking it to look again",
+                    missing.join(", ")
+                );
+                match openrgb.rescan() {
+                    Ok(()) => rescanned_at = Some(Instant::now()),
+                    Err(e) => tracing::warn!("asking OpenRGB to look for devices: {e:#}"),
+                }
+            }
+        }
+        if openrgb.is_connected()
+            && openrgb.connected_for().is_some_and(|d| d < SETTLING)
+            && sent_at.elapsed() >= RESEND_EVERY
+        {
+            sent_at = Instant::now();
+            lights::sync_openrgb_effects(engine, openrgb);
+        }
         let every = if started.elapsed() < Duration::from_secs(90) {
             Duration::from_secs(3)
         } else {
             Duration::from_secs(30)
         };
         std::thread::sleep(RECONNECT_EVERY.min(every));
-        if lost_at.is_none() && openrgb.is_connected() && listed_at.elapsed() < every {
+        if lost_at.is_none()
+            && openrgb.is_connected()
+            && !openrgb.is_stale()
+            && listed_at.elapsed() < every
+        {
             continue;
         }
         listed_at = Instant::now();
@@ -1753,6 +1800,7 @@ fn watch_openrgb_devices(engine: &Arc<Engine>, openrgb: &Arc<OpenRgb>) {
         let config = engine.config();
         match openrgb.connect(config.openrgb_port) {
             Ok(()) => {
+                sent_at = Instant::now();
                 if lost_at.take().is_some() {
                     tracing::info!("reconnected to OpenRGB");
                 } else {
@@ -1762,8 +1810,10 @@ fn watch_openrgb_devices(engine: &Arc<Engine>, openrgb: &Arc<OpenRgb>) {
             }
             Err(e) => {
                 let lost_for = lost_at.map_or(Duration::ZERO, |at| at.elapsed());
-                let may_restart =
-                    host_started_at.is_none_or(|at| at.elapsed() >= RESTART_HOST_EVERY);
+                // a rescan empties OpenRGB's list for a while; that isn't OpenRGB gone
+                let may_restart = host_started_at
+                    .is_none_or(|at| at.elapsed() >= RESTART_HOST_EVERY)
+                    && rescanned_at.is_none_or(|at| at.elapsed() >= Duration::from_secs(90));
                 if config.manage_openrgb && lost_for >= Duration::from_secs(15) && may_restart {
                     host_started_at = Some(Instant::now());
                     if let Err(e) = openrgb_host::start() {

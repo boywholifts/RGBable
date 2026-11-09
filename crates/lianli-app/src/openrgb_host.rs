@@ -259,7 +259,10 @@ pub fn create_logon_task(exe: &Path, may_prompt: bool) -> Result<()> {
     // some setups only let administrators add logon tasks
     tracing::info!("adding the logon task needs administrator rights here: {detail}");
     run_elevated_script("logon-task.ps1", &script)?;
-    anyhow::ensure!(logon_task().is_some(), "Task Scheduler didn't keep the logon task");
+    anyhow::ensure!(
+        logon_task().is_some(),
+        "Task Scheduler didn't keep the logon task"
+    );
     Ok(())
 }
 

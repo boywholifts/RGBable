@@ -27,6 +27,7 @@ const PKT_SET_CLIENT_NAME: u32 = 50;
 const PKT_UPDATE_LEDS: u32 = 1050;
 const PKT_SET_CUSTOM_MODE: u32 = 1100;
 const PKT_RESIZE_ZONE: u32 = 1000;
+const PKT_REQUEST_RESCAN_DEVICES: u32 = 140;
 pub const DEFAULT_PORTS: [u16; 2] = [6742, 6743];
 
 #[derive(Debug, Clone, Serialize)]
@@ -77,6 +78,8 @@ pub struct OpenRgb {
     devices: RwLock<Vec<OrgbDevice>>,
     listed_ids: RwLock<Vec<u32>>,
     connected_at: RwLock<Option<Instant>>,
+    /// A write named a controller OpenRGB no longer has: its list needs reading again.
+    stale: std::sync::atomic::AtomicBool,
     animations: Mutex<Animations>,
     /// Keyboards left alone while Vial has them: nothing is written to them.
     keyboards_held: std::sync::atomic::AtomicBool,
@@ -138,6 +141,7 @@ impl OpenRgb {
             port: RwLock::new(None),
             status: RwLock::new("Not connected".into()),
             connected_at: RwLock::new(None),
+            stale: std::sync::atomic::AtomicBool::new(false),
             devices: RwLock::new(Vec::new()),
             listed_ids: RwLock::new(Vec::new()),
             animations: Mutex::new(Animations::default()),
@@ -198,6 +202,8 @@ impl OpenRgb {
                         *self.devices.write() = devices;
                         *self.listed_ids.write() = ids;
                         *self.connected_at.write() = Some(Instant::now());
+                        self.stale
+                            .store(false, std::sync::atomic::Ordering::Release);
                         // when OpenRGB's list changes, its controllers can get new IDs:
                         // effects for IDs it no longer has would only fail, every frame
                         {
@@ -259,7 +265,33 @@ impl OpenRgb {
         self.stream.lock().is_some()
     }
 
+    pub fn is_stale(&self) -> bool {
+        self.stale.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub fn device_names(&self) -> Vec<String> {
+        self.devices.read().iter().map(|d| d.name.clone()).collect()
+    }
+
+    /// How long ago RGBable last (re)read OpenRGB's devices.
+    pub fn connected_for(&self) -> Option<Duration> {
+        self.connected_at.read().map(|at| at.elapsed())
+    }
+
+    /// Asks OpenRGB to look for devices again; it only looks once when it starts, so a device
+    /// that wasn't ready that early in boot stays missing until asked. The device list check
+    /// notices what it finds.
+    pub fn rescan(&self) -> Result<()> {
+        let mut guard = self.stream.lock();
+        let (stream, _) = guard.as_mut().context("not connected to OpenRGB")?;
+        send(stream, 0, PKT_REQUEST_RESCAN_DEVICES, &[])
+    }
+
     pub fn device_list_changed(&self) -> Result<bool> {
+        if self.stale.load(std::sync::atomic::Ordering::Acquire) {
+            anyhow::ensure!(self.is_connected(), "not connected to OpenRGB");
+            return Ok(true);
+        }
         let mut guard = self.stream.lock();
         let (stream, version) = guard.as_mut().context("not connected to OpenRGB")?;
         let version = *version;
@@ -331,9 +363,17 @@ impl OpenRgb {
             .and_then(|()| send(stream, index, PKT_UPDATE_LEDS, &payload))
             .and_then(|()| expect_ack(stream, version, PKT_UPDATE_LEDS));
         if let Err(e) = &result {
-            warn!("OpenRGB write failed, disconnecting: {e:#}");
-            *guard = None;
-            *self.status.write() = "Disconnected from OpenRGB".into();
+            if e.to_string().contains("invalid device ID") {
+                // OpenRGB is changing its device list (a rescan, a late device): the
+                // connection is fine, the list just needs reading again
+                if !self.stale.swap(true, std::sync::atomic::Ordering::AcqRel) {
+                    info!("OpenRGB no longer has controller {index}; reading its devices again");
+                }
+            } else {
+                warn!("OpenRGB write failed, disconnecting: {e:#}");
+                *guard = None;
+                *self.status.write() = "Disconnected from OpenRGB".into();
+            }
         }
         result
     }
