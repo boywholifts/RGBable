@@ -1,6 +1,6 @@
 [package]
 name = "rgbable"
-version = "0.2.0"
+version = "1.0.0"
 edition.workspace = true
 rust-version.workspace = true
 description = "RGBable: Windows desktop app for Lian Li hardware (unofficial), built on lian-li-linux"
