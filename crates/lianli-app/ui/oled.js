@@ -26,7 +26,13 @@ function showOnScreen(path) {
     media.classList.toggle("panel-native", w === 1080 && h === 2288);
   };
   media.addEventListener(media.tagName === "VIDEO" ? "loadedmetadata" : "load", turnUpright);
-  media.addEventListener("error", () => screen.replaceChildren(el("div", { class: "oled-empty" }, "Can't preview this file here, but the OLED can still play it")));
+  media.addEventListener("error", () => {
+    // MediaError codes: 2 the file couldn't be read, 3 decoding failed, 4 the format isn't supported
+    const reason = { 2: "couldn't read the file", 3: "couldn't decode it", 4: "its format isn't supported here" }[media.error && media.error.code];
+    const detail = reason ? ` (${reason})` : "";
+    console.warn("OLED preview failed", path, media.error && media.error.code, media.error && media.error.message);
+    screen.replaceChildren(el("div", { class: "oled-empty" }, `Can't preview this file here${detail}, but the OLED can still play it`));
+  });
   screen.replaceChildren(media);
   syncPreviewPlayback();
 }
