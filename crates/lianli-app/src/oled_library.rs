@@ -11,6 +11,9 @@ pub const MEDIA: &[&str] = &[
     "mp4", "mkv", "mov", "webm", "avi", "gif", "png", "jpg", "jpeg", "bmp", "webp",
 ];
 const MAX_ITEMS: usize = 500;
+/// How many files sent from other apps the library keeps.
+pub const MAX_SENT: usize = 100;
+pub const SENT_LABEL: &str = "Sent from OLEDable";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct LibraryItem {
@@ -127,8 +130,21 @@ fn thumb_path(file: &Path, modified: u64) -> PathBuf {
     thumb_dir().join(format!("{:016x}.jpg", hasher.finish()))
 }
 
-/// Lists the media in the library folders, newest first; a file in two folders is listed once.
-pub fn list(folders: &[LibraryFolder]) -> Vec<LibraryItem> {
+/// Whether `file` is in one of the library folders (directly, as the library lists them).
+pub fn in_folders(folders: &[LibraryFolder], file: &Path) -> bool {
+    let Some(parent) = file.parent() else {
+        return false;
+    };
+    let parent = parent.to_string_lossy().to_lowercase();
+    let parent = parent.trim_end_matches(['\\', '/']);
+    folders
+        .iter()
+        .any(|f| f.path.to_lowercase().trim_end_matches(['\\', '/']) == parent)
+}
+
+/// Lists the media in the library folders and the files sent from other apps, newest first;
+/// a file in two places is listed once.
+pub fn list(folders: &[LibraryFolder], sent: &[PathBuf]) -> Vec<LibraryItem> {
     let mut seen = HashSet::new();
     let mut items = Vec::new();
     for folder in folders.iter().filter(|f| f.exists) {
@@ -136,43 +152,46 @@ pub fn list(folders: &[LibraryFolder]) -> Vec<LibraryItem> {
             continue;
         };
         for entry in entries.flatten() {
-            let path = entry.path();
-            if !path.is_file()
-                || !is_media(&path)
-                || !seen.insert(path.to_string_lossy().to_lowercase())
-            {
-                continue;
-            }
-            let meta = entry.metadata().ok();
-            let modified = meta
-                .as_ref()
-                .and_then(|m| m.modified().ok())
-                .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
-                .map_or(0, |d| d.as_secs());
-            let image = is_image(&path);
-            let thumb = if image {
-                Some(path.to_string_lossy().into_owned())
-            } else {
-                let t = thumb_path(&path, modified);
-                t.is_file().then(|| t.to_string_lossy().into_owned())
-            };
-            items.push(LibraryItem {
-                name: path
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                path: path.to_string_lossy().into_owned(),
-                folder: folder.label.clone(),
-                size: meta.map_or(0, |m| m.len()),
-                modified,
-                image,
-                thumb,
-            });
+            items.extend(item(&entry.path(), &folder.label, &mut seen));
         }
+    }
+    for file in sent {
+        items.extend(item(file, SENT_LABEL, &mut seen));
     }
     items.sort_by_key(|i| std::cmp::Reverse(i.modified));
     items.truncate(MAX_ITEMS);
     items
+}
+
+fn item(path: &Path, folder: &str, seen: &mut HashSet<String>) -> Option<LibraryItem> {
+    if !path.is_file() || !is_media(path) || !seen.insert(path.to_string_lossy().to_lowercase()) {
+        return None;
+    }
+    let meta = std::fs::metadata(path).ok();
+    let modified = meta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_secs());
+    let image = is_image(path);
+    let thumb = if image {
+        Some(path.to_string_lossy().into_owned())
+    } else {
+        let t = thumb_path(path, modified);
+        t.is_file().then(|| t.to_string_lossy().into_owned())
+    };
+    Some(LibraryItem {
+        name: path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        path: path.to_string_lossy().into_owned(),
+        folder: folder.to_string(),
+        size: meta.map_or(0, |m| m.len()),
+        modified,
+        image,
+        thumb,
+    })
 }
 
 /// Makes the missing video thumbnails, one ffmpeg run at a time; returns how many it made.
@@ -321,12 +340,43 @@ mod tests {
             from_oledable: false,
             exists: true,
         }];
-        let items = list(&folders);
+        let items = list(&folders, &[]);
         let names: Vec<_> = items.iter().map(|i| i.name.as_str()).collect();
         assert_eq!(items.len(), 2, "{names:?}");
         assert!(items
             .iter()
             .any(|i| i.name == "b" && i.image && i.thumb.is_some()));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn lists_sent_files_once_and_skips_missing_ones() {
+        let base = std::env::temp_dir().join(format!("rgbable-sent-test-{}", std::process::id()));
+        let dir = base.join("library");
+        let elsewhere = base.join("elsewhere");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(dir.join("in.mp4"), b"x").unwrap();
+        std::fs::write(elsewhere.join("out.mp4"), b"x").unwrap();
+        let folders = vec![LibraryFolder {
+            path: dir.to_string_lossy().into_owned(),
+            label: "test".into(),
+            from_oledable: false,
+            exists: true,
+        }];
+        assert!(in_folders(&folders, &dir.join("in.mp4")));
+        assert!(!in_folders(&folders, &elsewhere.join("out.mp4")));
+        let sent = [
+            elsewhere.join("out.mp4"),
+            dir.join("in.mp4"),
+            elsewhere.join("gone.mp4"),
+        ];
+        let items = list(&folders, &sent);
+        assert_eq!(items.len(), 2);
+        assert!(items
+            .iter()
+            .any(|i| i.name == "out" && i.folder == SENT_LABEL));
+        assert!(items.iter().any(|i| i.name == "in" && i.folder == "test"));
+        std::fs::remove_dir_all(base).unwrap();
     }
 }

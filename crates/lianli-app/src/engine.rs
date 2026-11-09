@@ -67,6 +67,10 @@ pub struct Config {
     /// Extra folders the user added to the OLED library.
     #[serde(default)]
     pub oled_folders: Vec<PathBuf>,
+    /// Files other apps (OLEDable) sent to the screen from outside the library folders,
+    /// newest first, so they show in the library too.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub oled_sent: Vec<PathBuf>,
     /// Effects the user built or wrote and saved by name.
     #[serde(default)]
     pub custom_effects: Vec<Effect>,

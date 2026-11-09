@@ -475,12 +475,18 @@ async fn oled_library(app: AppHandle, state: State<'_, AppState>) -> Result<Oled
     let linked = !config.oled_hide_oledable;
     let (folders, items) = tauri::async_runtime::spawn_blocking(move || {
         let folders = oled_library::folders(linked, &config.oled_folders);
-        let items = oled_library::list(&folders);
+        let items = oled_library::list(&folders, &config.oled_sent);
         (folders, items)
     })
     .await
     .map_err(err)?;
     let scope = app.asset_protocol_scope();
+    for item in items
+        .iter()
+        .filter(|i| i.folder == oled_library::SENT_LABEL)
+    {
+        let _ = scope.allow_file(&item.path);
+    }
     for folder in folders.iter().filter(|f| f.exists) {
         let _ = scope.allow_directory(&folder.path, false);
     }
@@ -1370,6 +1376,7 @@ fn handle_args(app: &AppHandle, engine: &Arc<Engine>, args: &[String]) -> bool {
     match engine.set_oled(Some(file.clone()), fit, fps) {
         Ok(()) => {
             tracing::info!("playing {} on the OLED (from another app)", file.display());
+            remember_sent(engine, &file);
             if let Some(state) = tauri::Manager::try_state::<AppState>(app) {
                 match_oled_in_background(&state.engine, &state.openrgb);
             }
@@ -1377,6 +1384,21 @@ fn handle_args(app: &AppHandle, engine: &Arc<Engine>, args: &[String]) -> bool {
         Err(e) => tracing::warn!("--oled {}: {e:#}", file.display()),
     }
     true
+}
+
+/// Keeps a file another app played on the screen in the library, unless it's already in
+/// one of the library folders.
+fn remember_sent(engine: &Engine, file: &std::path::Path) {
+    let config = engine.config();
+    let folders = oled_library::folders(!config.oled_hide_oledable, &config.oled_folders);
+    if oled_library::in_folders(&folders, file) {
+        return;
+    }
+    engine.update_config(|c| {
+        c.oled_sent.retain(|p| p != file);
+        c.oled_sent.insert(0, file.to_path_buf());
+        c.oled_sent.truncate(oled_library::MAX_SENT);
+    });
 }
 
 fn show_main(app: &AppHandle) {

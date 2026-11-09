@@ -136,6 +136,8 @@ function renderOled(state, initial) {
     }
     oled.current = state.file;
     if (oled.selected === oled.current) oled.selected = null;
+    // a file sent from OLEDable joins the library; show it there
+    if (!initial && state.file && oled.library && !oled.library.items.some((i) => i.path === state.file)) loadOledLibrary();
   }
   renderOledStage();
 }
