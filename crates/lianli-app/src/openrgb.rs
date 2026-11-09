@@ -26,6 +26,14 @@ const PKT_REQUEST_PROTOCOL_VERSION: u32 = 40;
 const PKT_SET_CLIENT_NAME: u32 = 50;
 const PKT_UPDATE_LEDS: u32 = 1050;
 const PKT_SET_CUSTOM_MODE: u32 = 1100;
+const PKT_UPDATE_MODE: u32 = 1101;
+const PKT_SAVE_MODE: u32 = 1102;
+const MODE_FLAG_HAS_PER_LED_COLOR: u32 = 1 << 5;
+const MODE_FLAG_HAS_MODE_SPECIFIC_COLOR: u32 = 1 << 6;
+const MODE_FLAG_MANUAL_SAVE: u32 = 1 << 8;
+const MODE_FLAG_AUTOMATIC_SAVE: u32 = 1 << 9;
+const MODE_COLORS_PER_LED: u32 = 1;
+const MODE_COLORS_MODE_SPECIFIC: u32 = 2;
 const PKT_RESIZE_ZONE: u32 = 1000;
 const PKT_REQUEST_RESCAN_DEVICES: u32 = 140;
 pub const DEFAULT_PORTS: [u16; 2] = [6742, 6743];
@@ -42,11 +50,88 @@ pub struct OrgbDevice {
     pub leds: usize,
     pub zones: Vec<Zone>,
     pub modes: Vec<String>,
+    /// The modes with their settings, to switch to one and store it on the device.
+    #[serde(skip)]
+    pub mode_settings: Vec<Mode>,
     pub active_mode: String,
     pub first_color: Option<[u8; 3]>,
     /// Where the keys sit, for devices whose zones come with a key grid (keyboards).
     #[serde(skip)]
     pub keys: Option<KeyLayout>,
+}
+
+/// A hardware mode as OpenRGB describes it (RGBController::GetModeDescriptionData).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Mode {
+    pub name: String,
+    value: u32,
+    flags: u32,
+    speed_min: u32,
+    speed_max: u32,
+    brightness_min: u32,
+    brightness_max: u32,
+    colors_min: u32,
+    colors_max: u32,
+    speed: u32,
+    brightness: u32,
+    direction: u32,
+    color_mode: u32,
+    colors: Vec<[u8; 3]>,
+}
+
+impl Mode {
+    fn write(&self, out: &mut Vec<u8>, version: u32) {
+        let bytes = self.name.as_bytes();
+        out.extend(((bytes.len() + 1) as u16).to_le_bytes());
+        out.extend(bytes);
+        out.push(0);
+        let mut put = |v: u32| out.extend(v.to_le_bytes());
+        if version < 6 {
+            put(self.value);
+        }
+        put(self.flags);
+        put(self.speed_min);
+        put(self.speed_max);
+        if version >= 3 {
+            put(self.brightness_min);
+            put(self.brightness_max);
+        }
+        put(self.colors_min);
+        put(self.colors_max);
+        put(self.speed);
+        if version >= 3 {
+            put(self.brightness);
+        }
+        put(self.direction);
+        put(self.color_mode);
+        out.extend((self.colors.len() as u16).to_le_bytes());
+        for c in &self.colors {
+            out.extend([c[0], c[1], c[2], 0]);
+        }
+    }
+
+    /// This mode showing `color`, when the device can remember it; per LED tells whether
+    /// the color still has to go out to the LEDs.
+    fn showing(&self, color: [u8; 3]) -> Option<(Mode, bool)> {
+        if self.flags & (MODE_FLAG_MANUAL_SAVE | MODE_FLAG_AUTOMATIC_SAVE) == 0 {
+            return None;
+        }
+        let mut mode = self.clone();
+        if self.flags & MODE_FLAG_HAS_MODE_SPECIFIC_COLOR != 0 {
+            let count = (self.colors.len() as u32)
+                .max(self.colors_min)
+                .max(1)
+                .min(self.colors_max.max(1));
+            mode.color_mode = MODE_COLORS_MODE_SPECIFIC;
+            mode.colors = vec![color; count as usize];
+            Some((mode, false))
+        } else if self.flags & MODE_FLAG_HAS_PER_LED_COLOR != 0 {
+            mode.color_mode = MODE_COLORS_PER_LED;
+            Some((mode, true))
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -411,6 +496,68 @@ impl OpenRgb {
         }
     }
 
+    /// Makes the animator switch every device back to direct mode on its next frame.
+    pub fn reassert_direct(&self) {
+        self.animations.lock().generation += 1;
+    }
+
+    /// Stores `color` in the device's own memory as a plain or breathing hardware mode, so
+    /// it shows from power-on until RGBable takes over. False when the device can't
+    /// remember a mode like that. Leaves the device in that mode: put it back in direct
+    /// mode afterwards.
+    pub fn save_power_on(&self, index: u32, color: [u8; 3], breathing: bool) -> Result<bool> {
+        let names: &[&str] = if breathing {
+            &["breathing", "breathe", "pulse"]
+        } else {
+            &["static", "fixed", "solid"]
+        };
+        let Some(device) = self
+            .devices
+            .read()
+            .iter()
+            .find(|d| d.index == index)
+            .cloned()
+        else {
+            bail!("OpenRGB has no device {index}");
+        };
+        let Some((mode_index, (mode, per_led))) = device
+            .mode_settings
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| names.contains(&m.name.to_lowercase().as_str()))
+            .find_map(|(i, m)| m.showing(color).map(|shown| (i, shown)))
+        else {
+            return Ok(false);
+        };
+        let mut guard = self.stream.lock();
+        let (stream, version) = guard.as_mut().context("not connected to OpenRGB")?;
+        let version = *version;
+        anyhow::ensure!(version >= 3, "OpenRGB is too old to store modes on devices");
+        let mut payload = Vec::new();
+        payload.extend((mode_index as i32).to_le_bytes());
+        mode.write(&mut payload, version);
+        let mut packet = Vec::with_capacity(payload.len() + 4);
+        packet.extend(((payload.len() + 4) as u32).to_le_bytes());
+        packet.extend(payload);
+        send(stream, index, PKT_UPDATE_MODE, &packet)?;
+        expect_ack(stream, version, PKT_UPDATE_MODE)?;
+        if per_led {
+            let mut leds = Vec::with_capacity(6 + device.leds * 4);
+            leds.extend(((6 + device.leds * 4) as u32).to_le_bytes());
+            leds.extend((device.leds as u16).to_le_bytes());
+            for _ in 0..device.leds {
+                leds.extend([color[0], color[1], color[2], 0]);
+            }
+            send(stream, index, PKT_UPDATE_LEDS, &leds)?;
+            expect_ack(stream, version, PKT_UPDATE_LEDS)?;
+        }
+        if mode.flags & MODE_FLAG_MANUAL_SAVE != 0 {
+            send(stream, index, PKT_SAVE_MODE, &packet)?;
+            expect_ack(stream, version, PKT_SAVE_MODE)?;
+        }
+        Ok(true)
+    }
+
     pub fn stop_animation(&self, index: u32) {
         let mut animations = self.animations.lock();
         if animations.effects.remove(&index).is_some() {
@@ -662,10 +809,11 @@ fn parse_controller(index: u32, data: &[u8], version: u32) -> Result<OrgbDevice>
     let location = r.string()?;
     let mode_count = r.u16()?;
     let active = r.u32()? as usize;
-    let mut modes = Vec::new();
+    let mut mode_settings = Vec::new();
     for _ in 0..mode_count {
-        modes.push(read_mode(&mut r, version)?);
+        mode_settings.push(read_mode(&mut r, version)?);
     }
+    let modes: Vec<String> = mode_settings.iter().map(|m| m.name.clone()).collect();
     let zone_count = r.u16()?;
     let mut zones = Vec::new();
     let mut grids: Vec<Option<(usize, usize, Vec<u32>)>> = Vec::new();
@@ -749,30 +897,43 @@ fn parse_controller(index: u32, data: &[u8], version: u32) -> Result<OrgbDevice>
         leds,
         zones,
         modes,
+        mode_settings,
         active_mode,
         first_color,
         keys,
     })
 }
 
-/// One mode entry (RGBController::GetModeDescriptionData); returns its name.
-fn read_mode(r: &mut Reader<'_>, version: u32) -> Result<String> {
-    let name = r.string()?;
+/// One mode entry (RGBController::GetModeDescriptionData).
+fn read_mode(r: &mut Reader<'_>, version: u32) -> Result<Mode> {
+    let mut mode = Mode {
+        name: r.string()?,
+        ..Default::default()
+    };
     if version < 6 {
-        r.skip(4)?; // value
+        mode.value = r.u32()?;
     }
-    r.skip(4 * 3)?; // flags, speed min, speed max
+    mode.flags = r.u32()?;
+    mode.speed_min = r.u32()?;
+    mode.speed_max = r.u32()?;
     if version >= 3 {
-        r.skip(4 * 2)?; // brightness min/max
+        mode.brightness_min = r.u32()?;
+        mode.brightness_max = r.u32()?;
     }
-    r.skip(4 * 3)?; // colors min/max, speed
+    mode.colors_min = r.u32()?;
+    mode.colors_max = r.u32()?;
+    mode.speed = r.u32()?;
     if version >= 3 {
-        r.skip(4)?; // brightness
+        mode.brightness = r.u32()?;
     }
-    r.skip(4 * 2)?; // direction, color mode
+    mode.direction = r.u32()?;
+    mode.color_mode = r.u32()?;
     let colors = r.u16()? as usize;
-    r.skip(colors * 4)?;
-    Ok(name)
+    for _ in 0..colors {
+        let c = r.take(4)?;
+        mode.colors.push([c[0], c[1], c[2]]);
+    }
+    Ok(mode)
 }
 
 struct Reader<'a> {
@@ -811,6 +972,68 @@ impl Reader<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn modes_are_written_back_the_way_they_were_read() {
+        let mode = Mode {
+            name: "Breathing".into(),
+            value: 3,
+            flags: MODE_FLAG_HAS_MODE_SPECIFIC_COLOR | MODE_FLAG_MANUAL_SAVE,
+            speed_min: 1,
+            speed_max: 5,
+            brightness_min: 0,
+            brightness_max: 100,
+            colors_min: 1,
+            colors_max: 2,
+            speed: 3,
+            brightness: 100,
+            direction: 0,
+            color_mode: MODE_COLORS_MODE_SPECIFIC,
+            colors: vec![[255, 0, 128]],
+        };
+        for version in [1, 3, 5, 6] {
+            let mut data = Vec::new();
+            mode.write(&mut data, version);
+            let mut r = Reader {
+                data: &data,
+                pos: 0,
+            };
+            let back = read_mode(&mut r, version).unwrap();
+            assert_eq!(r.pos, data.len(), "version {version}");
+            let mut expected = mode.clone();
+            if version < 3 {
+                (
+                    expected.brightness_min,
+                    expected.brightness_max,
+                    expected.brightness,
+                ) = (0, 0, 0);
+            }
+            if version >= 6 {
+                expected.value = 0;
+            }
+            assert_eq!(back, expected, "version {version}");
+        }
+    }
+
+    #[test]
+    fn only_modes_a_device_remembers_can_show_a_power_on_color() {
+        let mut mode = Mode {
+            name: "Static".into(),
+            flags: MODE_FLAG_HAS_MODE_SPECIFIC_COLOR,
+            colors_min: 1,
+            colors_max: 1,
+            ..Default::default()
+        };
+        assert!(mode.showing([1, 2, 3]).is_none());
+        mode.flags |= MODE_FLAG_AUTOMATIC_SAVE;
+        let (shown, per_led) = mode.showing([1, 2, 3]).unwrap();
+        assert_eq!(
+            (shown.colors, shown.color_mode, per_led),
+            (vec![[1, 2, 3]], MODE_COLORS_MODE_SPECIFIC, false)
+        );
+        mode.flags = MODE_FLAG_HAS_PER_LED_COLOR | MODE_FLAG_MANUAL_SAVE;
+        assert!(mode.showing([1, 2, 3]).unwrap().1);
+    }
 
     #[test]
     fn keys_are_placed_on_their_grid_and_gaming_keys_found() {

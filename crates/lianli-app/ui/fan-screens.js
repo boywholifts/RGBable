@@ -55,6 +55,14 @@ function fanScreenCard(s) {
   choose.addEventListener("click", () => pickFanMedia(s.name, (file) => changeFanScreen(s.id, { file })));
   const off = el("button", { class: "btn" }, "Turn off");
   off.disabled = !s.file;
+  const powerOn = el("button", { class: "btn mini", title: "Show the first frame of this from power-on, until RGBable starts" }, "Use as power-on picture");
+  powerOn.disabled = !s.file;
+  powerOn.addEventListener("click", async () => {
+    powerOn.disabled = true;
+    powerOn.textContent = "Saving…";
+    await call("save_fan_screen_power_on", { id: s.id }, `${s.name}: power-on picture saved`);
+    loadFanScreens();
+  });
   off.addEventListener("click", () => changeFanScreen(s.id, { file: "" }));
   const name = el("button", { class: "fan-screen-name", title: "Rename" }, s.name);
   name.addEventListener("click", () =>
@@ -70,6 +78,7 @@ function fanScreenCard(s) {
       el("div", { class: "muted small" }, `${s.model} · ${fanScreenName(s.file)}`),
       el("div", { class: "row" }, [choose, off, fit]),
       el("div", { class: "row fan-turn" }, [el("span", { class: "muted small" }, "Turn"), angle, degrees, el("span", { class: "muted small" }, "°"), quarter]),
+      el("div", { class: "row" }, [powerOn]),
     ]),
   ]);
 }

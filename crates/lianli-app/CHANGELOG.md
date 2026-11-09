@@ -8,6 +8,9 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 
 - Fan screens: the round LCDs of SL-INF and TL Wireless LCD fans play a video, GIF or picture each, turned to any angle. The tab shows only when they're connected. L-Connect's fan screen videos and pictures can be imported into the library (new, still being tested).
 - Videos sent from OLEDable join the library.
+- Startup lighting: apply a chosen profile every time RGBable starts instead of the last lighting.
+- Power-on lighting: store a plain or breathing version of the current colors in OpenRGB devices that can keep a mode in their own memory, so they match from power-on.
+- Fan screens can store a power-on picture.
 
 ### Changed
 

@@ -108,6 +108,9 @@ pub struct Config {
     /// The lighting profile last applied or saved.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lighting_profile: Option<String>,
+    /// A lighting profile applied every time RGBable starts, instead of the last lighting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub startup_profile: Option<String>,
 }
 
 /// The `oled_modules` key of the layout every video without its own uses.

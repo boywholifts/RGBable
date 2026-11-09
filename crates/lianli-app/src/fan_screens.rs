@@ -6,7 +6,7 @@ use crate::engine::{no_window, oled_cache_dir, ENCODING};
 use anyhow::{bail, Context, Result};
 use parking_lot::{Mutex, RwLock};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -82,6 +82,8 @@ pub struct FanScreens {
     found: RwLock<Vec<Screen>>,
     workers: Mutex<HashMap<String, Worker>>,
     states: Arc<RwLock<HashMap<String, String>>>,
+    /// Screens storing a power-on picture: nothing may stream to them meanwhile.
+    busy: Mutex<HashSet<String>>,
 }
 
 impl FanScreens {
@@ -158,10 +160,14 @@ impl FanScreens {
             }
             wanted
         });
+        let busy = self.busy.lock().clone();
         for screen in found {
             let Some(saved) = config.get(&screen.id).filter(|c| c.file.is_some()) else {
                 continue;
             };
+            if busy.contains(&screen.id) {
+                continue;
+            }
             if workers.contains_key(&screen.id) {
                 continue;
             }
@@ -194,6 +200,114 @@ impl FanScreens {
                 },
             );
         }
+    }
+}
+
+impl FanScreens {
+    /// Stores the first frame of what the screen plays as the picture it shows from
+    /// power-on, until RGBable starts playing again. The stream stops while it's stored.
+    pub fn save_power_on(&self, id: &str, saved: &FanScreenConfig) -> Result<()> {
+        let file = saved
+            .file
+            .as_deref()
+            .context("Choose something for this screen first")?;
+        let screen = self
+            .found
+            .read()
+            .iter()
+            .find(|s| s.id == id)
+            .cloned()
+            .context("That fan screen isn't connected")?;
+        let jpeg = power_on_jpeg(file, &saved.fit, saved.rotation)?;
+        self.busy.lock().insert(id.to_string());
+        let worker = self.workers.lock().remove(id);
+        if let Some(mut worker) = worker {
+            worker.stop.store(true, Ordering::Release);
+            if let Some(thread) = worker.thread.take() {
+                let _ = thread.join();
+            }
+        }
+        self.states
+            .write()
+            .insert(id.to_string(), "Saving power-on picture".into());
+        let result = open(&screen).and_then(|mut lcd| {
+            lcd.upload_startup_image(
+                &jpeg,
+                &AtomicBool::new(false),
+                &lianli_devices::startup_image::Transfer::default(),
+            )
+        });
+        self.busy.lock().remove(id);
+        match result {
+            Ok(confirmed) => {
+                info!("{id}: power-on picture stored (confirmed: {confirmed})");
+                Ok(())
+            }
+            Err(e) => {
+                warn!("{id}: storing the power-on picture: {e:#}");
+                Err(e)
+            }
+        }
+    }
+}
+
+/// The screen's power-on picture limit, with a little room under it.
+const POWER_ON_JPEG_MAX: usize = 100_000;
+
+/// The first frame of `file`, fitted and turned like the screen shows it, as a JPEG small
+/// enough to store.
+fn power_on_jpeg(file: &Path, fit: &str, rotation: u16) -> Result<Vec<u8>> {
+    anyhow::ensure!(file.is_file(), "{} does not exist", file.display());
+    let filter = format!("{}{}", fit_filter(fit), turn_filter(rotation));
+    for quality in [2, 4, 6, 9, 13, 18, 24, 31] {
+        let mut ffmpeg = std::process::Command::new(crate::oled_library::ffmpeg());
+        ffmpeg
+            .args(["-loglevel", "error", "-i"])
+            .arg(file)
+            .args(["-frames:v", "1", "-vf", &filter, "-pix_fmt", "yuvj420p"])
+            .args([
+                "-q:v",
+                &quality.to_string(),
+                "-f",
+                "image2pipe",
+                "-c:v",
+                "mjpeg",
+                "-",
+            ]);
+        no_window(&mut ffmpeg);
+        let out = ffmpeg
+            .output()
+            .context("running ffmpeg (install it with: winget install Gyan.FFmpeg)")?;
+        if !out.status.success() || out.stdout.is_empty() {
+            bail!(
+                "ffmpeg failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            );
+        }
+        if out.stdout.len() <= POWER_ON_JPEG_MAX {
+            return Ok(out.stdout);
+        }
+    }
+    bail!("That picture is too detailed to store on the screen")
+}
+
+fn fit_filter(fit: &str) -> String {
+    if fit == "contain" {
+        format!("scale={SIZE}:{SIZE}:force_original_aspect_ratio=decrease:flags=lanczos,pad={SIZE}:{SIZE}:(ow-iw)/2:(oh-ih)/2:color=black")
+    } else {
+        format!("scale={SIZE}:{SIZE}:force_original_aspect_ratio=increase:flags=lanczos,crop={SIZE}:{SIZE}")
+    }
+}
+
+/// Quarter turns are exact; other angles turn about the centre, which the round screen
+/// shows whole, with black filling the corners.
+fn turn_filter(rotation: u16) -> String {
+    match rotation {
+        0 => String::new(),
+        90 => ",transpose=1".into(),
+        180 => ",hflip,vflip".into(),
+        270 => ",transpose=2".into(),
+        angle => format!(",rotate={angle}*PI/180:ow={SIZE}:oh={SIZE}:c=black"),
     }
 }
 
@@ -306,20 +420,8 @@ fn encode(file: &Path, fit: &str, rotation: u16) -> Result<PathBuf> {
         }
     }
     let partial = output.with_extension("partial");
-    let fit = if fit == "contain" {
-        format!("scale={SIZE}:{SIZE}:force_original_aspect_ratio=decrease:flags=lanczos,pad={SIZE}:{SIZE}:(ow-iw)/2:(oh-ih)/2:color=black")
-    } else {
-        format!("scale={SIZE}:{SIZE}:force_original_aspect_ratio=increase:flags=lanczos,crop={SIZE}:{SIZE}")
-    };
-    // quarter turns are exact; other angles turn about the centre, which the round screen
-    // shows whole, with black filling the corners
-    let turn = match rotation {
-        0 => String::new(),
-        90 => ",transpose=1".into(),
-        180 => ",hflip,vflip".into(),
-        270 => ",transpose=2".into(),
-        angle => format!(",rotate={angle}*PI/180:ow={SIZE}:oh={SIZE}:c=black"),
-    };
+    let fit = fit_filter(fit);
+    let turn = turn_filter(rotation);
     let mut ffmpeg = std::process::Command::new(crate::oled_library::ffmpeg());
     ffmpeg.args(["-y", "-loglevel", "error"]);
     if crate::engine::is_still_image(file) {

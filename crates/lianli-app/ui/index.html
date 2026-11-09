@@ -285,6 +285,27 @@
         <p class="muted small warn-note" id="autostart-blocked" hidden>RGBable's logon task is disabled, so it won't start with Windows. Enable "RGBable at logon" in Task Scheduler.</p>
       </div>
       <div class="card">
+        <div class="toggle-row">
+          <div>
+            <div class="card-title">Startup lighting</div>
+            <div class="muted small">What RGBable puts on when it starts.</div>
+          </div>
+          <select id="startup-profile"></select>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-title">Power-on lighting</div>
+        <p class="muted small">Your Lian Li fans and Strimers keep their last effect by themselves. This stores a plain or breathing version of the current colors in the motherboard, ARGB headers, RAM and GPU too, so they match from power-on until RGBable starts. Devices write it to their own memory, so save it when you've settled on a look rather than after every change.</p>
+        <div class="row">
+          <div class="seg" id="power-on-mode">
+            <button data-mode="static" class="on">Plain</button>
+            <button data-mode="breathing">Breathing</button>
+          </div>
+          <button class="btn primary" id="power-on-save">Save to devices</button>
+        </div>
+        <p class="muted small" id="power-on-result"></p>
+      </div>
+      <div class="card">
         <div class="card-title">OpenRGB</div>
         <p class="muted small">RGBable uses OpenRGB for RAM, GPU, motherboard and other lighting. Let RGBable run it in the background as administrator so it can reach your RAM; you won't need to open OpenRGB yourself.</p>
         <div class="setup-list">

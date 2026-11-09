@@ -69,6 +69,7 @@ struct Overview {
     fan_profile: usize,
     lighting_profiles: Vec<LightingProfileView>,
     lighting_profile: Option<String>,
+    startup_profile: Option<String>,
     all_off: bool,
     /// LCD fan screens connected right now; the Fan screens page shows only when there are some.
     fan_screens: usize,
@@ -121,6 +122,7 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
             })
             .collect(),
         lighting_profile: config.lighting_profile.clone(),
+        startup_profile: config.startup_profile.clone(),
         all_off: config.all_off,
         fan_screens: state.engine.fan_screens.count(),
         all_fans: config
@@ -748,6 +750,21 @@ fn set_fan_screen(
     engine.fan_screens.sync(&config);
 }
 
+/// Stores what a fan screen plays as the picture it shows from power-on.
+#[tauri::command(async)]
+fn save_fan_screen_power_on(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let engine = &state.engine;
+    let saved = engine
+        .config()
+        .fan_screens
+        .get(&id)
+        .cloned()
+        .unwrap_or_default();
+    let result = engine.fan_screens.save_power_on(&id, &saved).map_err(chain);
+    engine.fan_screens.sync(&engine.config().fan_screens);
+    result
+}
+
 #[tauri::command(async)]
 fn rename_fan_screen(state: State<'_, AppState>, id: String, name: String) {
     let name: String = name.trim().chars().take(40).collect();
@@ -985,6 +1002,36 @@ fn apply_lighting_profile(state: State<'_, AppState>, name: String) -> Result<()
     Ok(())
 }
 
+/// Puts the startup profile's lighting and video in place before anything is shown.
+fn apply_startup_profile(engine: &Engine) {
+    engine.update_config(|c| {
+        let name = c.startup_profile.clone()?;
+        let Some(profile) = c.lighting_profiles.iter().find(|p| p.name == name).cloned() else {
+            tracing::warn!("startup profile {name} no longer exists");
+            return None;
+        };
+        info!("applying startup profile {name}");
+        if let Some(oled) = lighting_profiles::screen_change(c, &profile).cloned() {
+            c.oled = Some(oled);
+        }
+        lighting_profiles::apply(c, &profile);
+        c.lighting_profile = Some(name);
+        Some(())
+    });
+}
+
+#[tauri::command(async)]
+fn set_startup_profile(state: State<'_, AppState>, name: Option<String>) {
+    state.engine.update_config(|c| {
+        c.startup_profile = name.filter(|n| c.lighting_profiles.iter().any(|p| &p.name == n));
+    });
+}
+
+#[tauri::command(async)]
+fn save_power_on_lighting(state: State<'_, AppState>, breathing: bool) -> lights::PowerOnSaved {
+    lights::save_power_on_lighting(&state.engine, &state.openrgb, breathing)
+}
+
 #[tauri::command(async)]
 fn rename_lighting_profile(
     state: State<'_, AppState>,
@@ -999,6 +1046,9 @@ fn rename_lighting_profile(
         if let Some(profile) = c.lighting_profiles.iter_mut().find(|p| p.name == name) {
             profile.name = to.clone();
         }
+        if c.startup_profile.as_deref() == Some(name.as_str()) {
+            c.startup_profile = Some(to.clone());
+        }
         if c.lighting_profile.as_deref() == Some(name.as_str()) {
             c.lighting_profile = Some(to);
         }
@@ -1012,6 +1062,9 @@ fn delete_lighting_profile(state: State<'_, AppState>, name: String) {
         c.lighting_profiles.retain(|p| p.name != name);
         if c.lighting_profile.as_deref() == Some(name.as_str()) {
             c.lighting_profile = None;
+        }
+        if c.startup_profile.as_deref() == Some(name.as_str()) {
+            c.startup_profile = None;
         }
     });
 }
@@ -1602,6 +1655,7 @@ fn main() {
     }
     info!("RGBable starting, data in {}", dir.display());
     let engine = Engine::new(config_path);
+    apply_startup_profile(&engine);
     render::WARMTH.store(engine.config().warmth, std::sync::atomic::Ordering::Relaxed);
     engine.start();
 
@@ -1697,7 +1751,10 @@ fn main() {
             set_off,
             set_all_off,
             fan_screens,
+            set_startup_profile,
+            save_power_on_lighting,
             set_fan_screen,
+            save_fan_screen_power_on,
             rename_fan_screen,
             import_lconnect_fan_assets,
             set_speed,

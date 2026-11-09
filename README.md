@@ -35,14 +35,15 @@ RGBable is unofficial and not affiliated with Lian Li. It is built on [lian-li-l
 
 **LCD fan screens** *(new, still being tested)*
 - The round screens of SL-INF and TL Wireless LCD fans get their own **Fan screens** tab when they're connected: a video, GIF or picture per fan, turned to any angle to match how it's mounted.
-- Import the videos and pictures L-Connect keeps for these fans into the library.
+- Import the videos and pictures L-Connect keeps for these fans into the library, and store a power-on picture on each screen.
 
 **Cooling**
 - Fan profiles with fixed speeds or coolant curves for wireless fans, and pump speed for the HydroShift.
 - Pump speed, coolant temperature and fan RPM at a glance.
 
 **App**
-- Tray app that starts with Windows, restores your lighting and screen, and updates itself from GitHub Releases (Stable or Dev channel).
+- Tray app that starts with Windows, restores your lighting and screen (or a startup profile you pick), and updates itself from GitHub Releases (Stable or Dev channel).
+- **Power-on lighting**: stores a plain or breathing version of your colors in the motherboard, ARGB headers, RAM and GPU, so the build matches from power-on until RGBable starts. Lian Li wireless fans keep their last effect by themselves.
 - First-run setup wizard that blinks each device so you can name, group and sync it.
 
 <p align="center">

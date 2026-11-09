@@ -313,6 +313,7 @@ async function refresh() {
     $("#data-dir").textContent = o.data_dir;
     $("#update-channel").value = o.update_channel;
   }
+  renderStartupProfile(o);
 }
 
 refresh();
@@ -346,3 +347,45 @@ function setWarmth(value) {
 $("#warmth").addEventListener("input", (e) => setWarmth(Number(e.target.value)));
 $("#warmth-reset").addEventListener("click", () => setWarmth(0));
 $("#clean-transitions").addEventListener("change", (e) => invoke("set_clean_transitions", { enabled: e.target.checked }).catch((err) => toast(String(err), true)));
+
+// ------------------------------------------------------------- startup and power-on
+
+function renderStartupProfile(o) {
+  const select = $("#startup-profile");
+  const names = (o.lighting_profiles || []).map((p) => p.name);
+  const key = JSON.stringify([names, o.startup_profile]);
+  if (select.dataset.key === key) return;
+  select.dataset.key = key;
+  select.replaceChildren(
+    el("option", { value: "" }, "The last lighting used"),
+    ...names.map((n) => el("option", { value: n }, `Profile: ${n}`)),
+  );
+  select.value = o.startup_profile || "";
+}
+
+$("#startup-profile").addEventListener("change", (e) =>
+  call("set_startup_profile", { name: e.target.value || null }, e.target.value ? `${e.target.value} at startup` : "Last lighting at startup"));
+
+let powerOnMode = "static";
+document.querySelectorAll("#power-on-mode button").forEach((b) =>
+  b.addEventListener("click", () => {
+    powerOnMode = b.dataset.mode;
+    document.querySelectorAll("#power-on-mode button").forEach((x) => x.classList.toggle("on", x === b));
+  }));
+
+$("#power-on-save").addEventListener("click", async () => {
+  const button = $("#power-on-save");
+  button.disabled = true;
+  $("#power-on-result").textContent = "Saving…";
+  try {
+    const r = await call("save_power_on_lighting", { breathing: powerOnMode === "breathing" });
+    if (!r) return;
+    const parts = [];
+    if (r.saved.length) parts.push(`Saved on ${r.saved.join(", ")}.`);
+    if (r.unsupported.length) parts.push(`${r.unsupported.join(", ")} can't keep lighting in memory.`);
+    if (r.failed.length) parts.push(`Couldn't save on ${r.failed.join(", ")}; see the log.`);
+    $("#power-on-result").textContent = parts.join(" ") || "No OpenRGB devices are connected.";
+  } finally {
+    button.disabled = false;
+  }
+});

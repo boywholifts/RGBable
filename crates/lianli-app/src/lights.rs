@@ -7,7 +7,7 @@ use crate::openrgb::{compose, LedPart, OpenRgb, OrgbDevice, Zone};
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::warn;
+use tracing::{info, warn};
 
 pub const OPENRGB_PREFIX: &str = "orgb:";
 
@@ -486,6 +486,67 @@ pub fn sync_openrgb_effects(engine: &Engine, openrgb: &OpenRgb) {
             warn!("{}: {e:#}", device.name);
         }
     }
+}
+
+/// What saving power-on lighting did, by device name.
+#[derive(serde::Serialize, Default)]
+pub struct PowerOnSaved {
+    pub saved: Vec<String>,
+    /// Devices that can't keep a mode like that in their own memory.
+    pub unsupported: Vec<String>,
+    pub failed: Vec<String>,
+}
+
+/// Stores a plain or breathing version of each OpenRGB device's lighting in the device
+/// itself, then puts every device back under RGBable's control.
+pub fn save_power_on_lighting(engine: &Engine, openrgb: &OpenRgb, breathing: bool) -> PowerOnSaved {
+    let config = engine.config();
+    let mut result = PowerOnSaved::default();
+    for device in openrgb.view().devices {
+        let id = openrgb_id(&device);
+        if config.devices.get(&id).is_some_and(|d| d.hidden) {
+            continue;
+        }
+        let name = config
+            .devices
+            .get(&id)
+            .and_then(|d| d.name.clone())
+            .unwrap_or_else(|| device.name.clone());
+        let color = power_on_color(&config, &device);
+        match openrgb.save_power_on(device.index, color, breathing) {
+            Ok(true) => result.saved.push(name),
+            Ok(false) => result.unsupported.push(name),
+            Err(e) => {
+                warn!("{name}: storing power-on lighting: {e:#}");
+                result.failed.push(name);
+            }
+        }
+    }
+    info!(
+        "power-on lighting stored on {} OpenRGB device(s); {} can't keep it",
+        result.saved.len(),
+        result.unsupported.len()
+    );
+    openrgb.reassert_direct();
+    sync_openrgb_effects(engine, openrgb);
+    result
+}
+
+/// One color that stands for a device's lighting: its effect's first color, its plain
+/// color, or the first LED of what it shows.
+fn power_on_color(config: &Config, device: &OrgbDevice) -> [u8; 3] {
+    let id = openrgb_id(device);
+    if is_off(config, &id) {
+        return [0, 0, 0];
+    }
+    let saved = config.devices.get(&id);
+    saved
+        .and_then(|d| d.effect.as_ref())
+        .and_then(|e| e.colors.first().copied())
+        .or_else(|| saved.and_then(|d| d.color))
+        .or_else(|| compose(&device_parts(config, device), 0).first().copied())
+        .filter(|c| *c != [0, 0, 0])
+        .unwrap_or([255, 255, 255])
 }
 
 pub fn static_effect(color: [u8; 3]) -> Effect {
@@ -1038,6 +1099,7 @@ mod tests {
                 zone("Addressable 4", 8, 0, 120),
             ],
             modes: Vec::new(),
+            mode_settings: Vec::new(),
             active_mode: String::new(),
             first_color: Some([1, 2, 3]),
             keys: None,
