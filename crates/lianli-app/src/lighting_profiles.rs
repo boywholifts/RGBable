@@ -3,7 +3,7 @@
 //! keep their part of it in the settings and pick it up when they return.
 
 use crate::effects::{Effect, Span};
-use crate::engine::{Config, DeviceConfig};
+use crate::engine::{Config, DeviceConfig, OledConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -72,6 +72,10 @@ pub struct LightingProfile {
     pub warmth: i8,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oled_match: Option<u8>,
+    /// What the HydroShift screen plays. Profiles saved before screens were part of them
+    /// leave the screen alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oled: Option<OledConfig>,
 }
 
 /// Every device's and group's lighting as the settings have it now.
@@ -100,7 +104,17 @@ pub fn capture(config: &Config, name: &str) -> LightingProfile {
         oled_ring: config.oled_ring,
         warmth: config.warmth,
         oled_match: config.oled_match,
+        oled: config.oled.clone(),
     }
+}
+
+/// The video a profile puts on the screen, when it has one that is still there and isn't
+/// already playing.
+pub fn screen_change<'a>(config: &Config, profile: &'a LightingProfile) -> Option<&'a OledConfig> {
+    profile
+        .oled
+        .as_ref()
+        .filter(|oled| oled.file.is_file() && config.oled.as_ref() != Some(oled))
 }
 
 /// Puts a profile's lighting into the settings. Devices it doesn't mention go back to their

@@ -186,7 +186,7 @@ pub struct GroupConfig {
     pub effect: Option<Effect>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct OledConfig {
     pub file: PathBuf,
     #[serde(default = "default_fps")]

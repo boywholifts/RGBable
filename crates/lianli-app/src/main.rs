@@ -64,7 +64,7 @@ struct Overview {
     clean_transitions: bool,
     fan_profiles: Vec<String>,
     fan_profile: usize,
-    lighting_profiles: Vec<String>,
+    lighting_profiles: Vec<LightingProfileView>,
     lighting_profile: Option<String>,
     all_fans: fans::FanMode,
     pump: fans::PumpMode,
@@ -105,7 +105,13 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
         lighting_profiles: config
             .lighting_profiles
             .iter()
-            .map(|p| p.name.clone())
+            .map(|p| LightingProfileView {
+                name: p.name.clone(),
+                screen: p
+                    .oled
+                    .as_ref()
+                    .and_then(|o| o.file.file_stem().map(|s| s.to_string_lossy().into_owned())),
+            })
             .collect(),
         lighting_profile: config.lighting_profile.clone(),
         all_fans: config
@@ -792,6 +798,13 @@ fn set_pump_mode(state: State<'_, AppState>, mode: fans::PumpMode) {
     state.engine.set_pump_mode(mode);
 }
 
+#[derive(serde::Serialize)]
+struct LightingProfileView {
+    name: String,
+    /// The video it puts on the screen, by name, when it has one.
+    screen: Option<String>,
+}
+
 fn profile_name(name: &str) -> Result<String, String> {
     let name: String = name.trim().chars().take(40).collect();
     if name.is_empty() {
@@ -800,12 +813,23 @@ fn profile_name(name: &str) -> Result<String, String> {
     Ok(name)
 }
 
-/// Saves all lighting as a profile, replacing one of the same name.
+/// Saves all lighting as a profile, replacing one of the same name. `screen` says whether
+/// the profile also puts the current video on the HydroShift screen; left out, a replaced
+/// profile keeps its own choice.
 #[tauri::command(async)]
-fn save_lighting_profile(state: State<'_, AppState>, name: String) -> Result<(), String> {
+fn save_lighting_profile(
+    state: State<'_, AppState>,
+    name: String,
+    screen: Option<bool>,
+) -> Result<(), String> {
     let name = profile_name(&name)?;
     state.engine.update_config(|c| {
-        let profile = lighting_profiles::capture(c, &name);
+        let mut profile = lighting_profiles::capture(c, &name);
+        let existing = c.lighting_profiles.iter().find(|p| p.name == name);
+        let screen = screen.unwrap_or_else(|| existing.is_some_and(|p| p.oled.is_some()));
+        if !screen {
+            profile.oled = None;
+        }
         match c.lighting_profiles.iter_mut().find(|p| p.name == name) {
             Some(existing) => *existing = profile,
             None => c.lighting_profiles.push(profile),
@@ -818,7 +842,7 @@ fn save_lighting_profile(state: State<'_, AppState>, name: String) -> Result<(),
 #[tauri::command(async)]
 fn apply_lighting_profile(state: State<'_, AppState>, name: String) -> Result<(), String> {
     let engine = &state.engine;
-    let applied = engine.update_config(|c| {
+    let screen = engine.update_config(|c| {
         let profile = c
             .lighting_profiles
             .iter()
@@ -826,10 +850,16 @@ fn apply_lighting_profile(state: State<'_, AppState>, name: String) -> Result<()
             .cloned()?;
         lighting_profiles::apply(c, &profile);
         c.lighting_profile = Some(name.clone());
-        Some(())
+        Some(lighting_profiles::screen_change(c, &profile).cloned())
     });
-    if applied.is_none() {
+    let Some(screen) = screen else {
         return Err(format!("No lighting profile named {name}"));
+    };
+    // a video that's gone (moved or deleted) leaves the screen as it is
+    if let Some(oled) = screen {
+        if let Err(e) = engine.set_oled(Some(oled.file), oled.fit, oled.fps) {
+            tracing::warn!("profile {name}: screen: {e:#}");
+        }
     }
     render::WARMTH.store(engine.config().warmth, std::sync::atomic::Ordering::Relaxed);
     // effects start over together, so flows begin at their first device
