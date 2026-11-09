@@ -154,15 +154,17 @@ fn newest(releases: Vec<Release>, channel: Channel, current: Version) -> Option<
 
 fn fetch(channel: Channel) -> Result<Option<Update>> {
     let current = Version::parse(CURRENT).context("this build has no valid version")?;
-    let releases: Vec<Release> = agent()
-        .get(&format!(
-            "https://api.github.com/repos/{REPO}/releases?per_page=30"
-        ))
-        .set("Accept", "application/vnd.github+json")
-        .call()
-        .context("contacting GitHub")?
-        .into_json()
-        .context("reading the release list")?;
+    let releases: Vec<Release> = with_retries(|| {
+        agent()
+            .get(&format!(
+                "https://api.github.com/repos/{REPO}/releases?per_page=30"
+            ))
+            .set("Accept", "application/vnd.github+json")
+            .call()
+            .context("contacting GitHub")?
+            .into_json()
+            .context("reading the release list")
+    })?;
     Ok(newest(releases, channel, current))
 }
 
@@ -228,16 +230,36 @@ impl Updater {
     }
 }
 
-fn download_setup(update: &Update) -> Result<PathBuf> {
-    let dir = std::env::temp_dir().join("rgbable").join("update");
-    std::fs::create_dir_all(&dir)?;
-    let name = update
-        .url
-        .rsplit('/')
-        .next()
-        .filter(|n| !n.is_empty())
-        .unwrap_or("RGBable-setup.exe");
-    let path = dir.join(name);
+/// GitHub's download servers sometimes time out (502 to 504) or cut a download short; those
+/// get another try or two before the user sees an error.
+fn with_retries<T>(mut attempt: impl FnMut() -> Result<T>) -> Result<T> {
+    const WAITS: [u64; 2] = [3, 10];
+    for wait in WAITS {
+        match attempt() {
+            Err(e) if is_temporary(&e) => {
+                tracing::warn!("{e:#}; trying again in {wait}s");
+                std::thread::sleep(std::time::Duration::from_secs(wait));
+            }
+            result => return result,
+        }
+    }
+    attempt()
+}
+
+fn is_temporary(error: &anyhow::Error) -> bool {
+    error
+        .chain()
+        .any(|cause| match cause.downcast_ref::<ureq::Error>() {
+            Some(ureq::Error::Status(code, _)) => (500..600).contains(code) || *code == 429,
+            Some(ureq::Error::Transport(_)) => true,
+            None => {
+                cause.downcast_ref::<std::io::Error>().is_some()
+                    || cause.to_string().contains("didn't download completely")
+            }
+        })
+}
+
+fn fetch_setup(update: &Update) -> Result<Vec<u8>> {
     let response = agent()
         .get(&update.url)
         .call()
@@ -251,6 +273,20 @@ fn download_setup(update: &Update) -> Result<PathBuf> {
     if bytes.len() < 100 * 1024 || (update.size > 0 && bytes.len() as u64 != update.size) {
         bail!("the update didn't download completely, try again later");
     }
+    Ok(bytes)
+}
+
+fn download_setup(update: &Update) -> Result<PathBuf> {
+    let dir = std::env::temp_dir().join("rgbable").join("update");
+    std::fs::create_dir_all(&dir)?;
+    let name = update
+        .url
+        .rsplit('/')
+        .next()
+        .filter(|n| !n.is_empty())
+        .unwrap_or("RGBable-setup.exe");
+    let path = dir.join(name);
+    let bytes = with_retries(|| fetch_setup(update))?;
     std::fs::write(&path, bytes).with_context(|| format!("saving {}", path.display()))?;
     Ok(path)
 }
@@ -326,6 +362,20 @@ pub fn launch_installer(setup: &std::path::Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retries_only_server_trouble() {
+        let status = |code| {
+            anyhow::Error::new(ureq::Error::Status(
+                code,
+                ureq::Response::new(code, "", "").unwrap(),
+            ))
+            .context("downloading the update")
+        };
+        assert!(is_temporary(&status(504)));
+        assert!(is_temporary(&status(502)));
+        assert!(!is_temporary(&status(404)));
+    }
 
     fn v(s: &str) -> Version {
         Version::parse(s).unwrap()
