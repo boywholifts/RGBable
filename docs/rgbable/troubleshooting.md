@@ -50,6 +50,10 @@ Set the LED count once: in RGBable, open the header's **⋯ → LED count**, or 
 
 On some boards the header numbers OpenRGB uses don't match the labels printed on the board, and a header only works when the ones before it have a size too. If a strip stays dark, give the earlier headers a size as well, then give the headers different colors to find which one drives the strip.
 
+## Some motherboard lighting ignores RGBable
+
+A few built-in motherboard light features aren't controllable through OpenRGB, so RGBable can't change them or turn them off either. One example is the Polymo panel on ASUS ROG boards such as the Maximus Z690 Hero. To check, change the board's lighting in OpenRGB itself: if OpenRGB has no effect on a light, use the board maker's app (Armoury Crate for ASUS) or the BIOS LED lighting settings for it. A BIOS setting may turn off other onboard lighting too.
+
 ## A keyboard or other device isn't found
 
 - Make sure its maker's app isn't running (see the table above) and only one OpenRGB runs.
