@@ -1249,10 +1249,10 @@ fn reg(args: &[&str]) -> std::io::Result<std::process::Output> {
 }
 
 fn autostart_enabled() -> bool {
-    run_entry().is_some()
+    cfg!(windows) && openrgb_host::logon_task().is_some()
 }
 
-/// The command Windows runs at logon for RGBable, if it has one.
+/// The registry's start-at-logon entry, from before RGBable used a logon task.
 fn run_entry() -> Option<String> {
     if !cfg!(windows) {
         return None;
@@ -1266,30 +1266,14 @@ fn run_entry() -> Option<String> {
 
 static AUTOSTART_BLOCKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Windows keeps its own on/off switch per startup entry (Task Manager > Startup apps); an
-/// odd first byte means turned off.
-fn startup_disabled_by_windows() -> bool {
-    const APPROVED: &str =
-        r"HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
-    let Ok(output) = reg(&["query", APPROVED, "/v", "RGBable"]) else {
-        return false;
-    };
-    let text = String::from_utf8_lossy(&output.stdout);
-    text.split_whitespace()
-        .skip_while(|w| *w != "REG_BINARY")
-        .nth(1)
-        .and_then(|hex| u8::from_str_radix(hex.get(..2)?, 16).ok())
-        .is_some_and(|flag| flag & 1 == 1)
-}
-
-/// Puts the start-at-logon entry back when the user wants it but it's gone or points at an
-/// older exe: an update's uninstall step removes it, and installs can move the exe.
+/// Puts the start-at-logon task in place when the user wants it but it's missing or runs an
+/// older exe, and moves settings from the registry's Run list over to it.
 fn keep_autostart(engine: &Engine) {
     let wanted = match engine.config().start_with_windows {
         Some(wanted) => wanted,
         None => {
             // settings from before this was remembered: whatever the registry says now
-            let wanted = autostart_enabled();
+            let wanted = autostart_enabled() || run_entry().is_some();
             engine.update_config(|c| c.start_with_windows = Some(wanted));
             wanted
         }
@@ -1300,38 +1284,52 @@ fn keep_autostart(engine: &Engine) {
     let exe = std::env::current_exe()
         .map(|p| p.display().to_string())
         .unwrap_or_default();
-    let current = run_entry();
-    if current.as_deref().is_none_or(|entry| !entry.contains(&exe)) {
-        match set_autostart_impl(true) {
-            Ok(()) => info!("put RGBable's start-with-Windows entry back"),
-            Err(e) => tracing::warn!("restoring start with Windows: {e:#}"),
+    let task = openrgb_host::logon_task();
+    // how the last start at logon went: 0 is fine, 267011 is never run yet
+    if let Some(result) = task.as_deref().and_then(|d| {
+        d.lines()
+            .find(|l| l.trim_start().starts_with("Last Result:"))
+    }) {
+        info!("start-at-logon task: {}", result.trim());
+    }
+    let needs_task = task
+        .as_deref()
+        .is_none_or(|details| !details.contains(&exe));
+    if needs_task || run_entry().is_some() {
+        // no administrator prompt out of the blue at startup; the Settings switch can ask
+        match set_autostart_with(true, false) {
+            Ok(()) => info!("set RGBable to start at logon through Task Scheduler"),
+            Err(e) => tracing::warn!("setting up start at logon: {e:#}"),
         }
     }
     AUTOSTART
         .get_or_init(|| std::sync::atomic::AtomicBool::new(true))
         .store(true, std::sync::atomic::Ordering::Release);
-    let blocked = startup_disabled_by_windows();
+    let blocked = openrgb_host::logon_task().is_some_and(|details| {
+        details
+            .lines()
+            .any(|l| l.contains("Scheduled Task State:") && l.contains("Disabled"))
+    });
     if blocked {
-        tracing::warn!("Windows has RGBable turned off in Startup apps");
+        tracing::warn!("RGBable's start-at-logon task is disabled in Task Scheduler");
     }
     AUTOSTART_BLOCKED.store(blocked, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn set_autostart_impl(enabled: bool) -> anyhow::Result<()> {
-    let output = if enabled {
-        let exe = std::env::current_exe()?;
-        let value = format!("\"{}\" --minimized", exe.display());
-        reg(&[
-            "add", RUN_KEY, "/v", "RGBable", "/t", "REG_SZ", "/d", &value, "/f",
-        ])?
+    set_autostart_with(enabled, true)
+}
+
+fn set_autostart_with(enabled: bool, may_prompt: bool) -> anyhow::Result<()> {
+    if enabled {
+        openrgb_host::create_logon_task(&std::env::current_exe()?, may_prompt)?;
     } else {
-        reg(&["delete", RUN_KEY, "/v", "RGBable", "/f"])?
-    };
-    anyhow::ensure!(
-        output.status.success() || !enabled,
-        "{}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
+        openrgb_host::remove_logon_task()?;
+    }
+    // the logon task replaces it; both would start RGBable twice
+    if run_entry().is_some() {
+        let _ = reg(&["delete", RUN_KEY, "/v", "RGBable", "/f"]);
+    }
     Ok(())
 }
 

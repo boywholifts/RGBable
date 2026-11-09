@@ -199,6 +199,74 @@ pub fn create_helper_task(name: &str, exe: &Path, argument: &str) -> Result<()> 
     run_elevated_script("helper-task.ps1", &script)
 }
 
+const LOGON_TASK: &str = "RGBable at logon";
+
+/// Starts RGBable at logon through Task Scheduler rather than the registry's Run list: it
+/// survives updates (whose uninstall step clears Run entries), and Task Scheduler records
+/// how each start went. Runs as the user, without administrator rights, shortly after logon.
+pub fn create_logon_task(exe: &Path, may_prompt: bool) -> Result<()> {
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'\r\n\
+         $action = New-ScheduledTaskAction -Execute {exe} -Argument '--minimized'\r\n\
+         $trigger = New-ScheduledTaskTrigger -AtLogOn -User {user}\r\n\
+         $trigger.Delay = 'PT10S'\r\n\
+         $principal = New-ScheduledTaskPrincipal -UserId {user} -LogonType Interactive -RunLevel Limited\r\n\
+         $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew\r\n\
+         Register-ScheduledTask -TaskName {name} -TaskPath '\\' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null\r\n",
+        exe = ps_quote(&exe.to_string_lossy()),
+        user = ps_quote(&current_user()),
+        name = ps_quote(LOGON_TASK),
+    );
+    let output = run(
+        "powershell",
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ],
+    )?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if !may_prompt {
+        bail!("adding the logon task: {detail}");
+    }
+    // some setups only let administrators add logon tasks
+    tracing::info!("adding the logon task needs administrator rights here: {detail}");
+    run_elevated_script("logon-task.ps1", &script)
+}
+
+pub fn remove_logon_task() -> Result<()> {
+    if logon_task().is_none() {
+        return Ok(());
+    }
+    let output = run("schtasks", &["/Delete", "/TN", LOGON_TASK, "/F"])?;
+    anyhow::ensure!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr).trim()
+    );
+    Ok(())
+}
+
+/// The logon task's details (`schtasks /Query /V` as a list), when it exists: what it runs
+/// and how its last start went.
+pub fn logon_task() -> Option<String> {
+    let output = run(
+        "schtasks",
+        &["/Query", "/TN", LOGON_TASK, "/V", "/FO", "LIST"],
+    )
+    .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
 pub fn remove_task() -> Result<()> {
     if task_state().is_none() {
         return Ok(());
