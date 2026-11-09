@@ -4,35 +4,46 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 
 ## [Unreleased]
 
-### Added
+## [1.0.0] - 2026-11-09
 
-- Device groups: create, rename and delete groups, mix Lian Li and OpenRGB devices, color a whole group, drag devices between groups.
-- Identify button that blinks a device white.
-- First-run setup wizard that walks through every light (Settings > Run setup again).
-- Per-device switch to leave a device out of Sync everything.
-- Lighting effects: breathing, color cycle, rainbow, rainbow wave, wave, meteor and twinkle, with colors, speed, brightness and direction, for everything, a group or one device. Wireless fans and Strimers play effects by themselves; the OLED ring and OpenRGB devices are animated by RGBable.
-- RGBable can run OpenRGB for you in the background as administrator (Settings > OpenRGB), install the PawnIO driver RAM lighting needs, and turn off OpenRGB's own start-at-login.
-- LED count for addressable motherboard headers (e.g. case ARGB strips), remembered and re-applied.
-- A hint on the Lighting page when OpenRGB finds no RAM.
-- 10 more effects: strobe, heartbeat, fire, scanner, runway, fill, ripple, starry night, aurora and police.
-- SL Flex fans are drawn on their real layout (13 positions on each of the inner and outer rings) and Strimers along their rows; effects can target the inner ring, the outer ring or both.
-- L-Connect's own effects for Lian Li fans and Strimers (rainbow morph, staggered, tide, mixing, ping-pong, collide, reflect, hourglass, shuttle run and more), rendered by lian-li-linux's Lian Li renderer.
-- Custom effects: build one from up to six blended layers, or write a short script; both have a live preview, are saved under your own name and can be exported and imported as files.
-- Live preview of the selected effect in the editor.
-- Recipe builder: make an effect from color, shape, motion and finish choices without writing code; it writes the script for you.
-- Reorganised Lighting page: everything, groups and devices as compact rows with a ⋯ menu, and a side panel with effects sorted into Basic, Motion, Ambient, Lian Li and Mine. Saved effects have their own Effects page.
-- OLED page: live preview of the screen and a video library shared with OLEDable (its converted and recorded videos), plus any folders you add; thumbnails, search, preview before showing.
-- Other apps can play a file on the OLED with `rgbable.exe --oled <file>` (used by OLEDable); a second launch opens the running RGBable instead of starting another.
-- Motherboard ARGB headers with LEDs are their own devices: rename them, give them their own effect, identify and group them.
+The first stable release. RGBable now covers what most builds used L-Connect for, plus the rest of the PC's RGB through OpenRGB.
+
+### Lighting
+
+- Lian Li wireless SL fans (including SL Flex inner and outer rings) and wireless Strimers, the HydroShift II OLED Curve ring, and wired Galahad II LCD and UNI HUB controllers (new, still being tested).
+- RAM, GPU, motherboard, ARGB headers, keyboards and monitors through OpenRGB, which RGBable can run for you as administrator, with the PawnIO driver for RAM.
+- 20+ effects, L-Connect's own Lian Li effects, keyboard effects on the key grid, and custom effects from layers, a recipe builder or a script, with a live preview.
+- Sync everything, groups, and a Devices page that times devices together, staggered, flowing through the build as one strip, or taking turns. Each device keeps its own direction and speed, also through Sync everything.
+- Lighting profiles that save every device's lighting and, if you choose, the screen video. Picking one asks before applying.
+- Turn a single device off, or all lighting at once from the Lighting and Devices pages, the profile menu or the tray. Devices keep their lighting for when they're back on.
+- Match the lighting to the colors of the video on the OLED screen; white balance for LEDs.
+- Motherboard ARGB headers are devices of their own; their LED counts are remembered and put back if OpenRGB loses them.
+
+### HydroShift OLED screen
+
+- Videos, GIFs and images with a live preview and a library shared with OLEDable.
+- Widgets over the video: clock, CPU and GPU temperature and load, coolant, pump and fan speed, bars, text and images, with fonts and saved layouts.
+- Import L-Connect screen themes, including their animated overlays.
+
+### Cooling
+
+- Fan profiles with fixed speeds or coolant curves for wireless fans, and pump speed for the HydroShift.
+- Fans wait for the first coolant reading at startup instead of jumping to full speed.
+
+### App
+
+- Starts with Windows through a scheduled task that survives updates, and says when Windows has it disabled.
+- Updates itself from GitHub Releases on the Stable or Dev channel, retrying when GitHub times out.
+- First-run setup wizard, tray menu (open, all lighting off or on, restart, quit), and a crash log for errors before the main log starts.
 
 ### Fixed
 
-- SL Flex effects were spread over 52 slots per fan, so patterns ran across the wrong fans and half of each upload went to slots with no LEDs.
-- Large effects (fire, twinkle, aurora) never reached wireless fans and Strimers, and switching effects sometimes left a device frozen on the old one: effect loops are now kept to 6 KB, and a device that doesn't confirm an effect is sent a smaller version until it does.
-- Device and group color boxes showed the last plain color while an effect was running; they now show the effect.
-- Update now failed with "Windows cannot find '\\'"; the installer is now started through a batch file and RGBable reopens from its install folder.
-- Apply to all sometimes left wireless fans or Strimers unchanged: uploads are now confirmed and resent, and devices are taken out of motherboard-sync mode first.
-- One OpenRGB error no longer stops Apply to all for the remaining OpenRGB devices.
+- Lighting that applied briefly at startup and then reverted: RGBable resends it while OpenRGB settles, and no longer starts a second OpenRGB when one (such as a Windows service) is already running.
+- Devices OpenRGB finds late, or after a rescan, are picked up without dropping the connection.
+- Wireless effects that never arrived or froze: uploads are confirmed, resent and shrunk until they fit, and loops stay in step on the receiver's clock.
+- White flashes in the window, the update loop when a helper kept RGBable open, and the screen preview after an update.
+
+See [Troubleshooting](https://github.com/boywholifts/RGBable/blob/windows-port/docs/rgbable/troubleshooting.md) if you're coming from L-Connect, SignalRGB or another RGB app: only one program, and one copy of OpenRGB, should control each light.
 
 ## [0.2.0] - 2026-11-07
 
