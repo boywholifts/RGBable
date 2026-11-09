@@ -534,5 +534,11 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .cpu-setup[hidden] { display: none; }
 .cpu-setup span { flex: 1; }
 .profile-save { display: flex; flex-direction: column; gap: 12px; }
-.profile-screen { opacity: .7; font-size: 10px; }
 .profile-bar [hidden] { display: none; }
+.profile-pick { display: flex; align-items: center; gap: 8px; max-width: 320px; }
+.profile-current { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.profile-pick .caret { opacity: .6; font-size: 11px; }
+.profile-label { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.profile-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 260px; }
+.film-wrap { display: inline-flex; color: var(--accent-2); }
+.film { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
