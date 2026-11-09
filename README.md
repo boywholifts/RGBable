@@ -41,7 +41,13 @@ RGBable is unofficial and not affiliated with Lian Li. It is built on [lian-li-l
 - Tray app that starts with Windows, restores your lighting and screen, and updates itself from GitHub Releases (Stable or Dev channel).
 - First-run setup wizard that blinks each device so you can name, group and sync it.
 
-![RGBable setup wizard](docs/rgbable/setup.png)
+<p align="center">
+  <img src="docs/rgbable/devices.png" alt="Devices page: timing, direction, speed and off switch per device" width="49%">
+  <img src="docs/rgbable/hydroshift.png" alt="HydroShift screen page with widgets over the video" width="49%">
+</p>
+<p align="center">
+  <img src="docs/rgbable/cooling.png" alt="Cooling page with fan profiles and coolant curves" width="49%">
+</p>
 
 ## Install
 
