@@ -318,6 +318,12 @@ pub fn start() -> Result<()> {
     if task_state().is_some_and(|t| t.contains("Running")) {
         return Ok(());
     }
+    // OpenRGB's installer can also set it up as a Windows service, running from boot with
+    // full access: a second copy from the task would fight it for the devices
+    if let Some(service) = running_service() {
+        tracing::info!("OpenRGB already runs as the Windows service {service}; using that");
+        return Ok(());
+    }
     let _ = run("taskkill", &["/IM", "OpenRGB.exe", "/F"]);
     std::thread::sleep(std::time::Duration::from_millis(500));
     let output = run("schtasks", &["/Run", "/TN", TASK])?;
@@ -328,6 +334,40 @@ pub fn start() -> Result<()> {
         );
     }
     Ok(())
+}
+
+/// The name of a running Windows service that runs OpenRGB, if there is one.
+fn running_service() -> Option<String> {
+    if !cfg!(windows) {
+        return None;
+    }
+    let output = run(
+        "powershell",
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance Win32_Service | Where-Object { $_.State -eq 'Running' -and $_.PathName -match 'OpenRGB' } | Select-Object -First 1 -ExpandProperty Name",
+        ],
+    )
+    .ok()?;
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!name.is_empty()).then_some(name)
+}
+
+/// Other RGB programs that drive the same devices and overwrite RGBable's lighting.
+pub fn competing_rgb_apps() -> Vec<&'static str> {
+    [
+        ("SignalRgb.exe", "SignalRGB"),
+        ("Glorious Core.exe", "Glorious Core"),
+        ("ArmouryCrate.exe", "Armoury Crate"),
+        ("MSI Center.exe", "MSI Center"),
+        ("iCUE.exe", "iCUE"),
+    ]
+    .into_iter()
+    .filter(|(exe, _)| process_running(exe))
+    .map(|(_, name)| name)
+    .collect()
 }
 
 /// OpenRGB re-creates its Startup-folder shortcut whenever it starts with "Start at login"

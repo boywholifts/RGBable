@@ -1677,6 +1677,13 @@ fn connect_openrgb_in_background(engine: Arc<Engine>, openrgb: Arc<OpenRgb>, sta
                 error!("starting OpenRGB: {e:#}");
             }
         }
+        let others = openrgb_host::competing_rgb_apps();
+        if !others.is_empty() {
+            tracing::warn!(
+                "{} running too; it drives the same lights and will overwrite RGBable's",
+                others.join(", ")
+            );
+        }
         for _ in 0..12 {
             if openrgb.connect(config.openrgb_port).is_ok() {
                 lights::after_openrgb_connect(&engine, &openrgb);
