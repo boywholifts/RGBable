@@ -24,6 +24,8 @@ pub struct SavedLight {
     pub span: Option<Span>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub turn: Option<Span>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reversed: bool,
 }
 
 impl SavedLight {
@@ -36,6 +38,7 @@ impl SavedLight {
             delay_ms: device.delay_ms,
             span: device.span,
             turn: device.turn,
+            reversed: device.reversed,
         }
     }
 
@@ -47,6 +50,7 @@ impl SavedLight {
         device.delay_ms = self.delay_ms;
         device.span = self.span;
         device.turn = self.turn;
+        device.reversed = self.reversed;
     }
 }
 

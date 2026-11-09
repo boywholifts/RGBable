@@ -162,6 +162,9 @@ pub struct DeviceConfig {
     pub turn: Option<crate::effects::Span>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+    /// Runs effects the other way to everything else, kept when Sync everything sets a new one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub reversed: bool,
 }
 
 fn is_zero_i8(value: &i8) -> bool {
@@ -1103,7 +1106,8 @@ impl Engine {
             .filter(|id| config.devices.get(id).is_none_or(DeviceConfig::in_sync))
             .collect();
         for id in ids {
-            let _ = self.set_effect(&id, effect.clone());
+            let reversed = config.devices.get(&id).is_some_and(|d| d.reversed);
+            let _ = self.set_effect(&id, effect.clone().reversed_if(reversed));
         }
     }
 

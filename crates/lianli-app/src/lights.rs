@@ -509,6 +509,7 @@ pub fn set_reverse(engine: &Engine, openrgb: &OpenRgb, id: &str, reverse: bool) 
     for effect in effects.into_iter().flatten() {
         set_effect(engine, openrgb, id, Effect { reverse, ..effect })?;
     }
+    engine.update_config(|c| c.devices.entry(id.to_string()).or_default().reversed = reverse);
     Ok(())
 }
 
@@ -638,6 +639,12 @@ pub fn set_all(
         .into_iter()
         .filter(|l| l.source == "openrgb" && l.sync)
     {
+        let reversed = engine
+            .config()
+            .devices
+            .get(&light.id)
+            .is_some_and(|d| d.reversed);
+        let effect = effect.clone().reversed_if(reversed);
         let first = set_effect(engine, openrgb, &light.id, effect.clone());
         let result = first.or_else(|e| {
             tracing::warn!(

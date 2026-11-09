@@ -199,6 +199,14 @@ impl KeyLayout {
 }
 
 impl Effect {
+    /// This effect running the other way when `flip`, for a device set to reverse.
+    pub fn reversed_if(self, flip: bool) -> Self {
+        Self {
+            reverse: self.reverse ^ flip,
+            ..self
+        }
+    }
+
     /// A keyboard effect drawn on the keys where they really are.
     pub fn frame_keys(&self, layout: &KeyLayout, phase: f32) -> Vec<[u8; 3]> {
         let phase = phase.rem_euclid(1.0);
