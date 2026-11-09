@@ -23,7 +23,7 @@ RGBable is unofficial and not affiliated with Lian Li. It is built on [lian-li-l
 - Wired Lian Li gear over USB: Galahad II LCD and UNI HUB controllers *(new, still being tested)*.
 - RAM, GPU, motherboard, ARGB headers, keyboards, monitors and anything else [OpenRGB](https://openrgb.org) supports. RGBable runs OpenRGB for you in the background.
 - 20+ effects (breathing, rainbow wave, meteor, fire, aurora, ripple, starry night and more), L-Connect's own Lian Li effects, keyboard effects drawn on the key grid, and your own effects built from layers, a recipe builder or a short script.
-- **Sync everything**, **groups**, and a **Devices** page to time devices against each other: together, staggered, flowing through the build like one strip, or taking turns. Each device keeps its own direction and speed.
+- **All Devices** (one effect or color for the whole build), **groups**, and a **Devices** page to time devices against each other: together, staggered, flowing through the build like one strip, or taking turns. Each device keeps its own direction and speed, also through All Devices.
 - **Lighting profiles**: save every device's lighting (and optionally the screen video) and switch with one click.
 - **Off switches**: turn a single device off, or all lighting at once from the Lighting page, the Devices page, the profile menu or the tray. Each device keeps its lighting for when it's back on.
 - Match the lighting to the colors of the video on the OLED screen.

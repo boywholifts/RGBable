@@ -186,7 +186,7 @@ function deviceMenu(l, anchor) {
     { label: "Change effect…", onClick: () => openDrawer({ type: "dev", id: l.id }) },
     { label: "Rename…", onClick: () => promptName(`Rename ${l.name}`, l.name, (name) => call("rename", { id: l.id, name }, "Renamed").then(rerender)) },
     { label: "Identify (blink)", onClick: () => call("identify", { id: l.id }, `Blinking ${l.name}`) },
-    { label: "Include in Sync everything", checked: l.sync, onClick: () => call("set_sync", { id: l.id, sync: !l.sync }).then(rerender) },
+    { label: "Include in All Devices", checked: l.sync, onClick: () => call("set_sync", { id: l.id, sync: !l.sync }).then(rerender) },
   ];
   const animated = [l.effect, l.outer_effect].some((e) => e && e.kind !== "static");
   const reversed = [l.effect, l.outer_effect].some((e) => e && e.reverse && e.kind !== "static");
@@ -222,7 +222,7 @@ function rowBadges(l) {
   if (l.span && l.span.len < 1000) badges.push(el("span", { class: "badge", title: "Part of a chain: moving effects flow through it from the device before" }, icon("chain")));
   else if (l.span) badges.push(el("span", { class: "badge", title: "Moving effects run across all its fans" }, icon("across")));
   if (l.delay_ms) badges.push(el("span", { class: "badge", title: `Starts ${(l.delay_ms / 1000).toFixed(1)} s behind` }, [icon("clock"), `${(l.delay_ms / 1000).toFixed(1)}s`]));
-  if (!l.sync) badges.push(el("span", { class: "tag off", title: "Sync everything leaves this device alone" }, "Not synced"));
+  if (!l.sync) badges.push(el("span", { class: "tag off", title: "All Devices leaves this device alone" }, "Not synced"));
   if (l.off) badges.push(el("span", { class: "tag off", title: "Turned off: its lighting comes back when it's turned on" }, "Off"));
   return badges;
 }
@@ -333,7 +333,7 @@ function groupSection(key, title, members, g) {
 
 /// The effect shared by every synced device, or null when they differ.
 /// What a group's header shows: what its devices are actually running, not the effect the
-/// group was last given, since devices can be changed on their own or by Everything.
+/// group was last given, since devices can be changed on their own or by All Devices.
 function groupLook(members, g) {
   if (!g) return {};
   const key = (l) => JSON.stringify([l.effect || null, l.outer_effect || null, l.effect ? null : l.color]);
@@ -357,14 +357,14 @@ function renderEverything(o) {
   const synced = o.lights.filter((l) => l.sync).length;
   const card = $("#everything");
   const box = swatch(shared ? shared.color : [128, 0, 255], (rgb) =>
-    call("set_all", { effect: { kind: "static", colors: [rgb], speed: 3, brightness: 100, reverse: false }, includeOpenrgb: true }, "Everything updated").then(rerender),
+    call("set_all", { effect: { kind: "static", colors: [rgb], speed: 3, brightness: 100, reverse: false }, includeOpenrgb: true }, "All devices updated").then(rerender),
     shared ? shared.effect || shared.outer_effect : { kind: "rainbow", colors: [], speed: 2 });
   box.classList.add("big");
   box.addEventListener("click", (e) => e.stopPropagation());
   card.replaceChildren(
     box,
     el("div", { class: "row-text" }, [
-      el("div", { class: "everything-title" }, "Everything"),
+      el("div", { class: "everything-title" }, "All Devices"),
       el("div", { class: "row-sub" }, `${synced} of ${o.lights.length} devices in sync · ${shared ? effectSummary(shared) : "Mixed lighting"}`),
     ]),
     el("button", { class: "btn primary", onclick: (e) => { e.stopPropagation(); openDrawer({ type: "all" }); } }, "Change effect")
@@ -445,7 +445,7 @@ function targetName() {
   if (!t || !last) return "";
   if (t.type === "dev") return (last.lights.find((l) => l.id === t.id) || {}).name || "Device";
   if (t.type === "group") return (last.groups.find((g) => g.id === t.id) || {}).name || "Group";
-  return "Everything";
+  return "All Devices";
 }
 
 function renderDrawerTitle() {
@@ -786,7 +786,7 @@ $("#d-apply").addEventListener("click", async () => {
   try {
     if (t.type === "dev") await call("set_effect", { id: t.id, effect }, `${label} applied to ${targetName()}`);
     else if (t.type === "group") await call("set_group_effect", { group: t.id, effect }, `${label} applied to ${targetName()}`);
-    else await call("set_all", { effect, includeOpenrgb: $("#d-openrgb").checked }, `${label} applied to everything`);
+    else await call("set_all", { effect, includeOpenrgb: $("#d-openrgb").checked }, `${label} applied to all devices`);
     closeDrawer();
   } catch (e) {
   } finally {

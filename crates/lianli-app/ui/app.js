@@ -44,7 +44,7 @@ function showWizardStep() {
       ? `${total} devices found, including OpenRGB devices like RAM, GPU, monitors and sound cards.`
       : `${total} Lian Li devices found. OpenRGB isn't connected yet, so RAM, GPU, motherboard and monitor lighting won't be listed; you can run setup again from Settings once it is.`;
     body.replaceChildren(
-      el("p", {}, "Each device will blink white so you can see which one it is. Give it a name you'll recognise, put it in a group, and choose whether Sync everything should change it."),
+      el("p", {}, "Each device will blink white so you can see which one it is. Give it a name you'll recognise, put it in a group, and choose whether All Devices should change it."),
       el("p", { class: "muted small" }, orgbNote),
       el("p", { class: "muted small" }, "Nothing is saved until you click Finish.")
     );
@@ -57,7 +57,7 @@ function showWizardStep() {
     $("#wz-title").textContent = "Ready to save";
     const rows = wizard.lights.map((l) => {
       const e = wizard.entries.get(l.id);
-      const text = e ? `${e.name}${e.group ? " · " + e.group : ""}${e.sync ? "" : " · not in Sync everything"}` : `${l.name} · unchanged`;
+      const text = e ? `${e.name}${e.group ? " · " + e.group : ""}${e.sync ? "" : " · not in All Devices"}` : `${l.name} · unchanged`;
       return el("li", {}, text);
     });
     body.replaceChildren(el("ul", { class: "wizard-summary" }, rows));
@@ -82,7 +82,7 @@ function showWizardStep() {
     el("label", { class: "field-col" }, [el("span", {}, "Name"), name]),
     el("label", { class: "field-col" }, [el("span", {}, "Group"), group]),
     el("label", { class: "toggle-row" }, [
-      el("div", {}, [el("div", {}, "Include in Sync everything"), el("div", { class: "muted small" }, "Turn off for things like monitors you don't want recolored.")]),
+      el("div", {}, [el("div", {}, "Include in All Devices"), el("div", { class: "muted small" }, "Turn off for things like monitors you don't want recolored.")]),
       sync,
     ])
   );
