@@ -1358,7 +1358,10 @@ impl WinUsbLcdCore {
             let result = lianli_transport::usb::with_teardown_io(timeout, || {
                 bulk.write_full(&packet, timeout)
             });
-            if started.elapsed() > SLOW_CHUNK_WRITE {
+            // a megabyte takes about 110 ms at the panel's usual pace, so only writes well
+            // past what their size needs count as stalled (4 MB/s plus the base allowance)
+            let allowed = SLOW_CHUNK_WRITE + Duration::from_micros(packet.len() as u64 / 4);
+            if started.elapsed() > allowed {
                 warn!(
                     "H264 chunk write stalled {} ms ({} bytes)",
                     started.elapsed().as_millis(),
