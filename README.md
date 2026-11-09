@@ -33,6 +33,10 @@ RGBable is unofficial and not affiliated with Lian Li. It is built on [lian-li-l
 - Widgets drawn over the video: clock, CPU/GPU temperature and load, coolant, pump and fan speed, bars, text and images.
 - Import L-Connect screen themes, including their animated overlays.
 
+**LCD fan screens** *(new, still being tested)*
+- The round screens of SL-INF and TL Wireless LCD fans get their own **Fan screens** tab when they're connected: a video, GIF or picture per fan, turned to any angle to match how it's mounted.
+- Import the videos and pictures L-Connect keeps for these fans into the library.
+
 **Cooling**
 - Fan profiles with fixed speeds or coolant curves for wireless fans, and pump speed for the HydroShift.
 - Pump speed, coolant temperature and fan RPM at a glance.

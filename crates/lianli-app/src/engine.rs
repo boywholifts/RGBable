@@ -71,6 +71,9 @@ pub struct Config {
     /// newest first, so they show in the library too.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub oled_sent: Vec<PathBuf>,
+    /// What each LCD fan screen plays, by screen.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fan_screens: BTreeMap<String, crate::fan_screens::FanScreenConfig>,
     /// Effects the user built or wrote and saved by name.
     #[serde(default)]
     pub custom_effects: Vec<Effect>,
@@ -352,6 +355,7 @@ pub struct Engine {
     telemetry: RwLock<Telemetry>,
     last_coolant: RwLock<Option<(u8, Instant)>>,
     oled_state: RwLock<String>,
+    pub fan_screens: crate::fan_screens::FanScreens,
     oled_stop: Mutex<Arc<AtomicBool>>,
     oled_thread: Mutex<Option<thread::JoinHandle<()>>>,
 }
@@ -372,6 +376,7 @@ impl Engine {
             telemetry: RwLock::new(Telemetry::default()),
             last_coolant: RwLock::new(None),
             oled_state: RwLock::new("Off".into()),
+            fan_screens: Default::default(),
             oled_stop: Mutex::new(Arc::new(AtomicBool::new(false))),
             oled_thread: Mutex::new(None),
         })
@@ -658,6 +663,12 @@ impl Engine {
         }
         if self.config().oled.is_some() {
             self.restart_oled();
+        }
+        {
+            let engine = self.clone();
+            thread::Builder::new()
+                .name("fan-screens".into())
+                .spawn(move || engine.fan_screens.watch(|| engine.config().fan_screens))?;
         }
 
         // Without a dongle this waits for one to be plugged in; wired devices already work.
@@ -1824,7 +1835,7 @@ fn live_ffmpeg(oled: &OledConfig, modules: &[OledModule]) -> Result<std::process
         .context("running ffmpeg (install it with: winget install Gyan.FFmpeg)")
 }
 
-fn is_still_image(file: &Path) -> bool {
+pub(crate) fn is_still_image(file: &Path) -> bool {
     let lower = file.to_string_lossy().to_lowercase();
     [".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"]
         .iter()
@@ -1833,7 +1844,7 @@ fn is_still_image(file: &Path) -> bool {
 
 // ------------------------------------------------------------------ helpers
 
-fn no_window(command: &mut std::process::Command) {
+pub(crate) fn no_window(command: &mut std::process::Command) {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -1887,10 +1898,10 @@ fn find_wired(vid: u16, pid: u16) -> Result<lianli_devices::detect::DetectedDevi
         .with_context(|| format!("{vid:04x}:{pid:04x} not found"))
 }
 
-static ENCODING: Mutex<()> = parking_lot::const_mutex(());
+pub(crate) static ENCODING: Mutex<()> = parking_lot::const_mutex(());
 static PREPARE_WANTED: AtomicU64 = AtomicU64::new(0);
 
-fn oled_cache_dir() -> PathBuf {
+pub(crate) fn oled_cache_dir() -> PathBuf {
     std::env::var_os("LOCALAPPDATA")
         .map(|d| PathBuf::from(d).join("RGBable").join("oled-cache"))
         .unwrap_or_else(|| std::env::temp_dir().join("rgbable"))

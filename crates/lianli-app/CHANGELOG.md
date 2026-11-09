@@ -4,6 +4,15 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 
 ## [Unreleased]
 
+### Added
+
+- Fan screens: the round LCDs of SL-INF and TL Wireless LCD fans play a video, GIF or picture each, turned to any angle. The tab shows only when they're connected. L-Connect's fan screen videos and pictures can be imported into the library (new, still being tested).
+- Videos sent from OLEDable join the library.
+
+### Changed
+
+- The Everything card is now called All Devices.
+
 ## [1.0.0] - 2026-11-09
 
 The first stable release. RGBable now covers what most builds used L-Connect for, plus the rest of the PC's RGB through OpenRGB.

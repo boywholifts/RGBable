@@ -552,3 +552,21 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .all-off-note { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; margin-bottom: 14px; border-color: rgba(255, 176, 32, .4); color: #ffb020; font-size: 13px; }
 .device-row.is-off .swatch, .device-row.is-off .row-text, .seq-row.is-off .row-text, .seq-row.is-off .seq-track { opacity: .45; }
 .power-btn:not(.on), .seq-row .icon-btn.switchable:not(.on) .icon { opacity: .7; }
+
+.fan-screen-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; margin-bottom: 14px; }
+.fan-screen-grid .empty { grid-column: 1 / -1; }
+.fan-screen { display: flex; gap: 16px; align-items: center; }
+.fan-ring { flex: none; width: 132px; height: 132px; border-radius: 50%; padding: 6px; background: conic-gradient(from 0deg, #ff4fd8, #7c5cff, #2ec5ff, #ff4fd8); }
+.fan-face { width: 100%; height: 100%; border-radius: 50%; overflow: hidden; background: #000; display: flex; align-items: center; justify-content: center; transition: transform .15s; }
+.fan-face img { width: 100%; height: 100%; object-fit: cover; }
+.fan-face img.contain { object-fit: contain; }
+.fan-face-empty { color: var(--muted); font-size: 12px; }
+.fan-screen-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.fan-screen-name { background: none; border: none; color: inherit; font: inherit; font-weight: 600; font-size: 15px; padding: 0; cursor: pointer; text-align: left; }
+.fan-screen-name:hover { text-decoration: underline; }
+.fan-turn input[type=range] { flex: 1; min-width: 80px; }
+.fan-turn .deg { width: 58px; }
+.dialog.wide { width: min(760px, calc(100vw - 40px)); max-height: calc(100vh - 80px); }
+.fan-pick-grid { max-height: 60vh; overflow: auto; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.fan-thumb { aspect-ratio: 1; }
+.nav[hidden] { display: none; }

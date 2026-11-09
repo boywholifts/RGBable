@@ -296,6 +296,7 @@ async function refresh() {
   status.className = "status " + (o.status === "Ready" ? "ok" : o.status.startsWith("Error") ? "bad" : "");
 
   renderAllOff(o);
+  renderFanScreensNav(o);
   renderLights(o);
   renderLightProfiles(o);
   maybeStartWizard(o);

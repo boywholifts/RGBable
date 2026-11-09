@@ -5,6 +5,7 @@
 mod cpu_temp;
 mod effects;
 mod engine;
+mod fan_screens;
 mod fans;
 mod lconnect_theme;
 mod lighting_profiles;
@@ -69,6 +70,8 @@ struct Overview {
     lighting_profiles: Vec<LightingProfileView>,
     lighting_profile: Option<String>,
     all_off: bool,
+    /// LCD fan screens connected right now; the Fan screens page shows only when there are some.
+    fan_screens: usize,
     all_fans: fans::FanMode,
     pump: fans::PumpMode,
     pump_range: (u16, u16),
@@ -119,6 +122,7 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
             .collect(),
         lighting_profile: config.lighting_profile.clone(),
         all_off: config.all_off,
+        fan_screens: state.engine.fan_screens.count(),
         all_fans: config
             .active_fan_profile()
             .map(|p| p.all_fans.clone())
@@ -693,6 +697,90 @@ async fn import_lconnect_themes(
             }
         });
         Ok(Some(report))
+    })
+    .await
+    .map_err(err)?
+}
+
+#[tauri::command(async)]
+fn fan_screens(state: State<'_, AppState>) -> Vec<fan_screens::ScreenView> {
+    let config = state.engine.config();
+    state.engine.fan_screens.views(&config.fan_screens)
+}
+
+/// Sets what fan screens play. `id` none sets every connected screen; each keeps its own
+/// name and turn unless `rotation` is given.
+#[tauri::command(async)]
+fn set_fan_screen(
+    state: State<'_, AppState>,
+    id: Option<String>,
+    file: Option<String>,
+    fit: Option<String>,
+    rotation: Option<u16>,
+) {
+    let engine = &state.engine;
+    let ids: Vec<String> = match id {
+        Some(id) => vec![id],
+        None => engine
+            .fan_screens
+            .views(&engine.config().fan_screens)
+            .into_iter()
+            .map(|v| v.id)
+            .collect(),
+    };
+    let config = engine.update_config(|c| {
+        for id in &ids {
+            let entry = c.fan_screens.entry(id.clone()).or_default();
+            let mut next = entry.clone();
+            if let Some(file) = &file {
+                next.file = (!file.is_empty()).then(|| PathBuf::from(file));
+            }
+            if let Some(fit) = &fit {
+                next.fit = fit.clone();
+            }
+            if let Some(rotation) = rotation {
+                next.rotation = rotation;
+            }
+            *entry = next.cleaned();
+        }
+        c.fan_screens.clone()
+    });
+    engine.fan_screens.sync(&config);
+}
+
+#[tauri::command(async)]
+fn rename_fan_screen(state: State<'_, AppState>, id: String, name: String) {
+    let name: String = name.trim().chars().take(40).collect();
+    state.engine.update_config(|c| {
+        c.fan_screens.entry(id).or_default().name = (!name.is_empty()).then_some(name);
+    });
+}
+
+#[tauri::command]
+async fn import_lconnect_fan_assets(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<Option<fan_screens::Imported>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let Some(folder) = app
+        .dialog()
+        .file()
+        .set_title("Pick L-Connect's folder for the LCD fans")
+        .blocking_pick_folder()
+        .and_then(|p| p.into_path().ok())
+    else {
+        return Ok(None);
+    };
+    let engine = state.engine.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let out = data_dir().join("L-Connect fan screens");
+        let imported = fan_screens::import_lconnect(&folder, &out).map_err(chain)?;
+        engine.update_config(|c| {
+            if !c.oled_folders.contains(&out) {
+                c.oled_folders.push(out.clone());
+            }
+        });
+        Ok(Some(imported))
     })
     .await
     .map_err(err)?
@@ -1608,6 +1696,10 @@ fn main() {
             set_reverse,
             set_off,
             set_all_off,
+            fan_screens,
+            set_fan_screen,
+            rename_fan_screen,
+            import_lconnect_fan_assets,
             set_speed,
             set_hidden,
             oled_palette,
