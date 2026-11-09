@@ -1306,6 +1306,32 @@ fn show_main(app: &AppHandle) {
 
 // ------------------------------------------------------------------ main
 
+/// A windowed app has no error output, so what Rust prints when the process dies outright
+/// (a thread out of stack, a fatal runtime error) would be lost; it goes to a file instead.
+fn capture_fatal_errors(dir: &std::path::Path) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::IntoRawHandle;
+        let Ok(file) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join("rgbable-crash.log"))
+        else {
+            return;
+        };
+        let handle = file.into_raw_handle();
+        // SAFETY: the handle is a file this process opened and never closes.
+        unsafe {
+            windows_sys::Win32::System::Console::SetStdHandle(
+                windows_sys::Win32::System::Console::STD_ERROR_HANDLE,
+                handle as _,
+            );
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = dir;
+}
+
 fn main() {
     // Diagnostics: `rgbable --probe-openrgb [port]` lists OpenRGB devices and exits.
     let args: Vec<String> = std::env::args().collect();
@@ -1372,6 +1398,7 @@ fn main() {
         Err(_) => builder.init(),
     }
     std::panic::set_hook(Box::new(|panic| error!("panic: {panic}")));
+    capture_fatal_errors(&dir);
 
     let config_path = dir.join("config.json");
     if std::env::args().any(|a| a == cpu_temp::HELPER_ARG) {
