@@ -45,7 +45,7 @@ $("#light-profile-pick").addEventListener("click", (e) => {
       items.push({
         label: profileLabel(p),
         checked: p.name === lightProfile,
-        onClick: () => lightProfileAction("apply_lighting_profile", { name: p.name }, `${p.name} on`),
+        onClick: () => confirmLightProfile(p),
       });
     }
     items.push("-");
@@ -61,6 +61,18 @@ $("#light-profile-pick").addEventListener("click", (e) => {
   }
   openMenu($("#light-profile-pick"), items);
 });
+
+// Picking a profile only opens this: nothing changes until Apply, so a stray click in the
+// menu can't replace the lighting.
+function confirmLightProfile(p) {
+  const what = p.screen
+    ? "Every device gets the lighting saved in it, and its video goes on the HydroShift screen."
+    : "Every device gets the lighting saved in it.";
+  openDialog(`Apply ${p.name}?`, el("p", { class: "muted small" }, what), [
+    el("button", { class: "btn", onclick: closeDialog }, "Cancel"),
+    el("button", { class: "btn primary", onclick: () => { closeDialog(); lightProfileAction("apply_lighting_profile", { name: p.name }, `${p.name} on`); } }, "Apply"),
+  ]);
+}
 
 function deleteLightProfile(name) {
   openDialog(`Delete ${name}?`, el("p", { class: "muted small" }, "The lighting you have now stays as it is."), [
