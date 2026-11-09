@@ -14,6 +14,7 @@
 pub mod error;
 pub mod hid;
 pub mod hid_trait;
+pub mod hidapi_transport;
 #[cfg(target_os = "linux")]
 pub mod hidraw;
 pub mod usb;
@@ -22,6 +23,7 @@ pub mod usb_context;
 pub use error::TransportError;
 pub use hid::{RusbHid, RusbHidReopener};
 pub use hid_trait::HidTransport;
+pub use hidapi_transport::{HidApiTransport, HidTarget};
 #[cfg(target_os = "linux")]
 pub use hidraw::{HidrawReopener, HidrawTransport};
 pub use usb::RusbBulk;

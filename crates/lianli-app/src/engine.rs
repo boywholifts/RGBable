@@ -6,7 +6,10 @@ use crate::effects::{Effect, Side};
 use crate::fans::{self, Decision, FanMode, FanProfile, PumpMode};
 use crate::oled_modules::{self, ModuleKind, OledModule, Readings};
 use crate::render::{self, Lighting};
+use crate::wired::{self, WiredPart};
 use anyhow::{bail, Context, Result};
+use lianli_devices::hydroshift_lcd::HydroShiftLcdController;
+use lianli_devices::traits::FanDevice;
 use lianli_devices::winusb::hs2_oled_led::Hs2OledLedController;
 use lianli_devices::wireless::{DiscoveredDevice, WirelessController, WirelessRgbUpload};
 use lianli_shared::rgb::RgbRenderProfile;
@@ -260,10 +263,13 @@ pub struct OledView {
 enum Target {
     Wireless { mac: [u8; 6] },
     Ring(Arc<Hs2OledLedController>),
+    Wired(Arc<WiredPart>),
 }
 
 struct Controller {
     id: String,
+    /// The name shown until the user names it, when the id doesn't make a good one.
+    default_name: Option<String>,
     kind: &'static str,
     model: String,
     fans: u8,
@@ -294,6 +300,8 @@ pub struct Engine {
     status: RwLock<String>,
     wireless: RwLock<Option<Arc<WirelessController>>>,
     ring: RwLock<Option<Arc<Hs2OledLedController>>>,
+    wired: RwLock<Vec<Arc<WiredPart>>>,
+    aios: RwLock<Vec<Arc<HydroShiftLcdController>>>,
     controllers: RwLock<Vec<Arc<Controller>>>,
     telemetry: RwLock<Telemetry>,
     last_coolant: RwLock<Option<(u8, Instant)>>,
@@ -311,6 +319,8 @@ impl Engine {
             status: RwLock::new("Starting".into()),
             wireless: RwLock::new(None),
             ring: RwLock::new(None),
+            wired: RwLock::new(Vec::new()),
+            aios: RwLock::new(Vec::new()),
             controllers: RwLock::new(Vec::new()),
             telemetry: RwLock::new(Telemetry::default()),
             last_coolant: RwLock::new(None),
@@ -564,13 +574,7 @@ impl Engine {
     fn bring_up(self: &Arc<Self>) -> Result<()> {
         self.wait_for_lconnect();
 
-        self.set_status("Connecting to the wireless dongle");
-        let wireless = Arc::new(connect_wireless());
-        self.repair_pairing(&wireless);
-        let devices = wireless.devices();
-        info!("{} wireless device(s) online", devices.len());
-        *self.wireless.write() = Some(wireless.clone());
-
+        self.set_status("Looking for devices");
         let ring = match find_wired(0x0416, 0x8051) {
             Ok(det) => match Hs2OledLedController::new(det.device) {
                 Ok(led) => Some(Arc::new(led)),
@@ -582,10 +586,64 @@ impl Engine {
             Err(_) => None,
         };
         *self.ring.write() = ring.clone();
+        let wired = wired::discover();
+        let has_wired = !wired.parts.is_empty();
+        *self.wired.write() = wired.parts;
+        *self.aios.write() = wired.aios;
+        self.build_controllers(&[], ring.clone());
+        self.restore_lighting();
+        if has_wired {
+            let engine = self.clone();
+            thread::Builder::new()
+                .name("wired-lighting".into())
+                .spawn(move || engine.wired_lighting())?;
+            let engine = self.clone();
+            thread::Builder::new()
+                .name("wired-fans".into())
+                .spawn(move || engine.keep_wired_fans())?;
+        }
+        {
+            let engine = self.clone();
+            thread::Builder::new()
+                .name("telemetry".into())
+                .spawn(move || engine.telemetry_loop())?;
+        }
+        if self.config().oled.is_some() {
+            self.restart_oled();
+        }
 
+        // Without a dongle this waits for one to be plugged in; wired devices already work.
+        if has_wired || ring.is_some() {
+            self.set_status("Ready");
+        } else {
+            self.set_status("Connecting to the wireless dongle");
+        }
+        let wireless = Arc::new(connect_wireless());
+        self.repair_pairing(&wireless);
+        let devices = wireless.devices();
+        info!("{} wireless device(s) online", devices.len());
+        *self.wireless.write() = Some(wireless.clone());
         self.build_controllers(&devices, ring);
+        self.restore_lighting();
 
-        // Restore saved colors.
+        {
+            let (engine, wireless) = (self.clone(), wireless.clone());
+            thread::Builder::new()
+                .name("fan-keeper".into())
+                .spawn(move || engine.keep_fans_spinning(&wireless))?;
+        }
+        {
+            let engine = self.clone();
+            thread::Builder::new()
+                .name("rgb-writer".into())
+                .spawn(move || engine.rgb_writer(&wireless))?;
+        }
+        self.set_status("Ready");
+        Ok(())
+    }
+
+    /// Gives every device its saved color or effect.
+    fn restore_lighting(&self) {
         let config = self.config();
         for ctl in self.controllers.read().iter() {
             let saved = if ctl.id == RING_ID {
@@ -606,30 +664,131 @@ impl Engine {
                 ctl.dirty.store(true, Ordering::Release);
             }
         }
+    }
 
-        {
-            let (engine, wireless) = (self.clone(), wireless.clone());
-            thread::Builder::new()
-                .name("fan-keeper".into())
-                .spawn(move || engine.keep_fans_spinning(&wireless))?;
+    /// Wired devices animate their lighting themselves: each gets its effect (or color)
+    /// once, when it changes.
+    fn wired_lighting(&self) {
+        let mut failing: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        loop {
+            let controllers = self.controllers.read().clone();
+            for ctl in &controllers {
+                let Target::Wired(part) = &ctl.target else {
+                    continue;
+                };
+                if part.leds == 0 || !ctl.dirty.swap(false, Ordering::AcqRel) {
+                    continue;
+                }
+                let lighting = ctl.lighting.lock().primary().cloned();
+                let color = ctl
+                    .colors
+                    .lock()
+                    .first()
+                    .copied()
+                    .unwrap_or([255, 255, 255]);
+                let effect =
+                    wired::hardware_effect(lighting.as_ref(), color, &part.rgb.supported_modes());
+                let result = match part.zone {
+                    Some(zone) => part.rgb.set_zone_effect(zone, &effect),
+                    None => part.rgb.set_all_effects(&effect),
+                };
+                match result {
+                    Ok(()) => {
+                        failing.remove(&part.id);
+                    }
+                    Err(e) => {
+                        if failing.insert(part.id.clone()) {
+                            warn!("{}: lighting: {e:#}", part.name);
+                        }
+                        // tried again on a later pass
+                        ctl.dirty.store(true, Ordering::Release);
+                    }
+                }
+            }
+            let wait = if failing.is_empty() { 150 } else { 2000 };
+            thread::sleep(Duration::from_millis(wait));
         }
-        {
-            let engine = self.clone();
-            thread::Builder::new()
-                .name("rgb-writer".into())
-                .spawn(move || engine.rgb_writer(&wireless))?;
+    }
+
+    /// Wired fans and AIO pumps keep their speed until told otherwise, so speeds go out when
+    /// they change and every few seconds besides (the AIOs, like L-Connect, expect regular
+    /// updates). Curves follow the coolant temperature from whichever AIO reports one.
+    fn keep_wired_fans(&self) {
+        const RESEND: Duration = Duration::from_secs(5);
+        const READ_RPM: Duration = Duration::from_secs(2);
+        let mut sent: BTreeMap<String, (Option<u8>, Instant)> = BTreeMap::new();
+        let mut pump_sent: Option<(PumpMode, Instant)> = None;
+        let mut last_read = Instant::now() - READ_RPM;
+        loop {
+            let coolant = self.last_coolant.read().map(|(c, at)| (c, at.elapsed()));
+            let profile = self.config.lock().active_fan_profile().cloned();
+            let parts = self.wired.read().clone();
+            let read_now = last_read.elapsed() >= READ_RPM;
+            for part in &parts {
+                let Some(fan) = &part.fan else { continue };
+                if !fan.ready() {
+                    continue;
+                }
+                if read_now {
+                    *part.rpm.lock() = fan.rpm();
+                }
+                let mode = profile
+                    .as_ref()
+                    .map(|p| p.fan_mode(&part.id))
+                    .unwrap_or_default();
+                let duty = match fans::decide(&mode, None, coolant) {
+                    Decision::Duty(duty) => Some(duty),
+                    Decision::KeepUnlessStopped => None,
+                };
+                let due = sent
+                    .get(&part.id)
+                    .is_none_or(|(last, at)| *last != duty || at.elapsed() >= RESEND);
+                if !due {
+                    continue;
+                }
+                let result = match duty {
+                    Some(duty) => fan.set_duty(duty),
+                    None => fan.follow_board().map(|_| ()),
+                };
+                match result {
+                    Ok(()) => {
+                        sent.insert(part.id.clone(), (duty, Instant::now()));
+                    }
+                    Err(e) => debug!("{}: fan speed: {e:#}", part.name),
+                }
+            }
+            if read_now {
+                last_read = Instant::now();
+            }
+
+            let pump = profile.map(|p| p.pump).unwrap_or_default();
+            let due = pump_sent
+                .as_ref()
+                .is_none_or(|(last, at)| *last != pump || at.elapsed() >= RESEND);
+            if due && pump != PumpMode::Unchanged {
+                let mut ok = true;
+                for aio in self.aios.read().iter().filter(|a| a.is_ready_for_control()) {
+                    let result = match pump {
+                        PumpMode::Unchanged => Ok(()),
+                        PumpMode::Motherboard => aio.set_mb_rpm_sync(0, true),
+                        PumpMode::Fixed { rpm } => {
+                            let envelope = aio.variant().pump_envelope();
+                            let span = f32::from(envelope.max_rpm.saturating_sub(envelope.min_rpm))
+                                .max(1.0);
+                            let percent =
+                                f32::from(rpm.saturating_sub(envelope.min_rpm)) / span * 100.0;
+                            aio.set_pump_curve_percent(0, percent)
+                        }
+                    };
+                    if let Err(e) = result {
+                        debug!("AIO pump speed: {e:#}");
+                        ok = false;
+                    }
+                }
+                pump_sent = ok.then(|| (pump, Instant::now()));
+            }
+            thread::sleep(Self::FAN_KEEPER_TICK);
         }
-        {
-            let engine = self.clone();
-            thread::Builder::new()
-                .name("telemetry".into())
-                .spawn(move || engine.telemetry_loop())?;
-        }
-        if config.oled.is_some() {
-            self.restart_oled();
-        }
-        self.set_status("Ready");
-        Ok(())
     }
 
     fn wait_for_lconnect(&self) {
@@ -659,6 +818,7 @@ impl Engine {
             }
             list.push(Arc::new(Controller {
                 id: device.mac_str(),
+                default_name: None,
                 kind: if device.fan_count > 0 {
                     "fans"
                 } else {
@@ -680,6 +840,7 @@ impl Engine {
         if let Some(ring) = ring {
             list.push(Arc::new(Controller {
                 id: RING_ID.into(),
+                default_name: None,
                 kind: "ring",
                 model: "HydroShift II OLED Curve ambient ring".into(),
                 fans: 0,
@@ -694,10 +855,44 @@ impl Engine {
                 settled: AtomicBool::new(true),
             }));
         }
+        for part in self.wired.read().iter() {
+            let leds = part.leds.max(1);
+            list.push(Arc::new(Controller {
+                id: part.id.clone(),
+                default_name: Some(part.name.clone()),
+                kind: part.kind,
+                model: part.model.clone(),
+                fans: part.fans,
+                leds,
+                profile: None,
+                zones: vec![leds],
+                target: Target::Wired(Arc::clone(part)),
+                lighting: Mutex::new(Lighting::default()),
+                colors: Mutex::new(vec![[0, 0, 0]; leds]),
+                dirty: AtomicBool::new(false),
+                identifying: AtomicBool::new(false),
+                settled: AtomicBool::new(true),
+            }));
+        }
         *self.controllers.write() = list;
     }
 
     // -------------------------------------------------------------- UI API
+
+    /// The pump speeds the pump settings offer: the OLED's pump, or a wired AIO's.
+    pub fn pump_range(&self) -> (u16, u16) {
+        if self.ring.read().is_some() {
+            return Hs2OledLedController::PUMP_RPM_RANGE;
+        }
+        self.aios
+            .read()
+            .first()
+            .map(|aio| {
+                let envelope = aio.variant().pump_envelope();
+                (envelope.min_rpm, envelope.max_rpm)
+            })
+            .unwrap_or(Hs2OledLedController::PUMP_RPM_RANGE)
+    }
 
     pub fn devices(&self) -> Vec<DeviceView> {
         let config = self.config();
@@ -713,6 +908,7 @@ impl Engine {
             .map(|ctl| {
                 let saved = config.devices.get(&ctl.id);
                 let default_name = match ctl.kind {
+                    _ if ctl.default_name.is_some() => ctl.default_name.clone().unwrap_or_default(),
                     "ring" => "OLED ring".to_string(),
                     "strimer" => format!("Strimer {}", &ctl.id[..5]),
                     _ => format!(
@@ -728,10 +924,13 @@ impl Engine {
                     saved.and_then(|s| s.color)
                 };
                 let fan_count = |d: &DiscoveredDevice| usize::from(d.fan_count.min(4));
-                let rpm = live
-                    .get(&ctl.id)
-                    .map(|d| d.fan_rpms[..fan_count(d)].to_vec())
-                    .unwrap_or_default();
+                let rpm = match &ctl.target {
+                    Target::Wired(part) => part.rpm.lock().clone(),
+                    _ => live
+                        .get(&ctl.id)
+                        .map(|d| d.fan_rpms[..fan_count(d)].to_vec())
+                        .unwrap_or_default(),
+                };
                 let speed = live
                     .get(&ctl.id)
                     .map(|d| {
@@ -835,7 +1034,7 @@ impl Engine {
         let deadline = Instant::now() + timeout;
         while Instant::now() < deadline {
             let done = targets.iter().all(|c| {
-                matches!(c.target, Target::Ring(_))
+                matches!(c.target, Target::Ring(_) | Target::Wired(_))
                     || (c.settled.load(Ordering::Acquire) && !c.dirty.load(Ordering::Acquire))
             });
             if done {
@@ -1041,6 +1240,7 @@ impl Engine {
                         self.drive_ring(ctl, ring, &mut last_ring_frame);
                         continue;
                     }
+                    Target::Wired(_) => continue,
                     Target::Wireless { mac } => *mac,
                 };
                 if not_before.get(&mac).is_some_and(|t| Instant::now() < *t) {
@@ -1248,6 +1448,19 @@ impl Engine {
     fn telemetry_loop(&self) {
         loop {
             let ring = self.ring.read().clone();
+            let aio = self.aios.read().first().cloned();
+            if let (None, Some(aio)) = (&ring, aio) {
+                let coolant = aio
+                    .poll_coolant_temp()
+                    .map(|c| c.round().clamp(0.0, 255.0) as u8);
+                if let Some(celsius) = coolant.filter(|c| (1..=100).contains(c)) {
+                    *self.last_coolant.write() = Some((celsius, Instant::now()));
+                }
+                *self.telemetry.write() = Telemetry {
+                    pump_rpm: FanDevice::read_pump_rpm(aio.as_ref()),
+                    coolant_c: coolant,
+                };
+            }
             if let Some(ring) = ring {
                 let pump = ring.read_pump_rpm_raw().ok();
                 let coolant = ring.read_temps().ok().map(|(c, _)| c);

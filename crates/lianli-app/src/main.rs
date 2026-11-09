@@ -18,6 +18,7 @@ mod render;
 mod script;
 mod system_load;
 mod updater;
+mod wired;
 
 use anyhow::Context;
 use effects::Effect;
@@ -106,7 +107,7 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
             .active_fan_profile()
             .map(|p| p.pump)
             .unwrap_or_default(),
-        pump_range: lianli_devices::winusb::hs2_oled_led::Hs2OledLedController::PUMP_RPM_RANGE,
+        pump_range: state.engine.pump_range(),
     })
 }
 

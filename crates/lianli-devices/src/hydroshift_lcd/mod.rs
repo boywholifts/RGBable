@@ -23,6 +23,29 @@ mod rgb;
 pub use controller::{find_au_split, pace_frame, HydroShiftLcdController};
 pub use rgb::AioLcdRgbController;
 
+/// Opens a HydroShift LCD / Galahad II LCD AIO over an already open HID handle (how Windows
+/// reaches it, through the system HID driver). Initialization finishes on a background
+/// thread, like the registry driver; fan and pump control wait for `is_ready_for_control`.
+pub fn open_with_hid(
+    backend: crate::registry::SharedHid,
+    pid: u16,
+) -> anyhow::Result<(Arc<HydroShiftLcdController>, Arc<AioLcdRgbController>)> {
+    let lcd = Arc::new(HydroShiftLcdController::new(Arc::clone(&backend), pid)?);
+    let rgb = Arc::new(AioLcdRgbController::new(backend, pid, Arc::clone(&lcd))?);
+    let (init_lcd, init_rgb) = (Arc::clone(&lcd), Arc::clone(&rgb));
+    std::thread::Builder::new()
+        .name(format!("aio-lcd-init-{pid:04x}"))
+        .spawn(move || {
+            if let Err(e) = init_lcd.init() {
+                warn!("AIO LCD init failed: {e:#}");
+            } else if let Err(e) = init_rgb.flush_pending() {
+                warn!("AIO RGB settings failed: {e:#}");
+            }
+        })
+        .map_err(|error| anyhow::anyhow!("Could not start AIO initialization: {error}"))?;
+    Ok((lcd, rgb))
+}
+
 /// AIO LCD device variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AioLcdVariant {
