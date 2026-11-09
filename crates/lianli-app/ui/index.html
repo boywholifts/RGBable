@@ -47,6 +47,14 @@
           <p class="muted">Choose everything, a group or a device to change its lighting.</p>
         </div>
       </header>
+      <div class="profile-bar" id="light-profile-bar">
+        <span class="muted small">Profiles</span>
+        <div class="seg" id="light-profiles"></div>
+        <button class="btn mini ghost" id="light-profile-save" title="Save all of the lighting as a new profile">Save as profile…</button>
+        <button class="btn mini ghost" id="light-profile-update" title="Replace the chosen profile with the lighting as it is now">Update</button>
+        <button class="btn mini ghost" id="light-profile-rename">Rename</button>
+        <button class="btn mini ghost" id="light-profile-delete">Delete</button>
+      </div>
 
       <div class="card everything" id="everything"></div>
 
@@ -432,6 +440,7 @@
   <script src="readouts.js"></script>
   <script src="sequence.js"></script>
   <script src="fans.js"></script>
+  <script src="light-profiles.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

@@ -89,6 +89,11 @@ pub struct Config {
     pub fan_profiles: Vec<FanProfile>,
     #[serde(default)]
     pub fan_profile: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lighting_profiles: Vec<crate::lighting_profiles::LightingProfile>,
+    /// The lighting profile last applied or saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lighting_profile: Option<String>,
 }
 
 /// The `oled_modules` key of the layout every video without its own uses.
@@ -1045,6 +1050,28 @@ impl Engine {
     }
 
     /// Sends every Lian Li device its lighting again (after the white balance changed).
+    /// Gives every device the lighting the settings now hold (after a lighting profile
+    /// replaced it), effects starting over together.
+    pub fn reload_lighting(&self) {
+        let config = self.config();
+        for ctl in self.controllers.read().iter() {
+            let saved = if ctl.id == RING_ID {
+                config.oled_ring
+            } else {
+                config.devices.get(&ctl.id).and_then(|d| d.color)
+            };
+            if let Some(color) = saved {
+                *ctl.colors.lock() = vec![color; ctl.leds];
+            }
+            *ctl.lighting.lock() = config
+                .devices
+                .get(&ctl.id)
+                .map(|d| Lighting::from_saved(d.effect.clone(), d.outer_effect.clone()))
+                .unwrap_or_default();
+            ctl.dirty.store(true, Ordering::Release);
+        }
+    }
+
     pub fn relight_all(&self) {
         for ctl in self.controllers.read().iter() {
             ctl.dirty.store(true, Ordering::Release);

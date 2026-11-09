@@ -7,6 +7,7 @@ mod effects;
 mod engine;
 mod fans;
 mod lconnect_theme;
+mod lighting_profiles;
 mod lights;
 mod nrbf;
 mod oled_library;
@@ -63,6 +64,8 @@ struct Overview {
     clean_transitions: bool,
     fan_profiles: Vec<String>,
     fan_profile: usize,
+    lighting_profiles: Vec<String>,
+    lighting_profile: Option<String>,
     all_fans: fans::FanMode,
     pump: fans::PumpMode,
     pump_range: (u16, u16),
@@ -99,6 +102,12 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
         clean_transitions: !config.instant_changes,
         fan_profiles: config.fan_profiles.iter().map(|p| p.name.clone()).collect(),
         fan_profile: config.fan_profile,
+        lighting_profiles: config
+            .lighting_profiles
+            .iter()
+            .map(|p| p.name.clone())
+            .collect(),
+        lighting_profile: config.lighting_profile.clone(),
         all_fans: config
             .active_fan_profile()
             .map(|p| p.all_fans.clone())
@@ -783,6 +792,85 @@ fn set_pump_mode(state: State<'_, AppState>, mode: fans::PumpMode) {
     state.engine.set_pump_mode(mode);
 }
 
+fn profile_name(name: &str) -> Result<String, String> {
+    let name: String = name.trim().chars().take(40).collect();
+    if name.is_empty() {
+        return Err("Give the profile a name".into());
+    }
+    Ok(name)
+}
+
+/// Saves all lighting as a profile, replacing one of the same name.
+#[tauri::command(async)]
+fn save_lighting_profile(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    let name = profile_name(&name)?;
+    state.engine.update_config(|c| {
+        let profile = lighting_profiles::capture(c, &name);
+        match c.lighting_profiles.iter_mut().find(|p| p.name == name) {
+            Some(existing) => *existing = profile,
+            None => c.lighting_profiles.push(profile),
+        }
+        c.lighting_profile = Some(name);
+    });
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn apply_lighting_profile(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    let engine = &state.engine;
+    let applied = engine.update_config(|c| {
+        let profile = c
+            .lighting_profiles
+            .iter()
+            .find(|p| p.name == name)
+            .cloned()?;
+        lighting_profiles::apply(c, &profile);
+        c.lighting_profile = Some(name.clone());
+        Some(())
+    });
+    if applied.is_none() {
+        return Err(format!("No lighting profile named {name}"));
+    }
+    render::WARMTH.store(engine.config().warmth, std::sync::atomic::Ordering::Relaxed);
+    // effects start over together, so flows begin at their first device
+    render::restart_clock(1500);
+    engine.reload_lighting();
+    // devices that aren't connected keep their part of the profile for when they are back
+    lights::sync_openrgb_effects(engine, &state.openrgb);
+    Ok(())
+}
+
+#[tauri::command(async)]
+fn rename_lighting_profile(
+    state: State<'_, AppState>,
+    name: String,
+    to: String,
+) -> Result<(), String> {
+    let to = profile_name(&to)?;
+    state.engine.update_config(|c| {
+        if c.lighting_profiles.iter().any(|p| p.name == to) {
+            return Err(format!("There's already a profile named {to}"));
+        }
+        if let Some(profile) = c.lighting_profiles.iter_mut().find(|p| p.name == name) {
+            profile.name = to.clone();
+        }
+        if c.lighting_profile.as_deref() == Some(name.as_str()) {
+            c.lighting_profile = Some(to);
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command(async)]
+fn delete_lighting_profile(state: State<'_, AppState>, name: String) {
+    state.engine.update_config(|c| {
+        c.lighting_profiles.retain(|p| p.name != name);
+        if c.lighting_profile.as_deref() == Some(name.as_str()) {
+            c.lighting_profile = None;
+        }
+    });
+}
+
 #[tauri::command(async)]
 fn select_fan_profile(state: State<'_, AppState>, index: usize) {
     state.engine.select_fan_profile(index);
@@ -1335,6 +1423,10 @@ fn main() {
             set_all_fan_modes,
             set_pump_mode,
             select_fan_profile,
+            save_lighting_profile,
+            apply_lighting_profile,
+            rename_lighting_profile,
+            delete_lighting_profile,
             add_fan_profile,
             rename_fan_profile,
             delete_fan_profile,
