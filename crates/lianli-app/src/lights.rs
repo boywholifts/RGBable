@@ -239,7 +239,7 @@ pub fn groups(engine: &Engine) -> Vec<GroupView> {
 }
 
 /// Motherboard addressable headers get their own id: the device id plus `#z<zone index>`.
-const ZONE_MARK: &str = "#z";
+pub const ZONE_MARK: &str = "#z";
 
 pub fn header_id(device_id: &str, zone: usize) -> String {
     format!("{device_id}{ZONE_MARK}{zone}")
@@ -386,6 +386,7 @@ pub fn resize_zone(
 
 /// After (re)connecting: restore zone sizes the user set, then everyone's saved lighting.
 pub fn after_openrgb_connect(engine: &Engine, openrgb: &OpenRgb) {
+    remember_zone_sizes(engine, openrgb);
     let config = engine.config();
     for device in openrgb.view().devices {
         let Some(saved) = config.devices.get(&openrgb_id(&device)) else {
@@ -403,6 +404,40 @@ pub fn after_openrgb_connect(engine: &Engine, openrgb: &OpenRgb) {
         }
     }
     sync_openrgb_effects(engine, openrgb);
+}
+
+/// Keeps the LED count of every addressable header OpenRGB knows the size of (set in
+/// OpenRGB itself, say), so it can be put back if OpenRGB later lists that header empty.
+fn remember_zone_sizes(engine: &Engine, openrgb: &OpenRgb) {
+    let devices = openrgb.view().devices;
+    let config = engine.config();
+    let learned: Vec<(String, usize, usize)> = devices
+        .iter()
+        .flat_map(|device| {
+            let id = openrgb_id(device);
+            let saved = config.devices.get(&id);
+            device
+                .zones
+                .iter()
+                .enumerate()
+                .filter(|(_, z)| z.resizable() && z.leds > 0)
+                .filter(move |(zone, _)| saved.is_none_or(|s| !s.zone_sizes.contains_key(zone)))
+                .map(move |(zone, z)| (id.clone(), zone, z.leds))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    if learned.is_empty() {
+        return;
+    }
+    engine.update_config(|c| {
+        for (id, zone, size) in learned {
+            c.devices
+                .entry(id)
+                .or_default()
+                .zone_sizes
+                .insert(zone, size);
+        }
+    });
 }
 
 /// Sends every OpenRGB device its saved lighting.

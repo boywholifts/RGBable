@@ -363,11 +363,14 @@ impl OpenRgb {
             .and_then(|()| send(stream, index, PKT_UPDATE_LEDS, &payload))
             .and_then(|()| expect_ack(stream, version, PKT_UPDATE_LEDS));
         if let Err(e) = &result {
-            if e.to_string().contains("invalid device ID") {
-                // OpenRGB is changing its device list (a rescan, a late device): the
-                // connection is fine, the list just needs reading again
+            let text = e.to_string();
+            if text.contains("invalid device ID") || text.contains("invalid data") {
+                // OpenRGB changed its device list or a zone's size (a rescan, a late device,
+                // its saved sizes loading): the connection is fine, the list needs reading again
                 if !self.stale.swap(true, std::sync::atomic::Ordering::AcqRel) {
-                    info!("OpenRGB no longer has controller {index}; reading its devices again");
+                    info!(
+                        "OpenRGB's controller {index} changed ({text}); reading its devices again"
+                    );
                 }
             } else {
                 warn!("OpenRGB write failed, disconnecting: {e:#}");

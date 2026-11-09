@@ -1725,8 +1725,15 @@ fn watch_vial(engine: Arc<Engine>, openrgb: Arc<OpenRgb>) {
 fn missing_openrgb_devices(config: &engine::Config, listed: &[String]) -> Vec<String> {
     let known: std::collections::BTreeSet<&str> = config
         .devices
-        .keys()
-        .filter_map(|id| id.strip_prefix(lights::OPENRGB_PREFIX))
+        .iter()
+        // only devices given lighting: a rescan resets every device (the motherboard's
+        // headers too), not worth it for one that's simply off, like a controller
+        .filter(|(_, d)| d.effect.is_some() || d.color.is_some())
+        .filter_map(|(id, _)| id.strip_prefix(lights::OPENRGB_PREFIX))
+        .map(|rest| {
+            rest.split_once(lights::ZONE_MARK)
+                .map_or(rest, |(device, _)| device)
+        })
         .filter_map(|rest| rest.rsplit_once('@').map(|(name, _)| name))
         .collect();
     known
