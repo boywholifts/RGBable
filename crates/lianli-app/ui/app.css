@@ -535,3 +535,4 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .cpu-setup span { flex: 1; }
 .profile-save { display: flex; flex-direction: column; gap: 12px; }
 .profile-screen { opacity: .7; font-size: 10px; }
+.profile-bar [hidden] { display: none; }

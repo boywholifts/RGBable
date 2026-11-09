@@ -11,20 +11,20 @@ function renderLightProfiles(o) {
   renderLightProfiles.key = key;
   lightProfiles = o.lighting_profiles || [];
   lightProfile = lightProfiles.some((p) => p.name === o.lighting_profile) ? o.lighting_profile : null;
+  $("#light-profiles").hidden = !lightProfiles.length;
+  $("#light-profiles-none").hidden = lightProfiles.length > 0;
   $("#light-profiles").replaceChildren(
-    ...(lightProfiles.length
-      ? lightProfiles.map((p) =>
-          el(
-            "button",
-            {
-              class: p.name === lightProfile ? "on" : "",
-              title: p.screen ? `Lighting from ${p.name}, and ${p.screen} on the screen` : `Lighting from ${p.name}`,
-              onclick: () => lightProfileAction("apply_lighting_profile", { name: p.name }, `${p.name} on`),
-            },
-            [p.name, p.screen ? el("span", { class: "profile-screen", "aria-label": "with a screen video" }, " ▶") : null].filter(Boolean),
-          ),
-        )
-      : [el("span", { class: "muted small" }, "None yet: save the lighting you have to come back to it")]),
+    ...lightProfiles.map((p) =>
+      el(
+        "button",
+        {
+          class: p.name === lightProfile ? "on" : "",
+          title: p.screen ? `Lighting from ${p.name}, and ${p.screen} on the screen` : `Lighting from ${p.name}`,
+          onclick: () => lightProfileAction("apply_lighting_profile", { name: p.name }, `${p.name} on`),
+        },
+        [p.name, p.screen ? el("span", { class: "profile-screen", "aria-label": "with a screen video" }, " ▶") : null].filter(Boolean),
+      ),
+    ),
   );
   for (const id of ["#light-profile-update", "#light-profile-rename", "#light-profile-delete"]) $(id).disabled = !lightProfile;
 }
