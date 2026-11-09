@@ -1302,10 +1302,12 @@ fn keep_autostart(engine: &Engine) {
             Err(e) => tracing::warn!("setting up start at logon: {e:#}"),
         }
     }
+    let task = openrgb_host::logon_task();
+    // the switch shows what's really there, so a failed setup can be retried from Settings
     AUTOSTART
-        .get_or_init(|| std::sync::atomic::AtomicBool::new(true))
-        .store(true, std::sync::atomic::Ordering::Release);
-    let blocked = openrgb_host::logon_task().is_some_and(|details| {
+        .get_or_init(|| std::sync::atomic::AtomicBool::new(task.is_some()))
+        .store(task.is_some(), std::sync::atomic::Ordering::Release);
+    let blocked = task.is_some_and(|details| {
         details
             .lines()
             .any(|l| l.contains("Scheduled Task State:") && l.contains("Disabled"))

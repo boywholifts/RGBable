@@ -40,8 +40,8 @@ fn ps_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
-/// Runs a PowerShell script elevated (one UAC prompt) and waits for it.
-fn run_elevated_script(name: &str, script: &str) -> Result<()> {
+/// Writes a PowerShell script to a temp file that records any error in a side file.
+fn script_file(name: &str, script: &str) -> Result<(PathBuf, PathBuf)> {
     let path = std::env::temp_dir().join("rgbable").join(name);
     std::fs::create_dir_all(path.parent().expect("temp dir has a parent"))?;
     let error_file = path.with_extension("err.txt");
@@ -53,6 +53,34 @@ fn run_elevated_script(name: &str, script: &str) -> Result<()> {
             err = ps_quote(&error_file.to_string_lossy()),
         ),
     )?;
+    Ok((path, error_file))
+}
+
+/// Runs a PowerShell script as the current user and waits for it.
+fn run_script(name: &str, script: &str) -> Result<()> {
+    let (path, error_file) = script_file(name, script)?;
+    let output = run(
+        "powershell",
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            &path.to_string_lossy(),
+        ],
+    )?;
+    if !output.status.success() {
+        let reason = std::fs::read_to_string(&error_file)
+            .unwrap_or_else(|_| String::from_utf8_lossy(&output.stderr).into_owned());
+        bail!("{}", reason.trim());
+    }
+    Ok(())
+}
+
+/// Runs a PowerShell script elevated (one UAC prompt) and waits for it.
+fn run_elevated_script(name: &str, script: &str) -> Result<()> {
+    let (path, error_file) = script_file(name, script)?;
     let launcher = format!(
         "$p = Start-Process powershell -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',{}; exit $p.ExitCode",
         ps_quote(&format!("\"{}\"", path.display()))
@@ -206,38 +234,33 @@ const LOGON_TASK: &str = "RGBable at logon";
 /// how each start went. Runs as the user, without administrator rights, shortly after logon.
 pub fn create_logon_task(exe: &Path, may_prompt: bool) -> Result<()> {
     let script = format!(
-        "$ErrorActionPreference = 'Stop'\r\n\
-         $action = New-ScheduledTaskAction -Execute {exe} -Argument '--minimized'\r\n\
+        "$action = New-ScheduledTaskAction -Execute {exe} -Argument '--minimized' -WorkingDirectory {dir}\r\n\
          $trigger = New-ScheduledTaskTrigger -AtLogOn -User {user}\r\n\
          $trigger.Delay = 'PT10S'\r\n\
          $principal = New-ScheduledTaskPrincipal -UserId {user} -LogonType Interactive -RunLevel Limited\r\n\
          $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew\r\n\
          Register-ScheduledTask -TaskName {name} -TaskPath '\\' -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null\r\n",
         exe = ps_quote(&exe.to_string_lossy()),
+        dir = ps_quote(&exe.parent().unwrap_or(exe).to_string_lossy()),
         user = ps_quote(&current_user()),
         name = ps_quote(LOGON_TASK),
     );
-    let output = run(
-        "powershell",
-        &[
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &script,
-        ],
-    )?;
-    if output.status.success() {
+    let first = run_script("logon-task.ps1", &script);
+    if first.is_ok() && logon_task().is_some() {
         return Ok(());
     }
-    let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let detail = match first {
+        Err(e) => format!("{e:#}"),
+        Ok(()) => "Task Scheduler didn't keep it".to_string(),
+    };
     if !may_prompt {
         bail!("adding the logon task: {detail}");
     }
     // some setups only let administrators add logon tasks
     tracing::info!("adding the logon task needs administrator rights here: {detail}");
-    run_elevated_script("logon-task.ps1", &script)
+    run_elevated_script("logon-task.ps1", &script)?;
+    anyhow::ensure!(logon_task().is_some(), "Task Scheduler didn't keep the logon task");
+    Ok(())
 }
 
 pub fn remove_logon_task() -> Result<()> {
