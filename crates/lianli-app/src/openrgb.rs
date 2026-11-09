@@ -76,6 +76,7 @@ pub struct OpenRgb {
     status: RwLock<String>,
     devices: RwLock<Vec<OrgbDevice>>,
     listed_ids: RwLock<Vec<u32>>,
+    connected_at: RwLock<Option<Instant>>,
     animations: Mutex<Animations>,
     /// Keyboards left alone while Vial has them: nothing is written to them.
     keyboards_held: std::sync::atomic::AtomicBool,
@@ -136,6 +137,7 @@ impl OpenRgb {
             stream: Mutex::new(None),
             port: RwLock::new(None),
             status: RwLock::new("Not connected".into()),
+            connected_at: RwLock::new(None),
             devices: RwLock::new(Vec::new()),
             listed_ids: RwLock::new(Vec::new()),
             animations: Mutex::new(Animations::default()),
@@ -195,6 +197,7 @@ impl OpenRgb {
                         *self.port.write() = Some(port);
                         *self.devices.write() = devices;
                         *self.listed_ids.write() = ids;
+                        *self.connected_at.write() = Some(Instant::now());
                         *self.stream.lock() = Some((stream, version));
                         return Ok(());
                     }
@@ -364,8 +367,14 @@ impl OpenRgb {
         std::thread::Builder::new()
             .name("openrgb-effects".into())
             .spawn(move || {
+                // OpenRGB finishes finding slow devices (GPUs especially) after it starts its
+                // server and may then load its own profile onto them, taking them out of
+                // direct mode; for a while after connecting, direct mode is asked for again.
+                const SETTLING: Duration = Duration::from_secs(180);
+                const REASSERT_EVERY: Duration = Duration::from_secs(10);
                 let mut generation = u64::MAX;
                 let mut in_direct_mode = BTreeSet::new();
+                let mut last_reassert = Instant::now();
                 loop {
                     let tick = Instant::now();
                     let connected = openrgb.stream.lock().is_some();
@@ -376,8 +385,15 @@ impl OpenRgb {
                         std::thread::sleep(Duration::from_millis(500));
                         continue;
                     }
-                    if animations.generation != generation {
+                    let settling = openrgb
+                        .connected_at
+                        .read()
+                        .is_some_and(|at| at.elapsed() < SETTLING);
+                    if animations.generation != generation
+                        || (settling && last_reassert.elapsed() >= REASSERT_EVERY)
+                    {
                         generation = animations.generation;
+                        last_reassert = Instant::now();
                         in_direct_mode.clear();
                     }
                     let elapsed = crate::render::clock_ms();

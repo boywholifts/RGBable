@@ -305,6 +305,7 @@ pub struct Engine {
     status: RwLock<String>,
     wireless: RwLock<Option<Arc<WirelessController>>>,
     ring: RwLock<Option<Arc<Hs2OledLedController>>>,
+    started: Instant,
     wired: RwLock<Vec<Arc<WiredPart>>>,
     aios: RwLock<Vec<Arc<HydroShiftLcdController>>>,
     controllers: RwLock<Vec<Arc<Controller>>>,
@@ -324,6 +325,7 @@ impl Engine {
             status: RwLock::new("Starting".into()),
             wireless: RwLock::new(None),
             ring: RwLock::new(None),
+            started: Instant::now(),
             wired: RwLock::new(Vec::new()),
             aios: RwLock::new(Vec::new()),
             controllers: RwLock::new(Vec::new()),
@@ -404,7 +406,7 @@ impl Engine {
                     .unwrap_or_default();
                 let board_driven =
                     mode == FanMode::Motherboard && device.fan_type.supports_hw_mobo_sync();
-                let result = match fans::decide(&mode, board, coolant) {
+                let result = match fans::decide(&mode, board, coolant, self.started.elapsed()) {
                     _ if board_driven => wireless.set_hardware_pwm_sync(&device.mac),
                     Decision::Duty(duty) => {
                         let running = &device.current_pwm[..usize::from(device.fan_count.min(4))];
@@ -419,7 +421,8 @@ impl Engine {
                         }
                     }
                     Decision::KeepUnlessStopped => {
-                        needs_board = true;
+                        // a curve waiting for its first reading keeps the speed it has
+                        needs_board |= mode == FanMode::Motherboard;
                         let running = &device.current_pwm[..usize::from(device.fan_count.min(4))];
                         if running.contains(&0) {
                             wireless.set_fan_speeds_by_mac(&device.mac, &[255; 4])
@@ -741,7 +744,7 @@ impl Engine {
                     .as_ref()
                     .map(|p| p.fan_mode(&part.id))
                     .unwrap_or_default();
-                let duty = match fans::decide(&mode, None, coolant) {
+                let duty = match fans::decide(&mode, None, coolant, self.started.elapsed()) {
                     Decision::Duty(duty) => Some(duty),
                     Decision::KeepUnlessStopped => None,
                 };
@@ -753,7 +756,8 @@ impl Engine {
                 }
                 let result = match duty {
                     Some(duty) => fan.set_duty(duty),
-                    None => fan.follow_board().map(|_| ()),
+                    None if mode == FanMode::Motherboard => fan.follow_board().map(|_| ()),
+                    None => continue,
                 };
                 match result {
                     Ok(()) => {
@@ -1238,6 +1242,11 @@ impl Engine {
         const STRIKES: u8 = 2;
         const SHRINK_AFTER_SENDS: u8 = 2;
         const RETRY_FULL_AFTER: Duration = Duration::from_secs(300);
+        // Every device uploads at once on start, so the radio is briefly crowded: effects
+        // shrunk then get their full version back sooner.
+        const STARTUP: Duration = Duration::from_secs(120);
+        const RETRY_FULL_AFTER_STARTUP: Duration = Duration::from_secs(30);
+        let writer_started = Instant::now();
 
         enum State {
             Pending {
@@ -1399,9 +1408,16 @@ impl Engine {
                     };
                     // A shrunk effect (or a still frame) came from a bad spell on the radio,
                     // so the full effect is tried again after a while rather than kept.
+                    let retry_after = |at: &Instant| {
+                        if at.duration_since(writer_started) < STARTUP {
+                            RETRY_FULL_AFTER_STARTUP
+                        } else {
+                            RETRY_FULL_AFTER
+                        }
+                    };
                     if shrunk_at
                         .get(mac)
-                        .is_some_and(|at| at.elapsed() >= RETRY_FULL_AFTER)
+                        .is_some_and(|at| at.elapsed() >= retry_after(at))
                     {
                         shrunk_at.remove(mac);
                         info!("{}: trying its full effect again", ctl.id);
