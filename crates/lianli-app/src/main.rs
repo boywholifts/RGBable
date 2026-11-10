@@ -1043,8 +1043,11 @@ fn set_startup_profile(
 }
 
 #[tauri::command(async)]
-fn save_power_on_lighting(state: State<'_, AppState>, breathing: bool) -> lights::PowerOnSaved {
-    lights::save_power_on_lighting(&state.engine, &state.openrgb, breathing)
+fn save_power_on_lighting(
+    state: State<'_, AppState>,
+    style: openrgb::PowerOnStyle,
+) -> lights::PowerOnSaved {
+    lights::save_power_on_lighting(&state.engine, &state.openrgb, style)
 }
 
 #[tauri::command(async)]

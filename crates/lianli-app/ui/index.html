@@ -296,11 +296,12 @@
       </div>
       <div class="card">
         <div class="card-title">Power-on lighting</div>
-        <p class="muted small">For after a full power-off, when devices start from their own memory. Your Lian Li fans and Strimers keep their last effect by themselves; most other devices can't keep anything. This stores a plain or breathing version of the colors (matching your startup lighting, if you've picked any) in the motherboard, ARGB headers, RAM and GPU too, so they match from power-on until RGBable starts. Devices write it to their own memory, so save it when you've settled on a look rather than after every change.</p>
+        <p class="muted small">For after a full power-off, when devices start from their own memory. Your Lian Li fans and Strimers keep their last effect by themselves; most other devices can't keep anything. This stores a plain or breathing version of the colors (matching your startup lighting, if you've picked any) in the motherboard, ARGB headers, RAM and GPU too, so they match from power-on until RGBable starts; or Off, to keep them dark until then. Devices write it to their own memory, so save it when you've settled on a look rather than after every change.</p>
         <div class="row">
           <div class="seg" id="power-on-mode">
-            <button data-mode="static" class="on">Plain</button>
+            <button data-mode="plain" class="on">Plain</button>
             <button data-mode="breathing">Breathing</button>
+            <button data-mode="off">Off</button>
           </div>
           <button class="btn primary" id="power-on-save">Save to devices</button>
         </div>

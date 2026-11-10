@@ -60,6 +60,19 @@ pub struct OrgbDevice {
     pub keys: Option<KeyLayout>,
 }
 
+/// How power-on lighting looks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PowerOnStyle {
+    Plain,
+    Breathing,
+    Off,
+}
+
+fn is_off_mode(name: &str) -> bool {
+    matches!(name.to_lowercase().as_str(), "off" | "disable" | "disabled")
+}
+
 /// A hardware mode as OpenRGB describes it (RGBController::GetModeDescriptionData).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Mode {
@@ -117,6 +130,9 @@ impl Mode {
             return None;
         }
         let mut mode = self.clone();
+        if is_off_mode(&self.name) {
+            return Some((mode, false));
+        }
         if self.flags & MODE_FLAG_HAS_MODE_SPECIFIC_COLOR != 0 {
             let count = (self.colors.len() as u32)
                 .max(self.colors_min)
@@ -508,12 +524,28 @@ impl OpenRgb {
     /// it shows from power-on until RGBable takes over. False when the device can't
     /// remember a mode like that. Leaves the device in that mode: put it back in direct
     /// mode afterwards.
-    pub fn save_power_on(&self, index: u32, color: [u8; 3], breathing: bool) -> Result<bool> {
-        let names: &[&str] = if breathing {
-            &["breathing", "breathe", "pulse"]
-        } else {
-            &["static", "fixed", "solid"]
+    pub fn save_power_on(&self, index: u32, color: [u8; 3], style: PowerOnStyle) -> Result<bool> {
+        const PLAIN: &[&str] = &["static", "fixed", "solid"];
+        let tries: Vec<(&[&str], [u8; 3])> = match style {
+            PowerOnStyle::Plain => vec![(PLAIN, color)],
+            PowerOnStyle::Breathing => vec![(&["breathing", "breathe", "pulse"], color)],
+            // the device's own off mode when it has one, else plain black
+            PowerOnStyle::Off => vec![
+                (&["off", "disable", "disabled"], [0, 0, 0]),
+                (PLAIN, [0, 0, 0]),
+            ],
         };
+        for (names, color) in tries {
+            if self.save_power_on_as(index, color, names)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// Stores the first of the modes named `names` the device can remember; false when it
+    /// has none of them.
+    fn save_power_on_as(&self, index: u32, color: [u8; 3], names: &[&str]) -> Result<bool> {
         let Some(device) = self
             .devices
             .read()
@@ -1036,6 +1068,14 @@ mod tests {
         );
         mode.flags = MODE_FLAG_HAS_PER_LED_COLOR | MODE_FLAG_MANUAL_SAVE;
         assert!(mode.showing([1, 2, 3]).unwrap().1);
+        // a device's own off mode needs no color, only to be remembered
+        let off = Mode {
+            name: "Off".into(),
+            flags: MODE_FLAG_MANUAL_SAVE,
+            ..Default::default()
+        };
+        assert_eq!(off.showing([0, 0, 0]), Some((off.clone(), false)));
+        assert!(Mode { flags: 0, ..off }.showing([0, 0, 0]).is_none());
     }
 
     #[test]

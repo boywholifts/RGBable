@@ -11,7 +11,7 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 - Startup lighting: everything dark, or a profile, from shutdown until you sign in (and, if you like, while the PC is locked). RGBable puts it on while Windows shuts down or restarts, and your own lighting comes back once you've signed in.
 - Per-device color temperature, for a device that looks warmer or cooler than the rest.
 - Changing a single device's lighting goes dark first, like All Devices and groups, when "Go dark before changing lighting" is on.
-- Power-on lighting: store a plain or breathing version of the current colors in OpenRGB devices that can keep a mode in their own memory, so they match from power-on.
+- Power-on lighting: store a plain or breathing version of the current colors, or Off, in OpenRGB devices that can keep a mode in their own memory.
 - Fan screens can store a power-on picture.
 
 ### Changed

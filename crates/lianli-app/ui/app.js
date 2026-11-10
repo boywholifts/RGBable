@@ -380,7 +380,7 @@ $("#startup-profile").addEventListener("change", (e) =>
 $("#startup-locked").addEventListener("change", (e) =>
   saveStartupProfile(e.target.checked ? "Shown while locked too" : "Only shown while the PC is off"));
 
-let powerOnMode = "static";
+let powerOnMode = "plain";
 document.querySelectorAll("#power-on-mode button").forEach((b) =>
   b.addEventListener("click", () => {
     powerOnMode = b.dataset.mode;
@@ -392,7 +392,7 @@ $("#power-on-save").addEventListener("click", async () => {
   button.disabled = true;
   $("#power-on-result").textContent = "Saving…";
   try {
-    const r = await call("save_power_on_lighting", { breathing: powerOnMode === "breathing" });
+    const r = await call("save_power_on_lighting", { style: powerOnMode });
     if (!r) return;
     const parts = [];
     if (r.saved.length) parts.push(`Saved on ${r.saved.join(", ")}.`);
