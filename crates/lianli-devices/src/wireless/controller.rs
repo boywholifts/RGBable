@@ -1021,15 +1021,6 @@ impl WirelessController {
         self.runtime_claim.take();
     }
 
-    /// Whether the receiver has reported this device's state since `since`: until it has,
-    /// an unconfirmed upload may still have landed.
-    pub fn status_seen_since(&self, mac: &[u8; 6], since: Instant) -> bool {
-        self.device_health
-            .lock()
-            .get(mac)
-            .is_some_and(|health| health.raw_seen >= since)
-    }
-
     pub fn rgb_upload_applied(&self, mac: &[u8; 6], effect_index: [u8; 4]) -> bool {
         // A matching firmware index can survive a daemon restart without a local upload.
         if self.desired_effects.lock().get(mac) != Some(&effect_index) {
