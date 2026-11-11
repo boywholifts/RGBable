@@ -836,10 +836,12 @@ function renderDrawer() {
 
   const notes = [];
   if (c.hint) notes.push(c.hint);
-  if (drawer.lane) notes.push(`Only lane ${String(drawer.lane).padStart(2, "0")} changes; the other lanes keep theirs. Whole puts one effect back on the entire Strimer.`);
+  if (drawer.lane) notes.push(`Only lane ${String(drawer.lane).padStart(2, "0")} changes and the panel stays open, so you can pick the next lane. Whole puts one effect back on the entire Strimer.`);
   if (drawer.side !== "both") notes.push(`Only the ${drawer.side} ring of SL Flex fans changes; other devices get the whole effect.`);
   if (drawer.target && drawer.target.type === "all") notes.push("Devices with Sync off are left alone.");
   $("#d-note").textContent = notes.join(" ");
+  $("#d-apply").textContent = drawer.lane ? `Apply to lane ${String(drawer.lane).padStart(2, "0")}` : "Apply";
+  $("#d-cancel").textContent = drawer.lane ? "Done" : "Cancel";
   $("#d-effect-name").textContent = drawer.kind === "lianli" ? modeName(drawer.mode || "") : isCustom(drawer.custom) && (drawer.kind === "custom" || drawer.kind === "script") ? drawer.custom.name : kindInfo(drawer.kind).label;
   schedulePreview();
 }
@@ -859,6 +861,13 @@ $("#d-apply").addEventListener("click", async () => {
   const button = $("#d-apply");
   button.disabled = true;
   try {
+    if (t.type === "dev" && drawer.lane) {
+      const lane = String(drawer.lane).padStart(2, "0");
+      await call("set_effect", { id: t.id, effect }, `${label} applied to lane ${lane}`);
+      await refresh();
+      if (drawer.open) renderDrawer();
+      return;
+    }
     if (t.type === "dev") await call("set_effect", { id: t.id, effect }, `${label} applied to ${targetName()}`);
     else if (t.type === "group") await call("set_group_effect", { group: t.id, effect }, `${label} applied to ${targetName()}`);
     else await call("set_all", { effect, includeOpenrgb: $("#d-openrgb").checked }, `${label} applied to all devices`);
