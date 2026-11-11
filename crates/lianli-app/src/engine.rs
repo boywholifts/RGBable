@@ -40,6 +40,9 @@ pub struct Config {
     /// Every light off, whatever each device is set to.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub all_off: bool,
+    /// What All Devices was last set to, for putting a device or group back in step.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub all_effect: Option<Effect>,
     #[serde(default)]
     pub oled_ring: Option<[u8; 3]>,
     #[serde(default)]

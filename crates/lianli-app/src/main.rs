@@ -248,6 +248,16 @@ fn set_lane_effects(
 }
 
 #[tauri::command(async)]
+fn resync_device(state: State<'_, AppState>, id: String) -> Result<String, String> {
+    lights::resync_device(&state.engine, &state.openrgb, &id).map_err(chain)
+}
+
+#[tauri::command(async)]
+fn resync_group(state: State<'_, AppState>, group: String) -> Result<(), String> {
+    lights::resync_group(&state.engine, &state.openrgb, &group).map_err(chain)
+}
+
+#[tauri::command(async)]
 fn set_group_effect(
     state: State<'_, AppState>,
     group: String,
@@ -1748,6 +1758,8 @@ fn main() {
             set_group_color,
             set_effect,
             set_lane_effects,
+            resync_device,
+            resync_group,
             set_group_effect,
             finish_setup,
             pick_media,

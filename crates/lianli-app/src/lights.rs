@@ -40,6 +40,8 @@ pub struct LightView {
     pub delay_ms: u32,
     pub span: Option<crate::effects::Span>,
     pub turn: Option<crate::effects::Span>,
+    /// The group (or All Devices) whose lighting it can go back to, when it differs from it.
+    pub resync: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -58,6 +60,8 @@ pub struct GroupView {
     pub color: Option<[u8; 3]>,
     pub effect: Option<Effect>,
     pub members: Vec<String>,
+    /// Its lighting differs from All Devices', so it can go back to that.
+    pub resync: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -110,6 +114,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 delay_ms: 0,
                 span: None,
                 turn: None,
+                resync: None,
                 zones: Vec::new(),
                 sync: saved.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &d.id),
@@ -170,6 +175,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 delay_ms: 0,
                 span: None,
                 turn: None,
+                resync: None,
                 zones: device
                     .zones
                     .iter()
@@ -222,6 +228,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 delay_ms: 0,
                 span: None,
                 turn: None,
+                resync: None,
                 zones: vec![zone_view(index, zone)],
                 sync: own.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &header),
@@ -240,8 +247,66 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
         light.hidden = saved.is_some_and(|d| d.hidden);
         light.off = saved.is_some_and(|d| d.off);
         light.warmth = saved.and_then(|d| d.warmth);
+        light.resync = resync_target(&config, &light.id, light.sync)
+            .filter(|(_, effect)| !shows(&config, &light.id, effect))
+            .map(|(name, _)| name);
     }
     list
+}
+
+/// The lighting a device goes back to: its group's, or All Devices' when it isn't in a
+/// group with lighting of its own and is part of All Devices.
+fn resync_target(config: &Config, id: &str, in_sync: bool) -> Option<(String, Effect)> {
+    let group = config
+        .groups
+        .iter()
+        .find(|g| g.members.iter().any(|m| m == id));
+    if let Some(g) = group {
+        if let Some(effect) = g.effect.clone().or_else(|| g.color.map(static_effect)) {
+            return Some((g.name.clone(), effect));
+        }
+    }
+    let reversed = config.devices.get(id).is_some_and(|d| d.reversed);
+    in_sync
+        .then(|| config.all_effect.clone())
+        .flatten()
+        .map(|e| ("All Devices".to_string(), e.reversed_if(reversed)))
+}
+
+/// Whether a device's saved lighting is this effect throughout.
+fn shows(config: &Config, id: &str, effect: &Effect) -> bool {
+    let Some(d) = config.devices.get(id) else {
+        return false;
+    };
+    if !d.lanes.is_empty() || d.outer_effect.is_some() {
+        return false;
+    }
+    if effect.is_animated() {
+        let flipped = effect.clone().reversed_if(d.reversed);
+        d.effect.as_ref() == Some(effect) || d.effect.as_ref() == Some(&flipped)
+    } else {
+        d.effect.is_none() && d.color == Some(effect.frame(&[1], 0.0)[0])
+    }
+}
+
+/// Puts a device back on its group's lighting, or All Devices'.
+pub fn resync_device(engine: &Engine, openrgb: &OpenRgb, id: &str) -> Result<String> {
+    let config = engine.config();
+    let in_sync = config.devices.get(id).is_none_or(|d| d.in_sync());
+    let (name, effect) =
+        resync_target(&config, id, in_sync).context("there is no group or All Devices lighting to go back to")?;
+    go_dark(engine, openrgb, &[id.to_string()]);
+    set_effect(engine, openrgb, id, effect)?;
+    Ok(name)
+}
+
+/// Puts a group back on All Devices' lighting.
+pub fn resync_group(engine: &Engine, openrgb: &OpenRgb, group: &str) -> Result<()> {
+    let effect = engine
+        .config()
+        .all_effect
+        .context("All Devices has no lighting to go back to yet")?;
+    set_group_effect(engine, openrgb, group, effect)
 }
 
 /// Whether a light (an OpenRGB device or one of its headers) shows black.
@@ -285,11 +350,22 @@ pub fn set_all_off(engine: &Engine, openrgb: &OpenRgb, off: bool) {
 }
 
 pub fn groups(engine: &Engine) -> Vec<GroupView> {
-    engine
-        .config()
+    let config = engine.config();
+    config
         .groups
+        .clone()
         .into_iter()
         .map(|g| GroupView {
+            resync: config.all_effect.as_ref().is_some_and(|all| {
+                let own = g.effect.clone().or_else(|| g.color.map(static_effect));
+                own.as_ref().is_none_or(|own| {
+                    if all.is_animated() {
+                        own != all
+                    } else {
+                        own.is_animated() || own.frame(&[1], 0.0) != all.frame(&[1], 0.0)
+                    }
+                })
+            }),
             id: g.id,
             name: g.name,
             color: g.color,
@@ -779,6 +855,7 @@ pub fn set_all(
     go_dark(engine, openrgb, &targets);
     engine.set_all_effect(&effect);
     engine.update_config(|c| {
+        c.all_effect = Some(effect.clone());
         for g in &mut c.groups {
             if effect.is_animated() {
                 g.effect = Some(effect.clone());
@@ -1134,6 +1211,41 @@ pub fn apply_setup(config: &mut Config, entries: &[SetupEntry], defaults: &[(Str
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_device_goes_back_to_its_group_then_to_all_devices() {
+        let wave = Effect {
+            kind: EffectKind::Wave,
+            colors: vec![[255, 0, 0]],
+            ..Effect::default()
+        };
+        let mut config = Config::default();
+        config.all_effect = Some(wave.clone());
+        config.devices.insert(
+            "a".into(),
+            crate::engine::DeviceConfig {
+                color: Some([0, 0, 255]),
+                ..Default::default()
+            },
+        );
+        let (name, effect) = resync_target(&config, "a", true).unwrap();
+        assert_eq!(name, "All Devices");
+        assert!(!shows(&config, "a", &effect));
+        config.devices.get_mut("a").unwrap().effect = Some(wave.clone());
+        assert!(shows(&config, "a", &effect));
+
+        config.groups.push(GroupConfig {
+            id: "g".into(),
+            name: "Front fans".into(),
+            members: vec!["a".into()],
+            color: Some([0, 255, 0]),
+            effect: None,
+        });
+        let (name, effect) = resync_target(&config, "a", true).unwrap();
+        assert_eq!(name, "Front fans");
+        assert!(!shows(&config, "a", &effect));
+        assert!(resync_target(&config, "b", false).is_none());
+    }
     use super::*;
 
     fn entry(id: &str, name: &str, group: Option<&str>, sync: bool) -> SetupEntry {

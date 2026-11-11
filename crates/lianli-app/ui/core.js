@@ -71,6 +71,7 @@ function closeOnBackdrop(backdrop, close) {
 const ICONS = {
   reverse: '<path d="M4 8h14l-3-3M20 16H6l3 3"/>',
   power: '<path d="M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0"/>',
+  resync: '<path d="M3 12a9 9 0 0 1 15.5-6.2L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.5 6.2L3 16"/><path d="M3 21v-5h5"/>',
   clock: '<circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/>',
   across: '<path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/>',
   chain: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',

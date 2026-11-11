@@ -208,9 +208,29 @@ function setAllOff(off) {
 for (const b of document.querySelectorAll(".all-off")) b.addEventListener("click", () => setAllOff(!allOff));
 for (const b of document.querySelectorAll(".all-on")) b.addEventListener("click", () => setAllOff(false));
 
+function resyncDevice(l) {
+  return call("resync_device", { id: l.id }).then((to) => toast(`${l.name} is back on ${to}'s lighting`)).finally(rerender);
+}
+
+function resyncGroup(g) {
+  return call("resync_group", { group: g.id }, `${g.name} is back on All Devices' lighting`).finally(rerender);
+}
+
+/// A button that puts a device or group back on the lighting it was in step with.
+function resyncButton(title, onClick) {
+  const b = el("button", { class: "icon-btn resync-btn", title }, icon("resync"));
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    b.disabled = true;
+    onClick().catch(() => {}).finally(() => (b.disabled = false));
+  });
+  return b;
+}
+
 function deviceMenu(l, anchor) {
   const groups = last ? last.groups : [];
   const items = [
+    ...(l.resync ? [{ label: `Resync to ${l.resync}`, onClick: () => resyncDevice(l) }] : []),
     { label: l.off ? "Turn on" : "Turn off", onClick: () => setOff(l, !l.off) },
     { label: "Color temperature…", onClick: () => warmthDialog(l) },
     { label: "Change effect…", onClick: () => openDrawer({ type: "dev", id: l.id }) },
@@ -277,6 +297,7 @@ function deviceRow(l) {
       el("div", { class: "row-name with-badges" }, [el("span", { class: "name-text", title: l.name }, l.name), ...rowBadges(l)]),
       el("div", { class: "row-sub" }, `${l.kind === "header" ? "ARGB header" : l.kind} · ${effectSummary(l)}`),
     ]),
+    ...(l.resync ? [resyncButton(`Resync: back to ${l.resync}'s lighting`, () => resyncDevice(l))] : []),
     power,
     more,
   ]);
@@ -307,6 +328,7 @@ function dropZone(section, group) {
 
 function groupMenu(g, anchor) {
   openMenu(anchor, [
+    ...(g.resync ? [{ label: "Resync to All Devices", onClick: () => resyncGroup(g) }] : []),
     { label: "Change effect…", onClick: () => openDrawer({ type: "group", id: g.id }) },
     { label: "Rename…", onClick: () => promptName(`Rename ${g.name}`, g.name, (name) => call("rename_group", { group: g.id, name }).then(rerender)) },
     { label: "Identify all (blink)", onClick: () => g.members.forEach((id) => call("identify", { id }).catch(() => {})) },
@@ -349,6 +371,7 @@ function groupSection(key, title, members, g) {
       e.stopPropagation();
       groupMenu(g, more);
     });
+    if (g.resync) head.append(resyncButton("Resync: back to All Devices' lighting", () => resyncGroup(g)));
     head.append(change, more);
   }
   head.addEventListener("click", () => toggle.click());
