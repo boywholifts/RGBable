@@ -15,6 +15,7 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 - Fan screens can store a power-on picture.
 - Strimer lanes: each lane of a Strimer can run its own effect, like L-Connect's Separate mode. The effect panel shows the Strimer's lanes: click one or several, then apply once to all of them. The panel stays open for the next lanes; Whole puts one effect back on the entire Strimer.
 - Resync: a device that was given its own lighting gets a resync button (and a menu item) that puts it back on its group's lighting, or All Devices' when it isn't in a group. A group can go back to All Devices' lighting the same way.
+- At shutdown the startup profile only flashes on long enough to be stored, then the lights go dark until the PC is off.
 - Wireless fans and Strimers now store their lighting, as L-Connect does, so after a full shutdown they come back with RGBable's lighting (or the startup lighting) instead of an old L-Connect effect.
 
 ### Changed

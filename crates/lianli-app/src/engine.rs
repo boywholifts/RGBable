@@ -383,6 +383,7 @@ pub struct Engine {
     config: Mutex<Config>,
     status: RwLock<String>,
     wireless: RwLock<Option<Arc<WirelessController>>>,
+    hold_stored: AtomicBool,
     ring: RwLock<Option<Arc<Hs2OledLedController>>>,
     started: Instant,
     wired: RwLock<Vec<Arc<WiredPart>>>,
@@ -404,6 +405,7 @@ impl Engine {
             config: Mutex::new(config),
             status: RwLock::new("Starting".into()),
             wireless: RwLock::new(None),
+            hold_stored: AtomicBool::new(false),
             ring: RwLock::new(None),
             started: Instant::now(),
             wired: RwLock::new(Vec::new()),
@@ -1629,6 +1631,7 @@ impl Engine {
             }
 
             if unsaved.is_some_and(|at| at.elapsed() >= SAVE_AFTER)
+                && !self.hold_stored.load(Ordering::Acquire)
                 && shrink.is_empty()
                 && controllers.iter().all(|c| {
                     !matches!(c.target, Target::Wireless { .. })
@@ -1646,6 +1649,12 @@ impl Engine {
                 thread::sleep(Duration::from_millis(30));
             }
         }
+    }
+
+    /// While held, lighting changes aren't stored, so what was stored for power-on stays.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn hold_stored_lighting(&self, hold: bool) {
+        self.hold_stored.store(hold, Ordering::Release);
     }
 
     /// Stores the wireless devices' current lighting so they show it after a full power-off.

@@ -63,9 +63,24 @@ pub fn enter(engine: &Engine, openrgb: &OpenRgb, why: &str) {
     engine.store_wireless_lighting();
 }
 
+/// At shutdown: the startup profile goes on just long enough for the wireless devices to
+/// store it for power-on, then everything goes dark until the PC is off.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn shut_down(engine: &Engine, openrgb: &OpenRgb) {
+    enter(engine, openrgb, "Windows is shutting down");
+    if engine.config().startup_dark {
+        return;
+    }
+    engine.hold_stored_lighting(true);
+    engine.update_config(|c| c.all_off = true);
+    relight(engine, openrgb);
+    engine.wait_for_lighting(CONFIRM_WAIT);
+}
+
 /// Puts back the lighting from before the startup profile went on.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn leave(engine: &Engine, openrgb: &OpenRgb) {
+    engine.hold_stored_lighting(false);
     if restore(engine) {
         info!("back from the startup profile");
         relight(engine, openrgb);
@@ -179,7 +194,7 @@ mod windows_watch {
                 if super::wanted(&engine.config()) {
                     let reason = wide("Setting up your startup lighting");
                     ShutdownBlockReasonCreate(hwnd, reason.as_ptr());
-                    super::enter(engine, openrgb, "Windows is shutting down");
+                    super::shut_down(engine, openrgb);
                     ShutdownBlockReasonDestroy(hwnd);
                 }
                 1
