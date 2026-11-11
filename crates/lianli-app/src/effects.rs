@@ -92,6 +92,9 @@ pub struct Effect {
     pub reverse: bool,
     #[serde(default)]
     pub side: Side,
+    /// The Strimer lane (1 to 6) the effect is for; none means the whole device.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lane: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode: Option<RgbMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -158,6 +161,7 @@ impl Default for Effect {
             brightness: default_brightness(),
             reverse: false,
             side: Side::Both,
+            lane: None,
             mode: None,
             direction: None,
             layers: Vec::new(),

@@ -150,6 +150,7 @@ function delayDialog(l) {
 // ---------------------------------------------------------------- rows
 
 function effectSummary(l) {
+  if (l.lane_effects && l.lane_effects.length) return "Separate lanes: " + l.lane_effects.map((e) => (e ? kindLabelOf(e) : "Color")).join(" · ");
   if (l.outer_effect) return `Inner: ${l.effect ? kindLabelOf(l.effect) : "Color"} · Outer: ${kindLabelOf(l.outer_effect)}`;
   if (l.effect) return kindLabelOf(l.effect) + (l.effect.side && l.effect.side !== "both" ? ` (${l.effect.side} ring)` : "");
   return "Color";
@@ -456,7 +457,7 @@ $("#group-new").addEventListener("click", () =>
 
 // ---------------------------------------------------------------- effect panel
 
-const drawer = { open: false, target: null, category: "basic", kind: "static", mode: null, custom: null, side: "both", colors: ["#8000ff"], speed: 3, brightness: 100, reverse: false, direction: null };
+const drawer = { open: false, target: null, category: "basic", kind: "static", mode: null, custom: null, side: "both", lane: 0, colors: ["#8000ff"], speed: 3, brightness: 100, reverse: false, direction: null };
 const drawerPreview = previewPlayer($("#d-preview"));
 
 function targetLights() {
@@ -505,6 +506,7 @@ function loadIntoDrawer(effect, color) {
 function openDrawer(target) {
   closeMenu();
   drawer.target = target;
+  drawer.lane = 0;
   drawer.open = true;
   drawer.activeColor = 0;
   const lights = targetLights();
@@ -512,7 +514,9 @@ function openDrawer(target) {
     const g = last.groups.find((x) => x.id === target.id);
     loadIntoDrawer(g && g.effect, g && g.color);
   } else if (target.type === "dev" && lights[0]) {
-    loadIntoDrawer(lights[0].effect || lights[0].outer_effect, lights[0].color);
+    const l = lights[0];
+    drawer.lane = l.lane_effects && l.lane_effects.length ? 1 : 0;
+    loadIntoDrawer(drawer.lane ? l.lane_effects[0] : l.effect || l.outer_effect, l.color);
   } else {
     const shared = commonEffect(last ? last.lights : []);
     loadIntoDrawer(shared && (shared.effect || shared.outer_effect), shared && shared.color);
@@ -542,6 +546,7 @@ function drawerControls() {
   if (drawer.kind === "script") return { colors: 0, speed: true, directions: [], reverse: false, hint: "" };
   if (drawer.kind === "lianli") {
     const m = lianliInfo(drawer.mode) || { max_colors: 4, directions: [], speed: true };
+    if (drawer.lane) return { colors: m.lane_colors, speed: m.speed, directions: m.lane_directions || [], reverse: false, hint: "" };
     return { colors: m.per_fan_colors ? 4 : m.max_colors, speed: m.speed, directions: m.directions, reverse: false, hint: m.per_fan_colors ? "Each fan takes the next color." : "" };
   }
   const info = kindInfo(drawer.kind);
@@ -550,7 +555,7 @@ function drawerControls() {
 
 function drawerEffect() {
   if (isCustom(drawer.custom) && (drawer.kind === "custom" || drawer.kind === "script")) {
-    return { ...drawer.custom, speed: drawer.kind === "script" ? drawer.speed : drawer.custom.speed, brightness: drawer.brightness, side: drawer.side };
+    return { ...drawer.custom, speed: drawer.kind === "script" ? drawer.speed : drawer.custom.speed, brightness: drawer.brightness, side: drawer.side, lane: drawer.lane || null };
   }
   const c = drawerControls();
   const effect = {
@@ -560,6 +565,7 @@ function drawerEffect() {
     brightness: drawer.brightness,
     reverse: drawer.reverse,
     side: drawer.side,
+    lane: drawer.lane || null,
   };
   if (drawer.kind === "lianli") {
     effect.mode = drawer.mode;
@@ -589,7 +595,7 @@ function renderTiles() {
         drawer.mode = m.mode;
         drawer.custom = null;
         renderDrawer();
-      }, drawer.side !== "both" && !m.side ? "Only runs on both rings together" : null)
+      }, lianliUnavailable(m))
     );
     if (!items.length) items = [el("div", { class: "muted small" }, "Lian Li effects aren't available.")];
   } else if (category === "mine") {
@@ -620,6 +626,22 @@ function renderTiles() {
     );
   }
   tiles.replaceChildren(...items);
+}
+
+/// Why an L-Connect effect can't be picked for what the panel is set to, if it can't.
+function lianliUnavailable(m) {
+  if (drawer.lane) return m.lane ? null : "Runs on the whole Strimer only";
+  if (!m.whole && !m.side) return "Runs on a single Strimer lane only";
+  if (drawer.side !== "both" && !m.side) return "Only runs on both rings together";
+  return null;
+}
+
+/// How many Strimer lanes the panel's device has, when it is a single Strimer.
+function laneCount() {
+  const t = drawer.target;
+  if (!t || t.type !== "dev") return 0;
+  const l = targetLights()[0];
+  return l ? l.lanes || 0 : 0;
 }
 
 function hasSides() {
@@ -752,6 +774,28 @@ function renderDrawer() {
     })
   );
 
+  const lanes = $("#d-lanes");
+  const laneTotal = laneCount();
+  if (!laneTotal) drawer.lane = 0;
+  lanes.hidden = !laneTotal;
+  lanes.replaceChildren(
+    el("span", { class: "fx-label" }, "Lanes"),
+    segmented([["0", "Whole"], ...Array.from({ length: laneTotal }, (_, i) => [String(i + 1), String(i + 1).padStart(2, "0")])], String(drawer.lane), (v) => {
+      drawer.lane = Number(v);
+      const l = targetLights()[0];
+      if (l) {
+        const separate = l.lane_effects && l.lane_effects.length;
+        loadIntoDrawer(drawer.lane && separate ? l.lane_effects[drawer.lane - 1] : l.effect, l.color);
+      }
+      if (drawer.kind === "lianli" && lianliUnavailable(lianliInfo(drawer.mode) || {})) {
+        drawer.kind = "static";
+        drawer.mode = null;
+        drawer.category = "basic";
+      }
+      renderDrawer();
+    })
+  );
+
   const c = drawerControls();
   drawer.colors = drawer.colors.slice(0, Math.max(1, c.colors));
   const settings = $("#d-settings");
@@ -792,6 +836,7 @@ function renderDrawer() {
 
   const notes = [];
   if (c.hint) notes.push(c.hint);
+  if (drawer.lane) notes.push(`Only lane ${String(drawer.lane).padStart(2, "0")} changes; the other lanes keep theirs. Whole puts one effect back on the entire Strimer.`);
   if (drawer.side !== "both") notes.push(`Only the ${drawer.side} ring of SL Flex fans changes; other devices get the whole effect.`);
   if (drawer.target && drawer.target.type === "all") notes.push("Devices with Sync off are left alone.");
   $("#d-note").textContent = notes.join(" ");

@@ -24,6 +24,9 @@ const SL_V4_SLOTS_PER_FAN: usize = 26;
 pub struct Lighting {
     pub inner: Option<Effect>,
     pub outer: Option<Effect>,
+    /// A Strimer's lanes with their own effects; empty when it runs one effect throughout.
+    /// A lane without one shows the plain color.
+    pub lanes: Vec<Option<Effect>>,
 }
 
 impl Lighting {
@@ -31,15 +34,36 @@ impl Lighting {
         Self {
             inner: Some(effect.clone()),
             outer: Some(effect),
+            lanes: Vec::new(),
         }
     }
 
     pub fn is_static(&self) -> bool {
-        self.inner.is_none() && self.outer.is_none()
+        self.inner.is_none() && self.outer.is_none() && self.lanes.iter().all(Option::is_none)
     }
 
-    /// Puts an effect on the side it names; a whole-device effect replaces both sides.
-    pub fn apply(&mut self, effect: Effect, has_sides: bool) {
+    /// Puts an effect on the side or lane it names; a whole-device effect replaces everything.
+    /// The first lane given its own effect leaves the others on the device's effect.
+    pub fn apply(&mut self, effect: Effect, has_sides: bool, lanes: usize) {
+        if let Some(lane) = effect.lane.map(usize::from).filter(|l| (1..=lanes).contains(l)) {
+            if self.lanes.len() != lanes {
+                let current = self.primary().cloned().map(|e| Effect {
+                    side: Side::Both,
+                    ..e
+                });
+                self.lanes = (1..=lanes)
+                    .map(|n| {
+                        current.clone().map(|e| Effect {
+                            lane: Some(n as u8),
+                            ..e
+                        })
+                    })
+                    .collect();
+            }
+            self.lanes[lane - 1] = Some(effect);
+            return;
+        }
+        let effect = Effect { lane: None, ..effect };
         match (has_sides, effect.side) {
             (true, Side::Inner) => self.inner = Some(effect),
             (true, Side::Outer) => self.outer = Some(effect),
@@ -47,10 +71,15 @@ impl Lighting {
         }
     }
 
-    pub fn from_saved(effect: Option<Effect>, outer: Option<Effect>) -> Self {
+    pub fn from_saved(
+        effect: Option<Effect>,
+        outer: Option<Effect>,
+        lanes: Vec<Option<Effect>>,
+    ) -> Self {
         Self {
             outer: outer.or_else(|| effect.clone().filter(|e| e.side == Side::Both)),
             inner: effect,
+            lanes,
         }
     }
 
@@ -71,6 +100,18 @@ impl Lighting {
 
 pub fn has_sides(profile: Option<RgbRenderProfile>) -> bool {
     profile.is_some_and(|p| p.family == RgbRenderFamily::SlV4)
+}
+
+/// How many lanes a Strimer has that can each run their own effect (0 for other devices).
+pub fn lane_count(profile: Option<RgbRenderProfile>) -> usize {
+    match profile {
+        Some(p) if p.family == RgbRenderFamily::Strimer => match p.led_count {
+            88 | 116 => 4,
+            132 | 174 => 6,
+            _ => 0,
+        },
+        _ => 0,
+    }
 }
 
 pub struct Frames {
@@ -140,7 +181,19 @@ fn lianli_frames(
             e.kind == EffectKind::Lianli && e.travel_span().is_none() && e.turn.is_none()
         })
     };
-    if !native(&lighting.inner) && !native(&lighting.outer) {
+    let lanes = lane_count(Some(profile));
+    let separate = lanes > 0 && lighting.lanes.len() == lanes;
+    if separate {
+        if !lighting.lanes.iter().any(native)
+            || lighting
+                .lanes
+                .iter()
+                .flatten()
+                .any(|e| e.kind != EffectKind::Lianli)
+        {
+            return None;
+        }
+    } else if !native(&lighting.inner) && !native(&lighting.outer) {
         return None;
     }
     let to_region = |effect: Option<&Effect>, scope: RgbScope| -> Option<RgbRegionConfig> {
@@ -197,10 +250,24 @@ fn lianli_frames(
             flip: false,
         })
     };
-    let whole = (!has_sides(Some(profile)) || lighting.inner == lighting.outer)
+    const LANES: [RgbScope; 6] = [
+        RgbScope::Segment1,
+        RgbScope::Segment2,
+        RgbScope::Segment3,
+        RgbScope::Segment4,
+        RgbScope::Segment5,
+        RgbScope::Segment6,
+    ];
+    let whole = (!separate && (!has_sides(Some(profile)) || lighting.inner == lighting.outer))
         .then(|| to_region(lighting.primary(), RgbScope::All))
         .flatten();
     let regions = match whole {
+        None if separate => lighting
+            .lanes
+            .iter()
+            .zip(LANES)
+            .map(|(e, scope)| to_region(e.as_ref(), scope))
+            .collect::<Option<Vec<_>>>()?,
         Some(region) => vec![region],
         None if has_sides(Some(profile)) => vec![
             to_region(lighting.inner.as_ref(), RgbScope::Inner)?,
@@ -246,19 +313,38 @@ fn generic_frames(
     profile: Option<RgbRenderProfile>,
     interval_ms: u32,
 ) -> Frames {
-    let inner = lighting.inner.as_ref().map(Effect::generic);
-    let outer = lighting.outer.as_ref().map(Effect::generic);
-    let period = inner
-        .iter()
-        .chain(outer.iter())
+    let lane_total = lane_count(profile);
+    let separate = lane_total > 0 && lighting.lanes.len() == lane_total;
+    let lane_len = profile.map_or(1, |p| usize::from(p.led_count) / lane_total.max(1));
+    let (inner, outer) = if separate {
+        (None, None)
+    } else {
+        (
+            lighting.inner.as_ref().map(Effect::generic),
+            lighting.outer.as_ref().map(Effect::generic),
+        )
+    };
+    let lanes: Vec<Option<Effect>> = if separate {
+        lighting.lanes.iter().map(|e| e.as_ref().map(Effect::generic)).collect()
+    } else {
+        Vec::new()
+    };
+    let lane_of = |slot: usize| (slot / lane_len.max(1)).min(lanes.len().saturating_sub(1));
+    let all = || inner.iter().chain(outer.iter()).chain(lanes.iter().flatten());
+    let period = all()
         .filter(|e| e.is_animated())
         .map(Effect::period_ms)
         .max();
     let Some(period) = period else {
         let still = |e: &Option<Effect>| e.as_ref().map(|e| e.frame(&[1], 0.0)[0]);
-        let frame = paint(base, zones, profile, |side, _, _| match side {
-            Side::Outer => still(&outer),
-            _ => still(&inner),
+        let frame = paint(base, zones, profile, |side, _, slot| {
+            if separate {
+                return still(&lanes[lane_of(slot)]);
+            }
+            match side {
+                Side::Outer => still(&outer),
+                _ => still(&inner),
+            }
         });
         return Frames {
             frames: vec![frame],
@@ -266,11 +352,7 @@ fn generic_frames(
         };
     };
     let layout = logical_layout(zones, profile);
-    let animated: Vec<&Effect> = inner
-        .iter()
-        .chain(outer.iter())
-        .filter(|e| e.is_animated())
-        .collect();
+    let animated: Vec<&Effect> = all().filter(|e| e.is_animated()).collect();
     let steps = animated[0].steps(&layout.zones);
     let stepped = steps.filter(|_| {
         animated
@@ -293,9 +375,15 @@ fn generic_frames(
                     .map(|e| e.frame(&layout.zones, (t * repeats(e, period)).fract()))
             };
             let (inner_frame, outer_frame) = (render(&inner), render(&outer));
-            paint(base, zones, profile, |side, logical, _| match side {
-                Side::Outer => outer_frame.as_ref().map(|f| f[logical]),
-                _ => inner_frame.as_ref().map(|f| f[logical]),
+            let lane_frames: Vec<_> = lanes.iter().map(render).collect();
+            paint(base, zones, profile, |side, logical, slot| {
+                if separate {
+                    return lane_frames[lane_of(slot)].as_ref().map(|f| f[logical]);
+                }
+                match side {
+                    Side::Outer => outer_frame.as_ref().map(|f| f[logical]),
+                    _ => inner_frame.as_ref().map(|f| f[logical]),
+                }
             })
         })
         .collect();
@@ -523,6 +611,7 @@ fn native_drizzle(lighting: &Lighting, profile: RgbRenderProfile) -> Lighting {
     Lighting {
         inner: swap(&lighting.inner),
         outer: swap(&lighting.outer),
+        lanes: lighting.lanes.iter().map(swap).collect(),
     }
 }
 
@@ -593,7 +682,7 @@ pub fn preview(effect: Effect) -> Result<PreviewFrames, String> {
         right_attach: false,
     };
     let mut lighting = Lighting::default();
-    lighting.apply(effect, true);
+    lighting.apply(effect, true, 0);
     let base = vec![[0, 0, 0]; 52];
     let frames = lianli_frames(&lighting, &base, profile)
         .unwrap_or_else(|| generic_frames(&lighting, &base, &[52], Some(profile), 40));
@@ -621,6 +710,10 @@ pub struct LianliEffect {
     pub per_fan_colors: bool,
     pub directions: Vec<lianli_shared::rgb::RgbDirection>,
     pub speed: bool,
+    /// Runs on a single Strimer lane, taking `lane_colors` colors there.
+    pub lane: bool,
+    pub lane_colors: u8,
+    pub lane_directions: Vec<lianli_shared::rgb::RgbDirection>,
 }
 
 pub fn lianli_effects() -> Vec<LianliEffect> {
@@ -659,7 +752,44 @@ pub fn lianli_effects() -> Vec<LianliEffect> {
             per_fan_colors: parameters.per_fan_colors,
             directions: parameters.directions.clone(),
             speed: parameters.supports_speed,
+            lane: false,
+            lane_colors: 0,
+            lane_directions: Vec::new(),
         });
+    }
+    let strimer = RgbRenderProfile {
+        family: RgbRenderFamily::Strimer,
+        fan_count: 0,
+        led_count: 116,
+        right_attach: false,
+    };
+    for parameters in for_scope(strimer, RgbScope::Segment1) {
+        if parameters.mode == lianli_shared::rgb::RgbMode::Off {
+            continue;
+        }
+        let index = match list.iter().position(|e| e.mode == parameters.mode) {
+            Some(index) => index,
+            None => {
+                list.push(LianliEffect {
+                    mode: parameters.mode,
+                    whole: false,
+                    side: false,
+                    min_colors: parameters.min_colors,
+                    max_colors: parameters.max_colors,
+                    per_fan_colors: false,
+                    directions: Vec::new(),
+                    speed: parameters.supports_speed,
+                    lane: false,
+                    lane_colors: 0,
+                    lane_directions: Vec::new(),
+                });
+                list.len() - 1
+            }
+        };
+        let entry = &mut list[index];
+        entry.lane = true;
+        entry.lane_colors = parameters.max_colors;
+        entry.lane_directions = parameters.directions.clone();
     }
     list
 }
@@ -741,6 +871,7 @@ mod tests {
                 ..solid([255, 0, 0])
             },
             true,
+            0,
         );
         lighting.apply(
             Effect {
@@ -748,6 +879,7 @@ mod tests {
                 ..solid([0, 0, 255])
             },
             true,
+            0,
         );
         let base = vec![[9, 9, 9]; 156];
         let frames = generic_frames(&lighting, &base, &[52, 52, 52], Some(sl_v4(3)), 40);
@@ -770,6 +902,7 @@ mod tests {
                 ..solid([0, 255, 0])
             },
             true,
+            0,
         );
         let base = vec![[7, 7, 7]; 52];
         let frame = &generic_frames(&lighting, &base, &[52], Some(sl_v4(1)), 40).frames[0];
@@ -780,19 +913,68 @@ mod tests {
     #[test]
     fn saved_sides_round_trip() {
         let mut lighting = Lighting::default();
-        lighting.apply(solid([1, 1, 1]), true);
+        lighting.apply(solid([1, 1, 1]), true, 0);
         let (effect, outer) = lighting.to_saved();
         assert!(outer.is_none());
-        assert_eq!(Lighting::from_saved(effect, outer), lighting);
+        assert_eq!(Lighting::from_saved(effect, outer, Vec::new()), lighting);
         lighting.apply(
             Effect {
                 side: Side::Outer,
                 ..solid([2, 2, 2])
             },
             true,
+            0,
         );
         let (effect, outer) = lighting.to_saved();
-        assert_eq!(Lighting::from_saved(effect, outer), lighting);
+        assert_eq!(Lighting::from_saved(effect, outer, Vec::new()), lighting);
+    }
+
+    #[test]
+    fn strimer_lanes_run_their_own_effects() {
+        let profile = RgbRenderProfile {
+            family: RgbRenderFamily::Strimer,
+            fan_count: 0,
+            led_count: 116,
+            right_attach: false,
+        };
+        let mut lighting = Lighting::whole(solid([0, 0, 255]));
+        lighting.apply(
+            Effect {
+                lane: Some(2),
+                ..solid([255, 0, 0])
+            },
+            false,
+            4,
+        );
+        assert_eq!(lighting.lanes.len(), 4);
+        let base = vec![[0; 3]; 116];
+        let frame = &generic_frames(&lighting, &base, &[116], Some(profile), 40).frames[0];
+        assert_eq!(frame[3], [0, 0, 255]);
+        assert_eq!(frame[29 + 3], [255, 0, 0]);
+        assert_eq!(frame[87 + 3], [0, 0, 255]);
+
+        let native = |mode, color| Effect {
+            kind: EffectKind::Lianli,
+            mode: Some(mode),
+            colors: vec![color],
+            ..Effect::default()
+        };
+        let lianli = Lighting {
+            lanes: vec![
+                Some(native(lianli_shared::rgb::RgbMode::Static, [0, 255, 0])),
+                Some(native(lianli_shared::rgb::RgbMode::Rainbow, [0, 0, 0])),
+                None,
+                Some(native(lianli_shared::rgb::RgbMode::Breathing, [255, 0, 0])),
+            ],
+            ..Lighting::default()
+        };
+        let frames = lianli_frames(&lianli, &base, profile).expect("L-Connect lanes");
+        assert!(frames.frames.len() > 1);
+        assert_eq!(frames.frames[0][3][0], 0);
+        assert!(frames.frames[0][3][1] > 0);
+
+        lighting.apply(solid([9, 9, 9]), false, 4);
+        assert!(lighting.lanes.is_empty());
     }
 
     #[test]
@@ -911,7 +1093,7 @@ mod tests {
 
     #[test]
     fn every_lianli_effect_renders_and_fits_on_sl_flex() {
-        for info in lianli_effects() {
+        for info in lianli_effects().into_iter().filter(|i| i.whole || i.side) {
             let effect = Effect {
                 kind: EffectKind::Lianli,
                 mode: Some(info.mode),
@@ -920,7 +1102,7 @@ mod tests {
                 ..Effect::default()
             };
             let mut lighting = Lighting::default();
-            lighting.apply(effect.clone(), true);
+            lighting.apply(effect.clone(), true, 0);
             if !info.whole {
                 lighting.apply(
                     Effect {
@@ -928,6 +1110,7 @@ mod tests {
                         ..effect
                     },
                     true,
+                    0,
                 );
             }
             let frames = lianli_frames(&lighting, &vec![[0; 3]; 156], sl_v4(3))

@@ -24,6 +24,9 @@ pub struct LightView {
     pub outer_effect: Option<Effect>,
     /// SL Flex fans: effects can target the inner or outer ring.
     pub sides: bool,
+    /// Strimers: how many lanes can run their own effects, and those effects.
+    pub lanes: usize,
+    pub lane_effects: Vec<Option<Effect>>,
     pub sync: bool,
     pub group: Option<String>,
     /// Kept off the device lists until shown; also left out of Sync everything.
@@ -102,6 +105,8 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 effect: d.effect,
                 outer_effect: d.outer_effect,
                 sides: d.sides,
+                lanes: d.lanes,
+                lane_effects: d.lane_effects,
                 delay_ms: 0,
                 span: None,
                 turn: None,
@@ -160,6 +165,8 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 effect: device_effect.clone(),
                 outer_effect: None,
                 sides: false,
+                lanes: 0,
+                lane_effects: Vec::new(),
                 delay_ms: 0,
                 span: None,
                 turn: None,
@@ -210,6 +217,8 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 },
                 outer_effect: None,
                 sides: false,
+                lanes: 0,
+                lane_effects: Vec::new(),
                 delay_ms: 0,
                 span: None,
                 turn: None,

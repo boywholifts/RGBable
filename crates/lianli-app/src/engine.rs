@@ -194,6 +194,19 @@ pub struct DeviceConfig {
     /// Its own white balance (-50 cooler to 50 warmer) instead of the global one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warmth: Option<i8>,
+    /// A Strimer's lanes when they run their own effects.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lanes: Vec<Option<Effect>>,
+}
+
+impl DeviceConfig {
+    pub fn lighting(&self) -> Lighting {
+        Lighting::from_saved(
+            self.effect.clone(),
+            self.outer_effect.clone(),
+            self.lanes.clone(),
+        )
+    }
 }
 
 fn is_zero_i8(value: &i8) -> bool {
@@ -280,7 +293,9 @@ pub struct DeviceView {
     pub fan_mode: FanMode,
     pub effect: Option<Effect>,
     pub outer_effect: Option<Effect>,
+    pub lane_effects: Vec<Option<Effect>>,
     pub sides: bool,
+    pub lanes: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -734,7 +749,7 @@ impl Engine {
             let lighting = config
                 .devices
                 .get(&ctl.id)
-                .map(|d| Lighting::from_saved(d.effect.clone(), d.outer_effect.clone()))
+                .map(DeviceConfig::lighting)
                 .unwrap_or_default();
             if !lighting.is_static() {
                 *ctl.lighting.lock() = lighting;
@@ -1043,7 +1058,9 @@ impl Engine {
                         .unwrap_or_default(),
                     effect: saved.and_then(|s| s.effect.clone()),
                     outer_effect: saved.and_then(|s| s.outer_effect.clone()),
+                    lane_effects: saved.map(|s| s.lanes.clone()).unwrap_or_default(),
                     sides: render::has_sides(ctl.profile),
+                    lanes: render::lane_count(ctl.profile),
                 }
             })
             .collect()
@@ -1063,6 +1080,7 @@ impl Engine {
         let entry = config.devices.entry(id.to_string()).or_default();
         entry.effect = None;
         entry.outer_effect = None;
+        entry.lanes.clear();
         if id == RING_ID {
             config.oled_ring = Some(color);
         } else {
@@ -1075,7 +1093,7 @@ impl Engine {
 
     /// A whole-device static effect becomes a plain color, so the device keeps a single saved color.
     pub fn set_effect(&self, id: &str, effect: Effect) -> Result<()> {
-        if !effect.is_animated() && effect.side == Side::Both {
+        if !effect.is_animated() && effect.side == Side::Both && effect.lane.is_none() {
             return self.set_color(id, effect.frame(&[1], 0.0)[0]);
         }
         let ctl = self
@@ -1085,16 +1103,22 @@ impl Engine {
             .find(|c| c.id == id)
             .cloned()
             .with_context(|| format!("no device {id}"))?;
-        let (saved, outer) = {
+        let (saved, outer, lanes) = {
             let mut lighting = ctl.lighting.lock();
-            lighting.apply(effect, render::has_sides(ctl.profile));
-            lighting.to_saved()
+            lighting.apply(
+                effect,
+                render::has_sides(ctl.profile),
+                render::lane_count(ctl.profile),
+            );
+            let (saved, outer) = lighting.to_saved();
+            (saved, outer, lighting.lanes.clone())
         };
         ctl.dirty.store(true, Ordering::Release);
         self.update_config(|c| {
             let entry = c.devices.entry(id.to_string()).or_default();
             entry.effect = saved;
             entry.outer_effect = outer;
+            entry.lanes = lanes;
         });
         Ok(())
     }
@@ -1171,7 +1195,7 @@ impl Engine {
             *ctl.lighting.lock() = config
                 .devices
                 .get(&ctl.id)
-                .map(|d| Lighting::from_saved(d.effect.clone(), d.outer_effect.clone()))
+                .map(DeviceConfig::lighting)
                 .unwrap_or_default();
             ctl.dirty.store(true, Ordering::Release);
         }

@@ -30,6 +30,8 @@ pub struct SavedLight {
     pub off: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warmth: Option<i8>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lanes: Vec<Option<Effect>>,
 }
 
 impl SavedLight {
@@ -45,6 +47,7 @@ impl SavedLight {
             reversed: device.reversed,
             off: device.off,
             warmth: device.warmth,
+            lanes: device.lanes.clone(),
         }
     }
 
@@ -59,6 +62,7 @@ impl SavedLight {
         device.reversed = self.reversed;
         device.off = self.off;
         device.warmth = self.warmth;
+        device.lanes = self.lanes.clone();
     }
 }
 
