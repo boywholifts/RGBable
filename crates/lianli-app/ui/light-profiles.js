@@ -38,7 +38,7 @@ function profileLabel(p) {
 
 $("#light-profile-pick").addEventListener("click", (e) => {
   e.stopPropagation();
-  const items = [{ label: "Lights off", checked: allOff, onClick: () => setAllOff(!allOff) }, "-"];
+  const items = [];
   if (lightProfiles.length) {
     items.push({ header: "Lighting profiles" });
     for (const p of lightProfiles) {

@@ -1420,15 +1420,14 @@ impl Engine {
         // checks in a row, so stale discovery data cannot trigger a re-send storm.
         const STRIKES: u8 = 2;
         const SHRINK_AFTER_SENDS: u8 = 2;
-        const RETRY_FULL_AFTER: Duration = Duration::from_secs(300);
-        // Every device uploads at once on start, so the radio is briefly crowded: effects
-        // shrunk then get their full version back sooner.
-        const STARTUP: Duration = Duration::from_secs(120);
-        const RETRY_FULL_AFTER_STARTUP: Duration = Duration::from_secs(30);
+        // A shrunk effect usually comes from a crowded radio (every device uploading at
+        // once, as on start or when the lighting follows a new OLED video), so the full one
+        // is tried again soon; each retry that fails again waits twice as long.
+        const RETRY_FULL_FIRST: Duration = Duration::from_secs(30);
+        const RETRY_FULL_LONGEST: Duration = Duration::from_secs(300);
         // Like L-Connect, the receivers store their lighting once it has stopped changing,
         // so it is what they show after a full power-off.
         const SAVE_AFTER: Duration = Duration::from_secs(10);
-        let writer_started = Instant::now();
         let mut unsaved: Option<Instant> = None;
 
         enum State {
@@ -1447,6 +1446,7 @@ impl Engine {
         // How far each device's effects had to be shrunk before it accepted them.
         let mut shrink: BTreeMap<[u8; 6], u8> = BTreeMap::new();
         let mut shrunk_at: BTreeMap<[u8; 6], Instant> = BTreeMap::new();
+        let mut full_retries: BTreeMap<[u8; 6], u32> = BTreeMap::new();
         let mut last_verify = Instant::now();
         let mut last_ring_frame = Instant::now();
 
@@ -1473,6 +1473,9 @@ impl Engine {
                         sends,
                     }) if !ctl.dirty.load(Ordering::Acquire) => {
                         if wireless.rgb_upload_applied(&mac, upload.effect_index()) {
+                            if !shrink.contains_key(&mac) {
+                                full_retries.remove(&mac);
+                            }
                             let upload = upload.clone();
                             states.insert(mac, State::Settled { upload, strikes: 0 });
                             ctl.settled.store(true, Ordering::Release);
@@ -1592,18 +1595,16 @@ impl Engine {
                     };
                     // A shrunk effect (or a still frame) came from a bad spell on the radio,
                     // so the full effect is tried again after a while rather than kept.
-                    let retry_after = |at: &Instant| {
-                        if at.duration_since(writer_started) < STARTUP {
-                            RETRY_FULL_AFTER_STARTUP
-                        } else {
-                            RETRY_FULL_AFTER
-                        }
-                    };
+                    let tries = full_retries.get(mac).copied().unwrap_or(0);
+                    let retry_after = RETRY_FULL_FIRST
+                        .saturating_mul(1 << tries.min(4))
+                        .min(RETRY_FULL_LONGEST);
                     if shrunk_at
                         .get(mac)
-                        .is_some_and(|at| at.elapsed() >= retry_after(at))
+                        .is_some_and(|at| at.elapsed() >= retry_after)
                     {
                         shrunk_at.remove(mac);
+                        full_retries.insert(*mac, tries + 1);
                         info!("{}: trying its full effect again", ctl.id);
                         ctl.dirty.store(true, Ordering::Release);
                         continue;
