@@ -1411,7 +1411,15 @@ impl Engine {
     /// The ring is USB: static colors are sent once, effects are streamed.
     fn rgb_writer(self: &Arc<Self>, wireless: &WirelessController) {
         const SPACING: Duration = Duration::from_millis(150);
+        // When several devices change at once (a new HydroShift video, All Devices), uploads
+        // are spread out so the radio isn't crowded and confirmations aren't lost.
+        const BUSY_SPACING: Duration = Duration::from_millis(450);
+        const BUSY_DEVICES: usize = 3;
         const CONFIRM_WAIT: Duration = Duration::from_millis(1500);
+        // The receiver's status reports get lost when the radio is busy: an upload only
+        // counts as failed once a report from after it has landed says so.
+        const REPORT_AFTER: Duration = Duration::from_millis(750);
+        const REPORT_WAIT: Duration = Duration::from_secs(6);
         const RESENDS: u8 = 4;
         const MB_SYNC_WAIT: Duration = Duration::from_millis(250);
         const ERROR_BACKOFF: Duration = Duration::from_secs(1);
@@ -1480,7 +1488,10 @@ impl Engine {
                             states.insert(mac, State::Settled { upload, strikes: 0 });
                             ctl.settled.store(true, Ordering::Release);
                             None
-                        } else if sent.elapsed() < CONFIRM_WAIT {
+                        } else if sent.elapsed() < CONFIRM_WAIT
+                            || (sent.elapsed() < REPORT_WAIT
+                                && !wireless.status_seen_since(&mac, *sent + REPORT_AFTER))
+                        {
                             None
                         } else if *sends >= SHRINK_AFTER_SENDS
                             && !ctl.shown_lighting().is_static()
@@ -1581,7 +1592,21 @@ impl Engine {
                         not_before.insert(mac, Instant::now() + ERROR_BACKOFF);
                     }
                 }
-                thread::sleep(SPACING);
+                let busy = controllers
+                    .iter()
+                    .filter(|c| match &c.target {
+                        Target::Wireless { mac } => {
+                            c.dirty.load(Ordering::Acquire)
+                                || matches!(states.get(mac), Some(State::Pending { .. }))
+                        }
+                        _ => false,
+                    })
+                    .count();
+                thread::sleep(if busy >= BUSY_DEVICES {
+                    BUSY_SPACING
+                } else {
+                    SPACING
+                });
             }
 
             if last_verify.elapsed() >= VERIFY_EVERY {
