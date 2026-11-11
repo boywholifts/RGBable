@@ -60,6 +60,7 @@ pub fn enter(engine: &Engine, openrgb: &OpenRgb, why: &str) {
     info!("{why}: showing {what}");
     relight(engine, openrgb);
     engine.wait_for_lighting(CONFIRM_WAIT);
+    engine.store_wireless_lighting();
 }
 
 /// Puts back the lighting from before the startup profile went on.

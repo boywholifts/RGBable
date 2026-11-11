@@ -298,7 +298,9 @@ impl WirelessController {
         ))
     }
 
-    pub(super) fn save_rf_config(&self) -> Result<()> {
+    /// Stores the receivers' current state, lighting included, so they come back with it
+    /// after a full power-off.
+    pub fn save_rf_config(&self) -> Result<()> {
         let master_mac = *self.master_mac.lock();
         let master_ch = *self.master_channel.lock();
 

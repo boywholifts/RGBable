@@ -13,6 +13,7 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 - Changing a single device's lighting goes dark first, like All Devices and groups, when "Go dark before changing lighting" is on.
 - Power-on lighting: store a plain or breathing version of the current colors, or Off, in OpenRGB devices that can keep a mode in their own memory.
 - Fan screens can store a power-on picture.
+- Wireless fans and Strimers now store their lighting, as L-Connect does, so after a full shutdown they come back with RGBable's lighting (or the startup lighting) instead of an old L-Connect effect.
 
 ### Changed
 

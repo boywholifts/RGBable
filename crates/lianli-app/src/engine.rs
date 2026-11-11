@@ -1369,7 +1369,11 @@ impl Engine {
         // shrunk then get their full version back sooner.
         const STARTUP: Duration = Duration::from_secs(120);
         const RETRY_FULL_AFTER_STARTUP: Duration = Duration::from_secs(30);
+        // Like L-Connect, the receivers store their lighting once it has stopped changing,
+        // so it is what they show after a full power-off.
+        const SAVE_AFTER: Duration = Duration::from_secs(10);
         let writer_started = Instant::now();
+        let mut unsaved: Option<Instant> = None;
 
         enum State {
             Pending {
@@ -1494,6 +1498,7 @@ impl Engine {
                         if dirty {
                             shrink.remove(&mac);
                             shrunk_at.remove(&mac);
+                            unsaved = Some(Instant::now());
                         }
                         (prepare(shrink.get(&mac).copied().unwrap_or(0)), 0)
                     }
@@ -1569,9 +1574,35 @@ impl Engine {
                 }
             }
 
+            if unsaved.is_some_and(|at| at.elapsed() >= SAVE_AFTER)
+                && shrink.is_empty()
+                && controllers.iter().all(|c| {
+                    !matches!(c.target, Target::Wireless { .. })
+                        || (c.settled.load(Ordering::Acquire) && !c.dirty.load(Ordering::Acquire))
+                })
+            {
+                unsaved = None;
+                match wireless.save_rf_config() {
+                    Ok(()) => info!("stored the wireless lighting for power-on"),
+                    Err(e) => warn!("storing the wireless lighting: {e:#}"),
+                }
+            }
+
             if !sent_any {
                 thread::sleep(Duration::from_millis(30));
             }
+        }
+    }
+
+    /// Stores the wireless devices' current lighting so they show it after a full power-off.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pub fn store_wireless_lighting(&self) {
+        let Some(wireless) = self.wireless.read().clone() else {
+            return;
+        };
+        match wireless.save_rf_config() {
+            Ok(()) => info!("stored the wireless lighting for power-on"),
+            Err(e) => warn!("storing the wireless lighting: {e:#}"),
         }
     }
 
