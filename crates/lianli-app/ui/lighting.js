@@ -457,7 +457,7 @@ $("#group-new").addEventListener("click", () =>
 
 // ---------------------------------------------------------------- effect panel
 
-const drawer = { open: false, target: null, category: "basic", kind: "static", mode: null, custom: null, side: "both", lane: 0, colors: ["#8000ff"], speed: 3, brightness: 100, reverse: false, direction: null };
+const drawer = { open: false, target: null, category: "basic", kind: "static", mode: null, custom: null, side: "both", laneMode: false, picked: [], colors: ["#8000ff"], speed: 3, brightness: 100, reverse: false, direction: null };
 const drawerPreview = previewPlayer($("#d-preview"));
 
 function targetLights() {
@@ -506,7 +506,8 @@ function loadIntoDrawer(effect, color) {
 function openDrawer(target) {
   closeMenu();
   drawer.target = target;
-  drawer.lane = 0;
+  drawer.laneMode = false;
+  drawer.picked = [];
   drawer.open = true;
   drawer.activeColor = 0;
   const lights = targetLights();
@@ -515,8 +516,9 @@ function openDrawer(target) {
     loadIntoDrawer(g && g.effect, g && g.color);
   } else if (target.type === "dev" && lights[0]) {
     const l = lights[0];
-    drawer.lane = l.lane_effects && l.lane_effects.length ? 1 : 0;
-    loadIntoDrawer(drawer.lane ? l.lane_effects[0] : l.effect || l.outer_effect, l.color);
+    drawer.laneMode = !!(l.lane_effects && l.lane_effects.length);
+    drawer.picked = drawer.laneMode ? [1] : [];
+    loadIntoDrawer(drawer.laneMode ? l.lane_effects[0] : l.effect || l.outer_effect, l.color);
   } else {
     const shared = commonEffect(last ? last.lights : []);
     loadIntoDrawer(shared && (shared.effect || shared.outer_effect), shared && shared.color);
@@ -546,7 +548,7 @@ function drawerControls() {
   if (drawer.kind === "script") return { colors: 0, speed: true, directions: [], reverse: false, hint: "" };
   if (drawer.kind === "lianli") {
     const m = lianliInfo(drawer.mode) || { max_colors: 4, directions: [], speed: true };
-    if (drawer.lane) return { colors: m.lane_colors, speed: m.speed, directions: m.lane_directions || [], reverse: false, hint: "" };
+    if (drawer.laneMode) return { colors: m.lane_colors || 0, speed: m.speed, directions: m.lane_directions || [], reverse: false, hint: "" };
     return { colors: m.per_fan_colors ? 4 : m.max_colors, speed: m.speed, directions: m.directions, reverse: false, hint: m.per_fan_colors ? "Each fan takes the next color." : "" };
   }
   const info = kindInfo(drawer.kind);
@@ -555,7 +557,7 @@ function drawerControls() {
 
 function drawerEffect() {
   if (isCustom(drawer.custom) && (drawer.kind === "custom" || drawer.kind === "script")) {
-    return { ...drawer.custom, speed: drawer.kind === "script" ? drawer.speed : drawer.custom.speed, brightness: drawer.brightness, side: drawer.side, lane: drawer.lane || null };
+    return { ...drawer.custom, speed: drawer.kind === "script" ? drawer.speed : drawer.custom.speed, brightness: drawer.brightness, side: drawer.side, lane: drawer.picked[0] || null };
   }
   const c = drawerControls();
   const effect = {
@@ -565,7 +567,7 @@ function drawerEffect() {
     brightness: drawer.brightness,
     reverse: drawer.reverse,
     side: drawer.side,
-    lane: drawer.lane || null,
+    lane: drawer.laneMode ? drawer.picked[0] || null : null,
   };
   if (drawer.kind === "lianli") {
     effect.mode = drawer.mode;
@@ -630,10 +632,83 @@ function renderTiles() {
 
 /// Why an L-Connect effect can't be picked for what the panel is set to, if it can't.
 function lianliUnavailable(m) {
-  if (drawer.lane) return m.lane ? null : "Runs on the whole Strimer only";
+  if (drawer.laneMode) return m.lane ? null : "Runs on the whole Strimer only";
   if (!m.whole && !m.side) return "Runs on a single Strimer lane only";
   if (drawer.side !== "both" && !m.side) return "Only runs on both rings together";
   return null;
+}
+
+const laneName = (n) => String(n).padStart(2, "0");
+const RAINBOW_KINDS = ["rainbow", "rainbow_wave", "color_cycle", "aurora"];
+
+/// A CSS background that hints at what a lane shows.
+function laneLook(effect, color) {
+  if (!effect) return rgbToHex(color || [0, 0, 0]);
+  const rainbow = RAINBOW_KINDS.includes(effect.kind) || (effect.kind === "lianli" && /Rainbow/.test(effect.mode || ""));
+  if (rainbow) return "linear-gradient(90deg,#ff0040,#ffb000,#40ff40,#00c8ff,#8040ff,#ff0040)";
+  const colors = (effect.colors || []).map(rgbToHex);
+  if (!colors.length) return rgbToHex(color || [128, 0, 255]);
+  return colors.length === 1 ? colors[0] : `linear-gradient(90deg,${colors.join(",")})`;
+}
+
+/// The Strimer picture: one bar per lane, click to pick which lanes the effect goes to.
+function renderLanes() {
+  const box = $("#d-lanes");
+  const total = laneCount();
+  if (!total) {
+    drawer.laneMode = false;
+    drawer.picked = [];
+  }
+  box.hidden = !total;
+  if (!total) return box.replaceChildren();
+  const l = targetLights()[0];
+  const separate = !!(l.lane_effects && l.lane_effects.length);
+  const effectOf = (n) => (separate ? l.lane_effects[n - 1] : l.effect);
+  const fixUnavailable = () => {
+    if (drawer.kind === "lianli" && lianliUnavailable(lianliInfo(drawer.mode) || {})) {
+      drawer.kind = "static";
+      drawer.mode = null;
+      drawer.category = "basic";
+    }
+  };
+  const mode = segmented([["whole", "Whole"], ["lanes", "Lanes"]], drawer.laneMode ? "lanes" : "whole", (v) => {
+    drawer.laneMode = v === "lanes";
+    drawer.picked = drawer.laneMode ? [1] : [];
+    loadIntoDrawer(drawer.laneMode ? effectOf(1) : l.effect, l.color);
+    fixUnavailable();
+    renderDrawer();
+  });
+  const rows = Array.from({ length: total }, (_, i) => {
+    const n = i + 1;
+    const on = drawer.laneMode && drawer.picked.includes(n);
+    const effect = effectOf(n);
+    const row = el("button", { class: "lane" + (on ? " on" : ""), title: drawer.laneMode ? "Click to select or deselect" : "Choose Lanes to set lanes separately" }, [
+      el("span", { class: "lane-num" }, laneName(n)),
+      el("span", { class: "lane-bar", style: `background:${laneLook(effect, l.color)}` }),
+      el("span", { class: "lane-name muted small" }, effect ? kindLabelOf(effect) : "Color"),
+    ]);
+    row.addEventListener("click", () => {
+      if (!drawer.laneMode) {
+        drawer.laneMode = true;
+        drawer.picked = [];
+      }
+      if (!drawer.picked.length) {
+        loadIntoDrawer(effectOf(n), l.color);
+        fixUnavailable();
+      }
+      drawer.picked = on ? drawer.picked.filter((x) => x !== n) : [...drawer.picked, n].sort((a, b) => a - b);
+      renderDrawer();
+    });
+    return row;
+  });
+  const quick = el("div", { class: "lane-quick" }, [
+    el("button", { class: "link", onclick: () => { if (!drawer.laneMode) { drawer.laneMode = true; loadIntoDrawer(effectOf(1), l.color); fixUnavailable(); } drawer.picked = rows.map((_, i) => i + 1); renderDrawer(); } }, "Select all"),
+    el("button", { class: "link", onclick: () => { drawer.picked = []; renderDrawer(); } }, "Clear"),
+  ]);
+  box.replaceChildren(
+    el("div", { class: "lane-head" }, [el("span", { class: "fx-label" }, "Strimer"), mode, drawer.laneMode ? quick : null].filter(Boolean)),
+    el("div", { class: "strimer" + (drawer.laneMode ? "" : " whole") }, rows)
+  );
 }
 
 /// How many Strimer lanes the panel's device has, when it is a single Strimer.
@@ -774,27 +849,7 @@ function renderDrawer() {
     })
   );
 
-  const lanes = $("#d-lanes");
-  const laneTotal = laneCount();
-  if (!laneTotal) drawer.lane = 0;
-  lanes.hidden = !laneTotal;
-  lanes.replaceChildren(
-    el("span", { class: "fx-label" }, "Lanes"),
-    segmented([["0", "Whole"], ...Array.from({ length: laneTotal }, (_, i) => [String(i + 1), String(i + 1).padStart(2, "0")])], String(drawer.lane), (v) => {
-      drawer.lane = Number(v);
-      const l = targetLights()[0];
-      if (l) {
-        const separate = l.lane_effects && l.lane_effects.length;
-        loadIntoDrawer(drawer.lane && separate ? l.lane_effects[drawer.lane - 1] : l.effect, l.color);
-      }
-      if (drawer.kind === "lianli" && lianliUnavailable(lianliInfo(drawer.mode) || {})) {
-        drawer.kind = "static";
-        drawer.mode = null;
-        drawer.category = "basic";
-      }
-      renderDrawer();
-    })
-  );
+  renderLanes();
 
   const c = drawerControls();
   drawer.colors = drawer.colors.slice(0, Math.max(1, c.colors));
@@ -836,12 +891,14 @@ function renderDrawer() {
 
   const notes = [];
   if (c.hint) notes.push(c.hint);
-  if (drawer.lane) notes.push(`Only lane ${String(drawer.lane).padStart(2, "0")} changes and the panel stays open, so you can pick the next lane. Whole puts one effect back on the entire Strimer.`);
+  if (drawer.laneMode) notes.push("Only the selected lanes change, and the panel stays open for the next ones. Whole puts one effect back on the entire Strimer.");
   if (drawer.side !== "both") notes.push(`Only the ${drawer.side} ring of SL Flex fans changes; other devices get the whole effect.`);
   if (drawer.target && drawer.target.type === "all") notes.push("Devices with Sync off are left alone.");
   $("#d-note").textContent = notes.join(" ");
-  $("#d-apply").textContent = drawer.lane ? `Apply to lane ${String(drawer.lane).padStart(2, "0")}` : "Apply";
-  $("#d-cancel").textContent = drawer.lane ? "Done" : "Cancel";
+  const picked = drawer.picked.length;
+  $("#d-apply").textContent = !drawer.laneMode ? "Apply" : picked === 1 ? `Apply to lane ${laneName(drawer.picked[0])}` : `Apply to ${picked} lanes`;
+  $("#d-apply").disabled = drawer.laneMode && !picked;
+  $("#d-cancel").textContent = drawer.laneMode ? "Done" : "Cancel";
   $("#d-effect-name").textContent = drawer.kind === "lianli" ? modeName(drawer.mode || "") : isCustom(drawer.custom) && (drawer.kind === "custom" || drawer.kind === "script") ? drawer.custom.name : kindInfo(drawer.kind).label;
   schedulePreview();
 }
@@ -861,9 +918,10 @@ $("#d-apply").addEventListener("click", async () => {
   const button = $("#d-apply");
   button.disabled = true;
   try {
-    if (t.type === "dev" && drawer.lane) {
-      const lane = String(drawer.lane).padStart(2, "0");
-      await call("set_effect", { id: t.id, effect }, `${label} applied to lane ${lane}`);
+    if (t.type === "dev" && drawer.laneMode) {
+      const lanes = drawer.picked.slice();
+      const where = lanes.length === 1 ? `lane ${laneName(lanes[0])}` : `lanes ${lanes.map(laneName).join(", ")}`;
+      await call("set_lane_effects", { id: t.id, lanes, effect }, `${label} applied to ${where}`);
       await refresh();
       if (drawer.open) renderDrawer();
       return;

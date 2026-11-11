@@ -633,6 +633,10 @@ pub fn set_effect(engine: &Engine, openrgb: &OpenRgb, id: &str, effect: Effect) 
     push_device(engine, openrgb, &device)
 }
 
+pub fn set_lane_effects(engine: &Engine, id: &str, lanes: &[u8], effect: Effect) -> Result<()> {
+    engine.set_lane_effects(id, lanes, effect.sanitized())
+}
+
 pub fn set_delay(engine: &Engine, openrgb: &OpenRgb, id: &str, delay_ms: u32) -> Result<()> {
     let delay_ms = delay_ms.min(MAX_DELAY_MS);
     engine.update_config(|c| c.devices.entry(id.to_string()).or_default().delay_ms = delay_ms);

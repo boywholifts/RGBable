@@ -1096,6 +1096,22 @@ impl Engine {
         if !effect.is_animated() && effect.side == Side::Both && effect.lane.is_none() {
             return self.set_color(id, effect.frame(&[1], 0.0)[0]);
         }
+        self.apply_effects(id, vec![effect])
+    }
+
+    /// Gives each of a Strimer's chosen lanes (numbered from 1) the same effect.
+    pub fn set_lane_effects(&self, id: &str, lanes: &[u8], effect: Effect) -> Result<()> {
+        let effects = lanes
+            .iter()
+            .map(|&lane| Effect {
+                lane: Some(lane),
+                ..effect.clone()
+            })
+            .collect();
+        self.apply_effects(id, effects)
+    }
+
+    fn apply_effects(&self, id: &str, effects: Vec<Effect>) -> Result<()> {
         let ctl = self
             .controllers
             .read()
@@ -1114,11 +1130,13 @@ impl Engine {
         let (saved, outer, lanes) = {
             let mut lighting = ctl.lighting.lock();
             *lighting = before;
-            lighting.apply(
-                effect,
-                render::has_sides(ctl.profile),
-                render::lane_count(ctl.profile),
-            );
+            for effect in effects {
+                lighting.apply(
+                    effect,
+                    render::has_sides(ctl.profile),
+                    render::lane_count(ctl.profile),
+                );
+            }
             let (saved, outer) = lighting.to_saved();
             (saved, outer, lighting.lanes.clone())
         };

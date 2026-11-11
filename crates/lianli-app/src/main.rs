@@ -238,6 +238,16 @@ fn set_effect(state: State<'_, AppState>, id: String, effect: Effect) -> Result<
 }
 
 #[tauri::command(async)]
+fn set_lane_effects(
+    state: State<'_, AppState>,
+    id: String,
+    lanes: Vec<u8>,
+    effect: Effect,
+) -> Result<(), String> {
+    lights::set_lane_effects(&state.engine, &id, &lanes, effect).map_err(chain)
+}
+
+#[tauri::command(async)]
 fn set_group_effect(
     state: State<'_, AppState>,
     group: String,
@@ -1737,6 +1747,7 @@ fn main() {
             move_to_group,
             set_group_color,
             set_effect,
+            set_lane_effects,
             set_group_effect,
             finish_setup,
             pick_media,
