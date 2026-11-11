@@ -231,7 +231,9 @@ async fn set_all(
 
 #[tauri::command(async)]
 fn set_effect(state: State<'_, AppState>, id: String, effect: Effect) -> Result<(), String> {
-    lights::go_dark(&state.engine, &state.openrgb, std::slice::from_ref(&id));
+    if effect.lane.is_none() {
+        lights::go_dark(&state.engine, &state.openrgb, std::slice::from_ref(&id));
+    }
     lights::set_effect(&state.engine, &state.openrgb, &id, effect).map_err(chain)
 }
 

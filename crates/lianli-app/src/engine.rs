@@ -1103,8 +1103,17 @@ impl Engine {
             .find(|c| c.id == id)
             .cloned()
             .with_context(|| format!("no device {id}"))?;
+        // built on the saved lighting: going dark first leaves the device blank
+        let before = self
+            .config
+            .lock()
+            .devices
+            .get(id)
+            .map(DeviceConfig::lighting)
+            .unwrap_or_default();
         let (saved, outer, lanes) = {
             let mut lighting = ctl.lighting.lock();
+            *lighting = before;
             lighting.apply(
                 effect,
                 render::has_sides(ctl.profile),
