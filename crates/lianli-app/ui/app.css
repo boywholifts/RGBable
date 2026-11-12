@@ -1,3 +1,8 @@
+@font-face { font-family: "Manrope"; src: url("fonts/Manrope-Regular.ttf") format("truetype"); font-weight: 400; font-display: block; }
+@font-face { font-family: "Manrope"; src: url("fonts/Manrope-Medium.ttf") format("truetype"); font-weight: 500; font-display: block; }
+@font-face { font-family: "Manrope"; src: url("fonts/Manrope-SemiBold.ttf") format("truetype"); font-weight: 600; font-display: block; }
+@font-face { font-family: "Manrope"; src: url("fonts/Manrope-Bold.ttf") format("truetype"); font-weight: 700; font-display: block; }
+
 :root {
   --bg: #0b0910;
   --panel: #141019;
@@ -11,7 +16,7 @@
   --danger: #ff4d6d;
   --ok: #3ddc97;
   --radius: 14px;
-  font-family: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  font-family: "Manrope", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
   color-scheme: dark;
 }
 
@@ -651,3 +656,4 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 }
 .dev-name-field { flex-wrap: nowrap; gap: 6px; }
 .dev-name-field .text { max-width: none; flex: 1; }
+button, select, input, textarea { font-family: inherit; }

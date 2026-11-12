@@ -229,7 +229,7 @@ function rowBadges(l) {
   if (l.span && l.span.len < 1000) badges.push(el("span", { class: "badge", title: "Part of a chain: moving effects flow through it from the device before" }, icon("chain")));
   else if (l.span) badges.push(el("span", { class: "badge", title: "Moving effects run across all its fans" }, icon("across")));
   if (l.delay_ms) badges.push(el("span", { class: "badge", title: `Starts ${(l.delay_ms / 1000).toFixed(1)} s behind` }, [icon("clock"), `${(l.delay_ms / 1000).toFixed(1)}s`]));
-  if (!l.sync) badges.push(el("span", { class: "tag off", title: "All Devices leaves this device alone" }, "Not synced"));
+  if (!l.sync) badges.push(el("span", { class: "tag off", title: "All Devices leaves this device alone" }, "Not in All Devices"));
   if (l.warmth != null) badges.push(el("span", { class: "tag", title: "Has its own color temperature" }, l.warmth === 0 ? "Neutral" : l.warmth > 0 ? "Warmer" : "Cooler"));
   if (l.off) badges.push(el("span", { class: "tag off", title: "Turned off: its lighting comes back when it's turned on" }, "Off"));
   return badges;
