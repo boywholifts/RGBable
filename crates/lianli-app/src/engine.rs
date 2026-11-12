@@ -197,6 +197,9 @@ pub struct DeviceConfig {
     /// Its own white balance (-50 cooler to 50 warmer) instead of the global one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub warmth: Option<i8>,
+    /// For an ASUS board's first header: the Polymo panel picture the lighting shows on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub polymo: Option<crate::openrgb::Polymo>,
     /// A Strimer's lanes when they run their own effects.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lanes: Vec<Option<Effect>>,

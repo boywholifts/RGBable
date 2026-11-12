@@ -200,6 +200,43 @@ pub struct LedPart {
     pub delay_ms: u32,
     /// Its own white balance, or render::GLOBAL_WARMTH.
     pub warmth: i8,
+    /// An ASUS Polymo panel on this header: which of its pictures shows the lighting.
+    pub polymo: Option<Polymo>,
+}
+
+/// The pictures of an ASUS ROG Polymo panel. It sits on the board's first addressable
+/// header: LEDs 1-11 light the ROG logo and HERO lettering in five sections, LEDs 12-19 the
+/// diamond pattern in four; a picture whose LEDs are black is off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Polymo {
+    Logo,
+    Diamonds,
+    Both,
+}
+
+impl Polymo {
+    const LOGO: [std::ops::Range<usize>; 5] = [0..3, 3..5, 5..7, 7..9, 9..11];
+    const DIAMONDS: [std::ops::Range<usize>; 4] = [11..13, 13..15, 15..17, 17..19];
+
+    fn sections(self) -> Vec<std::ops::Range<usize>> {
+        match self {
+            Self::Logo => Self::LOGO.to_vec(),
+            Self::Diamonds => Self::DIAMONDS.to_vec(),
+            Self::Both => Self::LOGO.iter().chain(&Self::DIAMONDS).cloned().collect(),
+        }
+    }
+
+    /// The header's LEDs with `colors` (one per section) on the chosen picture.
+    fn paint(self, colors: &[[u8; 3]], leds: usize) -> Vec<[u8; 3]> {
+        let mut out = vec![[0; 3]; leds];
+        for (range, color) in self.sections().into_iter().zip(colors) {
+            for led in range.filter(|&l| l < leds) {
+                out[led] = *color;
+            }
+        }
+        out
+    }
 }
 
 impl LedPart {
@@ -213,6 +250,21 @@ pub fn compose(parts: &[LedPart], elapsed_ms: i64) -> Vec<[u8; 3]> {
     let mut frame = Vec::new();
     for part in parts {
         let start = frame.len();
+        if let Some(polymo) = part.polymo {
+            let sections = polymo.sections().len();
+            let colors = match part.effect.as_ref().filter(|e| e.is_animated()) {
+                Some(effect) => {
+                    let period = u64::from(effect.period_ms().max(1));
+                    let behind = elapsed_ms - i64::from(part.delay_ms);
+                    let phase = behind.rem_euclid(period as i64) as f32 / period as f32;
+                    effect.frame(&[sections], phase)
+                }
+                None => vec![part.color; sections],
+            };
+            frame.extend(polymo.paint(&colors, part.leds()));
+            crate::render::balance_with(&mut frame[start..], part.warmth);
+            continue;
+        }
         match part.effect.as_ref().filter(|e| e.is_animated()) {
             Some(effect) => {
                 let period = u64::from(effect.period_ms().max(1));
@@ -1006,6 +1058,29 @@ impl Reader<'_> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn polymo_lights_only_the_chosen_picture() {
+        let part = |polymo| LedPart {
+            zones: vec![28],
+            keys: None,
+            effect: None,
+            color: [255, 0, 0],
+            delay_ms: 0,
+            warmth: 0,
+            polymo,
+        };
+        let logo = compose(&[part(Some(Polymo::Logo))], 0);
+        assert_eq!(logo.len(), 28);
+        assert!(logo[..11].iter().all(|c| c[0] > 0));
+        assert!(logo[11..].iter().all(|c| *c == [0, 0, 0]));
+        let diamonds = compose(&[part(Some(Polymo::Diamonds))], 0);
+        assert!(diamonds[..11].iter().all(|c| *c == [0, 0, 0]));
+        assert!(diamonds[11..19].iter().all(|c| c[0] > 0));
+        assert!(diamonds[19..].iter().all(|c| *c == [0, 0, 0]));
+        let both = compose(&[part(Some(Polymo::Both))], 0);
+        assert!(both[..19].iter().all(|c| c[0] > 0));
+    }
+
     use super::*;
 
     #[test]

@@ -248,6 +248,15 @@ fn set_lane_effects(
 }
 
 #[tauri::command(async)]
+fn set_polymo(
+    state: State<'_, AppState>,
+    id: String,
+    polymo: Option<openrgb::Polymo>,
+) -> Result<(), String> {
+    lights::set_polymo(&state.engine, &state.openrgb, &id, polymo).map_err(chain)
+}
+
+#[tauri::command(async)]
 fn resync_device(state: State<'_, AppState>, id: String) -> Result<String, String> {
     lights::resync_device(&state.engine, &state.openrgb, &id).map_err(chain)
 }
@@ -1759,6 +1768,7 @@ fn main() {
             set_effect,
             set_lane_effects,
             resync_device,
+            set_polymo,
             resync_group,
             set_group_effect,
             finish_setup,

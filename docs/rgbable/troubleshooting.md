@@ -79,3 +79,7 @@ Wireless fans on a coolant curve wait up to 15 seconds for the first coolant rea
 - FFmpeg must be installed: `winget install Gyan.FFmpeg`, then restart RGBable.
 - Quit L-Connect; it holds the screen.
 - The preview says why a file can't be shown. L-Connect's `.h264` video files are scrambled and can't be played; bring its themes over with **Import L-Connect themes…** under Widgets on the HydroShift screen page instead.
+
+## ASUS ROG Polymo panel
+
+The Polymo panel isn't a separate device: it is the first 19 LEDs of the board's first addressable header (OpenRGB's "Addressable 1" zone). LEDs 1-11 light the ROG logo and HERO lettering, LEDs 12-19 the diamond pattern. It only follows live (Direct) colors, so OpenRGB's built-in modes such as Static don't change it. In RGBable, open that header's effect panel and pick a Polymo picture; make sure the header's LED count is at least 19.

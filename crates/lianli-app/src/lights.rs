@@ -42,6 +42,10 @@ pub struct LightView {
     pub turn: Option<crate::effects::Span>,
     /// The group (or All Devices) whose lighting it can go back to, when it differs from it.
     pub resync: Option<String>,
+    /// ASUS boards' first header, which drives the Polymo panel: whether it can be set up as
+    /// one, and the picture it shows when it is.
+    pub polymo_header: bool,
+    pub polymo: Option<crate::openrgb::Polymo>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -115,6 +119,8 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 span: None,
                 turn: None,
                 resync: None,
+                polymo_header: false,
+                polymo: None,
                 zones: Vec::new(),
                 sync: saved.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &d.id),
@@ -176,6 +182,8 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 span: None,
                 turn: None,
                 resync: None,
+                polymo_header: false,
+                polymo: None,
                 zones: device
                     .zones
                     .iter()
@@ -229,6 +237,10 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 span: None,
                 turn: None,
                 resync: None,
+                polymo_header: index == 0
+                    && device.name.to_ascii_uppercase().contains("ASUS")
+                    && zone.leds >= 19,
+                polymo: own.and_then(|s| s.polymo),
                 zones: vec![zone_view(index, zone)],
                 sync: own.is_none_or(|s| s.in_sync()),
                 group: group_of(&config, &header),
@@ -426,7 +438,9 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
     if zoned == device.leds {
         for (index, zone) in device.zones.iter().enumerate().filter(|(_, z)| z.leds > 0) {
             let own = header_id(&device_id, index);
-            let source = if is_header(zone) && (has_lighting(config, &own) || is_off(config, &own))
+            let polymo = config.devices.get(&own).is_some_and(|d| d.polymo.is_some());
+            let source = if is_header(zone)
+                && (has_lighting(config, &own) || is_off(config, &own) || polymo)
             {
                 own
             } else {
@@ -438,13 +452,20 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
             }
         }
     } else {
-        runs.push((device_id, vec![device.leds]));
+        runs.push((device_id.clone(), vec![device.leds]));
     }
     let mut start = 0;
     runs.into_iter()
         .map(|(source, zones)| {
             let dark = is_off(config, &source);
-            let saved = config.devices.get(&source).filter(|_| !dark);
+            let polymo = config.devices.get(&source).and_then(|d| d.polymo);
+            // a Polymo header shows the board's lighting until it gets its own
+            let saved = if has_lighting(config, &source) {
+                config.devices.get(&source)
+            } else {
+                config.devices.get(&device_id)
+            }
+            .filter(|_| !dark);
             let leds: usize = zones.iter().sum();
             let keys = device.keys.as_ref().map(|k| k.slice(start, leds));
             start += leds;
@@ -473,6 +494,7 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
                     .map(|s| s.delay_ms)
                     .filter(|&d| d > 0)
                     .unwrap_or(board_delay),
+                polymo,
             }
         })
         .collect()
@@ -496,7 +518,9 @@ fn push_device(engine: &Engine, openrgb: &OpenRgb, device: &OrgbDevice) -> Resul
         || is_off(&config, &device_id)
         || (0..device.zones.len()).any(|z| {
             let header = header_id(&device_id, z);
-            has_lighting(&config, &header) || is_off(&config, &header)
+            has_lighting(&config, &header)
+                || is_off(&config, &header)
+                || config.devices.get(&header).is_some_and(|d| d.polymo.is_some())
         });
     if touched {
         openrgb.set_leds(device.index, &compose(&parts, 0), true)?;
@@ -706,6 +730,18 @@ pub fn set_effect(engine: &Engine, openrgb: &OpenRgb, id: &str, effect: Effect) 
             entry.color = Some(color);
         }
     });
+    push_device(engine, openrgb, &device)
+}
+
+/// Sets which Polymo picture a header lights, or makes it an ordinary header again.
+pub fn set_polymo(
+    engine: &Engine,
+    openrgb: &OpenRgb,
+    id: &str,
+    polymo: Option<crate::openrgb::Polymo>,
+) -> Result<()> {
+    engine.update_config(|c| c.devices.entry(id.to_string()).or_default().polymo = polymo);
+    let device = openrgb_device(openrgb, id).context("that OpenRGB device is not connected")?;
     push_device(engine, openrgb, &device)
 }
 

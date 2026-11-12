@@ -734,6 +734,27 @@ function renderLanes() {
   );
 }
 
+/// ASUS boards' first header drives the Polymo panel: choose which picture shows the lighting.
+function renderPolymo() {
+  const box = $("#d-polymo");
+  const t = drawer.target;
+  const l = t && t.type === "dev" ? targetLights()[0] : null;
+  box.hidden = !(l && l.polymo_header);
+  if (box.hidden) return box.replaceChildren();
+  box.replaceChildren(
+    el("span", { class: "fx-label", title: "The Polymo panel is driven by this header's first 19 LEDs" }, "Polymo"),
+    segmented(
+      [["", "Plain header"], ["logo", "ROG logo"], ["diamonds", "Diamonds"], ["both", "Both"]],
+      l.polymo || "",
+      async (v) => {
+        await call("set_polymo", { id: l.id, polymo: v || null }, v ? "Polymo picture set" : "Back to a plain header");
+        await refresh();
+        if (drawer.open) renderDrawer();
+      }
+    )
+  );
+}
+
 /// How many Strimer lanes the panel's device has, when it is a single Strimer.
 function laneCount() {
   const t = drawer.target;
@@ -873,6 +894,7 @@ function renderDrawer() {
   );
 
   renderLanes();
+  renderPolymo();
 
   const c = drawerControls();
   drawer.colors = drawer.colors.slice(0, Math.max(1, c.colors));
