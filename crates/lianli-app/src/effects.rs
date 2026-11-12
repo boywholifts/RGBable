@@ -314,7 +314,6 @@ impl Effect {
                 | EffectKind::Ripple
                 | EffectKind::Aurora
                 | EffectKind::Police
-                | EffectKind::Drizzle
         );
         self.span.filter(|_| moves)
     }

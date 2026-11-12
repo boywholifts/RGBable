@@ -600,7 +600,7 @@ fn native_drizzle(lighting: &Lighting, profile: RgbRenderProfile) -> Lighting {
         .any(|p| p.mode == lianli_shared::rgb::RgbMode::Drizzling);
     let swap = |e: &Option<Effect>| {
         e.clone().map(|e| match e.kind {
-            EffectKind::Drizzle if has_it && e.span.is_none() && e.turn.is_none() => Effect {
+            EffectKind::Drizzle if has_it && e.travel_span().is_none() && e.turn.is_none() => Effect {
                 kind: EffectKind::Lianli,
                 mode: Some(lianli_shared::rgb::RgbMode::Drizzling),
                 ..e
@@ -927,6 +927,24 @@ mod tests {
         );
         let (effect, outer) = lighting.to_saved();
         assert_eq!(Lighting::from_saved(effect, outer, Vec::new()), lighting);
+    }
+
+    #[test]
+    fn drizzle_in_a_flow_stays_strimer_drizzle() {
+        let profile = RgbRenderProfile {
+            family: RgbRenderFamily::Strimer,
+            fan_count: 0,
+            led_count: 116,
+            right_attach: false,
+        };
+        let drizzle = Effect {
+            kind: EffectKind::Drizzle,
+            colors: vec![[0, 0, 255]],
+            span: Some(crate::effects::Span { start: 500, len: 250 }),
+            ..Effect::default()
+        };
+        let swapped = native_drizzle(&Lighting::whole(drizzle), profile);
+        assert_eq!(swapped.inner.unwrap().kind, EffectKind::Lianli);
     }
 
     #[test]

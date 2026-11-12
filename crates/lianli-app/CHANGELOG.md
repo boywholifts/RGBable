@@ -22,6 +22,7 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 
 ### Changed
 
+- Drizzle no longer runs through a flow: in Flow through, a Strimer with Drizzle keeps its own (Lian Li) drizzle while effects like Meteor flow across the other devices.
 - Wireless devices whose effect had to be shrunk on a crowded radio (when every device changes at once, as when the lighting follows a new HydroShift video) get the full effect back after about 30 seconds instead of 5 minutes.
 - The Lighting profile menu no longer has a Lights off item; the button next to it does that.
 - The Everything card is now called All Devices.
