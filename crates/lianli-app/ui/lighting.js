@@ -488,6 +488,7 @@ function loadIntoDrawer(effect, color) {
 
 function openDrawer(target) {
   closeMenu();
+  drawer.live = null;
   drawer.target = target;
   drawer.laneMode = false;
   drawer.picked = [];
@@ -858,6 +859,7 @@ function renderDrawer() {
     drawer.brightness = Number(bright.value);
     brightVal.textContent = bright.value + "%";
     schedulePreview();
+    liveBrightness();
   });
   settings.append(el("label", { class: "setting" }, [el("span", { class: "fx-label" }, "Brightness"), bright, brightVal]));
   if (c.directions.length) {
@@ -895,9 +897,37 @@ function schedulePreview() {
 $("#d-close").addEventListener("click", closeDrawer);
 $("#d-cancel").addEventListener("click", closeDrawer);
 closeOnBackdrop($("#drawer-bg"), closeDrawer);
+/// Sends the panel's effect to the lights as it is, without going dark first or closing.
+async function sendEffect(effect, quiet, note) {
+  const t = drawer.target;
+  if (t.type === "dev" && drawer.laneMode) return call("set_lane_effects", { id: t.id, lanes: drawer.picked.slice(), effect }, note);
+  if (t.type === "dev") return call("set_effect", { id: t.id, effect, quiet }, note);
+  if (t.type === "group") return call("set_group_effect", { group: t.id, effect, quiet }, note);
+  return call("set_all", { effect, includeOpenrgb: $("#d-openrgb").checked, quiet }, note);
+}
+
+// Brightness changes show on the lights while you drag, with no blackout in between.
+let liveTimer = null;
+function liveBrightness() {
+  clearTimeout(liveTimer);
+  liveTimer = setTimeout(async () => {
+    if (!drawer.open || (drawer.laneMode && !drawer.picked.length)) return;
+    const effect = drawerEffect();
+    try {
+      await sendEffect(effect, true);
+      drawer.live = JSON.stringify(effect);
+    } catch (e) {}
+  }, 250);
+}
+
 $("#d-apply").addEventListener("click", async () => {
   const effect = drawerEffect();
   const t = drawer.target;
+  // already on the lights from dragging the brightness
+  if (drawer.live === JSON.stringify(effect) && !drawer.laneMode) {
+    closeDrawer();
+    return rerender();
+  }
   const label = $("#d-effect-name").textContent;
   const button = $("#d-apply");
   button.disabled = true;

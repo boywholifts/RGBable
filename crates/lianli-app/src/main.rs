@@ -223,11 +223,18 @@ async fn set_all(
     state: State<'_, AppState>,
     effect: Effect,
     include_openrgb: bool,
+    quiet: Option<bool>,
 ) -> Result<(), String> {
     let engine = state.engine.clone();
     let openrgb = state.openrgb.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        lights::set_all(&engine, &openrgb, effect, include_openrgb)
+        lights::set_all(
+            &engine,
+            &openrgb,
+            effect,
+            include_openrgb,
+            quiet.unwrap_or(false),
+        )
     })
     .await
     .map_err(err)?
@@ -235,8 +242,14 @@ async fn set_all(
 }
 
 #[tauri::command(async)]
-fn set_effect(state: State<'_, AppState>, id: String, effect: Effect) -> Result<(), String> {
-    if effect.lane.is_none() {
+/// `quiet` skips going dark first, for changes made live (such as dragging the brightness).
+fn set_effect(
+    state: State<'_, AppState>,
+    id: String,
+    effect: Effect,
+    quiet: Option<bool>,
+) -> Result<(), String> {
+    if effect.lane.is_none() && !quiet.unwrap_or(false) {
         lights::go_dark(&state.engine, &state.openrgb, std::slice::from_ref(&id));
     }
     lights::set_effect(&state.engine, &state.openrgb, &id, effect).map_err(chain)
@@ -276,8 +289,16 @@ fn set_group_effect(
     state: State<'_, AppState>,
     group: String,
     effect: Effect,
+    quiet: Option<bool>,
 ) -> Result<(), String> {
-    lights::set_group_effect(&state.engine, &state.openrgb, &group, effect).map_err(chain)
+    lights::set_group_effect(
+        &state.engine,
+        &state.openrgb,
+        &group,
+        effect,
+        quiet.unwrap_or(false),
+    )
+    .map_err(chain)
 }
 
 fn default_name(state: &AppState, id: &str) -> Option<String> {
@@ -356,6 +377,7 @@ fn set_group_color(
         &state.openrgb,
         &group,
         lights::static_effect(color),
+        false,
     )
     .map_err(chain)
 }

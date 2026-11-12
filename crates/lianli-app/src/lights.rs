@@ -303,8 +303,8 @@ fn shows(config: &Config, id: &str, effect: &Effect) -> bool {
 pub fn resync_device(engine: &Engine, openrgb: &OpenRgb, id: &str) -> Result<String> {
     let config = engine.config();
     let in_sync = config.devices.get(id).is_none_or(|d| d.in_sync());
-    let (name, effect) =
-        resync_target(&config, id, in_sync).context("there is no group or All Devices lighting to go back to")?;
+    let (name, effect) = resync_target(&config, id, in_sync)
+        .context("there is no group or All Devices lighting to go back to")?;
     go_dark(engine, openrgb, &[id.to_string()]);
     set_effect(engine, openrgb, id, effect)?;
     Ok(name)
@@ -316,7 +316,7 @@ pub fn resync_group(engine: &Engine, openrgb: &OpenRgb, group: &str) -> Result<(
         .config()
         .all_effect
         .context("All Devices has no lighting to go back to yet")?;
-    set_group_effect(engine, openrgb, group, effect)
+    set_group_effect(engine, openrgb, group, effect, false)
 }
 
 /// Whether a light (an OpenRGB device or one of its headers) shows black.
@@ -529,7 +529,10 @@ fn push_device(engine: &Engine, openrgb: &OpenRgb, device: &OrgbDevice) -> Resul
             let header = header_id(&device_id, z);
             has_lighting(&config, &header)
                 || is_off(&config, &header)
-                || config.devices.get(&header).is_some_and(|d| d.polymo.is_some())
+                || config
+                    .devices
+                    .get(&header)
+                    .is_some_and(|d| d.polymo.is_some())
         });
     if touched {
         openrgb.set_leds(device.index, &compose(&parts, 0), true)?;
@@ -941,6 +944,7 @@ pub fn set_all(
     openrgb: &OpenRgb,
     effect: Effect,
     include_openrgb: bool,
+    quiet: bool,
 ) -> Result<()> {
     let effect = effect.sanitized();
     let targets: Vec<String> = lights(engine, openrgb)
@@ -948,7 +952,9 @@ pub fn set_all(
         .filter(|l| l.sync && (include_openrgb || l.source != "openrgb"))
         .map(|l| l.id)
         .collect();
-    go_dark(engine, openrgb, &targets);
+    if !quiet {
+        go_dark(engine, openrgb, &targets);
+    }
     engine.set_all_effect(&effect);
     engine.update_config(|c| {
         c.all_effect = Some(effect.clone());
@@ -1152,6 +1158,7 @@ pub fn set_group_effect(
     openrgb: &OpenRgb,
     group: &str,
     effect: Effect,
+    quiet: bool,
 ) -> Result<()> {
     let effect = effect.sanitized();
     let members = engine.update_config(|c| {
@@ -1167,7 +1174,9 @@ pub fn set_group_effect(
     let Some(members) = members else {
         bail!("no such group")
     };
-    go_dark(engine, openrgb, &members);
+    if !quiet {
+        go_dark(engine, openrgb, &members);
+    }
     let config = engine.config();
     let mut first_error = None;
     for id in members {
@@ -1314,7 +1323,10 @@ mod tests {
     #[test]
     fn saving_a_groups_order_keeps_the_others_in_place() {
         let mut order: Vec<String> = ["a", "b", "c", "d"].map(String::from).to_vec();
-        reorder(&mut order, &["d".to_string(), "b".to_string(), "e".to_string()]);
+        reorder(
+            &mut order,
+            &["d".to_string(), "b".to_string(), "e".to_string()],
+        );
         assert_eq!(order, ["a", "d", "c", "b", "e"]);
     }
 

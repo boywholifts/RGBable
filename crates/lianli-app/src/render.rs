@@ -45,7 +45,11 @@ impl Lighting {
     /// Puts an effect on the side or lane it names; a whole-device effect replaces everything.
     /// The first lane given its own effect leaves the others on the device's effect.
     pub fn apply(&mut self, effect: Effect, has_sides: bool, lanes: usize) {
-        if let Some(lane) = effect.lane.map(usize::from).filter(|l| (1..=lanes).contains(l)) {
+        if let Some(lane) = effect
+            .lane
+            .map(usize::from)
+            .filter(|l| (1..=lanes).contains(l))
+        {
             if self.lanes.len() != lanes {
                 let current = self.primary().cloned().map(|e| Effect {
                     side: Side::Both,
@@ -63,7 +67,10 @@ impl Lighting {
             self.lanes[lane - 1] = Some(effect);
             return;
         }
-        let effect = Effect { lane: None, ..effect };
+        let effect = Effect {
+            lane: None,
+            ..effect
+        };
         match (has_sides, effect.side) {
             (true, Side::Inner) => self.inner = Some(effect),
             (true, Side::Outer) => self.outer = Some(effect),
@@ -325,12 +332,21 @@ fn generic_frames(
         )
     };
     let lanes: Vec<Option<Effect>> = if separate {
-        lighting.lanes.iter().map(|e| e.as_ref().map(Effect::generic)).collect()
+        lighting
+            .lanes
+            .iter()
+            .map(|e| e.as_ref().map(Effect::generic))
+            .collect()
     } else {
         Vec::new()
     };
     let lane_of = |slot: usize| (slot / lane_len.max(1)).min(lanes.len().saturating_sub(1));
-    let all = || inner.iter().chain(outer.iter()).chain(lanes.iter().flatten());
+    let all = || {
+        inner
+            .iter()
+            .chain(outer.iter())
+            .chain(lanes.iter().flatten())
+    };
     let period = all()
         .filter(|e| e.is_animated())
         .map(Effect::period_ms)
@@ -982,7 +998,10 @@ mod tests {
         let drizzle = Effect {
             kind: EffectKind::Drizzle,
             colors: vec![[0, 0, 255]],
-            span: Some(crate::effects::Span { start: 500, len: 250 }),
+            span: Some(crate::effects::Span {
+                start: 500,
+                len: 250,
+            }),
             ..Effect::default()
         };
         let swapped = native_versions(&Lighting::whole(drizzle), profile);
@@ -1081,9 +1100,13 @@ mod tests {
                 reverse,
                 ..drizzle.inner.clone().unwrap()
             });
-            lianli_frames(&native_versions(&lighting, strimer), &[[0; 3]; 116], strimer)
-                .unwrap()
-                .frames
+            lianli_frames(
+                &native_versions(&lighting, strimer),
+                &[[0; 3]; 116],
+                strimer,
+            )
+            .unwrap()
+            .frames
         };
         assert_ne!(render(false), render(true), "reverse is ignored");
         let frames = wireless_frames(
