@@ -606,3 +606,9 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .dev-field { display: flex; align-items: center; gap: 8px; }
 .sub-setting { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .page-head .row .btn { white-space: nowrap; }
+.dev-section { border: 1px dashed transparent; border-radius: 14px; padding: 6px; margin: 0 -6px 12px; }
+.dev-section.drop { border-color: var(--accent); background: rgba(128, 0, 255, .06); }
+.dev-row { cursor: grab; }
+.dev-row.dragging { opacity: .4; }
+.dev-empty { padding: 14px; border-radius: 12px; border: 1px dashed var(--line); text-align: center; }
+.page-head > .row { flex: none; flex-wrap: nowrap; }
