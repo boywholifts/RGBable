@@ -591,3 +591,18 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 
 .resync-btn { color: var(--accent-2); }
 .resync-btn:hover { background: rgba(155,92,255,0.15); }
+
+.back-link { margin-bottom: 6px; padding-left: 0; }
+.dev-section { margin-bottom: 18px; }
+.dev-section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+.dev-list { display: flex; flex-direction: column; gap: 8px; }
+.dev-row { display: flex; align-items: center; gap: 16px; padding: 10px 14px; margin: 0; }
+.dev-row.is-hidden { opacity: .6; }
+.dev-row.flash { animation: seq-flash .8s ease-out 2; }
+.dev-name { background: none; border: none; color: inherit; text-align: left; cursor: pointer; padding: 0; width: 240px; flex: none; min-width: 0; font: inherit; }
+.dev-name:hover .row-name { text-decoration: underline; }
+.dev-name .row-name, .dev-name .row-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dev-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; flex: 1; justify-content: flex-end; }
+.dev-field { display: flex; align-items: center; gap: 8px; }
+.sub-setting { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.page-head .row .btn { white-space: nowrap; }

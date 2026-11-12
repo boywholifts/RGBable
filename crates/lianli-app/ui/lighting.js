@@ -129,24 +129,6 @@ function ledCountDialog(l) {
   ], [el("button", { class: "btn", onclick: closeDialog }, "Done")]);
 }
 
-function delayDialog(l) {
-  const value = el("span", { class: "muted small" });
-  const slider = el("input", { type: "range", min: 0, max: 5000, step: 100, value: l.delay_ms || 0 });
-  const show = () => (value.textContent = Number(slider.value) ? `${(Number(slider.value) / 1000).toFixed(1)} s behind` : "In step");
-  show();
-  slider.addEventListener("input", show);
-  const save = el("button", { class: "btn primary" }, "Save");
-  save.addEventListener("click", async () => {
-    closeDialog();
-    await call("set_delay", { id: l.id, delayMs: Number(slider.value) }, `${l.name}: ${value.textContent.toLowerCase()}`);
-    rerender();
-  });
-  openDialog(`Start delay · ${l.name}`, [
-    el("p", { class: "muted small" }, "Runs this device's effect behind the others, so identical devices (two RAM sticks, a row of fans) don't move in step. Good with Drizzle, Meteor and Wave."),
-    el("label", { class: "setting" }, [el("span", { class: "fx-label" }, "Delay"), slider, value]),
-  ], [el("button", { class: "btn", onclick: closeDialog }, "Cancel"), save]);
-}
-
 // ---------------------------------------------------------------- rows
 
 function effectSummary(l) {
@@ -188,7 +170,7 @@ function setOff(l, off) {
   return call("set_off", { id: l.id, off }, off ? `${l.name} off` : `${l.name} on`).then(rerender);
 }
 
-/// The buttons that turn every light off or on, on the Lighting and Devices pages.
+/// The button that turns every light off or on, on the Lighting page.
 let allOff = false;
 function renderAllOff(o) {
   allOff = !!o.all_off;
@@ -228,40 +210,15 @@ function resyncButton(title, onClick) {
 }
 
 function deviceMenu(l, anchor) {
-  const groups = last ? last.groups : [];
-  const items = [
+  openMenu(anchor, [
     ...(l.resync ? [{ label: `Resync to ${l.resync}`, onClick: () => resyncDevice(l) }] : []),
-    { label: l.off ? "Turn on" : "Turn off", onClick: () => setOff(l, !l.off) },
-    { label: "Color temperature…", onClick: () => warmthDialog(l) },
     { label: "Change effect…", onClick: () => openDrawer({ type: "dev", id: l.id }) },
-    { label: "Rename…", onClick: () => promptName(`Rename ${l.name}`, l.name, (name) => call("rename", { id: l.id, name }, "Renamed").then(rerender)) },
+    { label: l.off ? "Turn on" : "Turn off", onClick: () => setOff(l, !l.off) },
     { label: "Identify (blink)", onClick: () => call("identify", { id: l.id }, `Blinking ${l.name}`) },
-    { label: "Include in All Devices", checked: l.sync, onClick: () => call("set_sync", { id: l.id, sync: !l.sync }).then(rerender) },
-  ];
-  const animated = [l.effect, l.outer_effect].some((e) => e && e.kind !== "static");
-  const reversed = [l.effect, l.outer_effect].some((e) => e && e.reverse && e.kind !== "static");
-  if (animated) items.push({ label: "Reverse direction", checked: reversed, onClick: () => call("set_reverse", { id: l.id, reverse: !reversed }, reversed ? `${l.name}: normal direction` : `${l.name}: reversed`).then(rerender) });
-  if (animated && multiZone(l) && !(l.span && l.span.len < 1000)) {
-    const across = !!l.span;
-    items.push({ label: "Run across all its fans", checked: across, onClick: () => call("set_across", { id: l.id, across: !across }, across ? `${l.name}: effect on each fan` : `${l.name}: effect across its fans`).then(rerender) });
-  }
-  items.push({ label: l.delay_ms ? `Start delay (${(l.delay_ms / 1000).toFixed(1)} s)…` : "Start delay…", onClick: () => delayDialog(l) });
-  if (l.zones && l.zones.length) items.push({ label: "LED count…", onClick: () => ledCountDialog(l) });
-  items.push({
-    label: l.hidden ? "Unhide" : "Hide",
-    onClick: () => call("set_hidden", { id: l.id, hidden: !l.hidden }, l.hidden ? `${l.name} is shown again` : `${l.name} hidden: Show hidden brings it back`).then(rerender),
-  });
-  items.push("-", { header: "Move to group" });
-  items.push({ label: "No group", checked: !l.group, onClick: () => call("move_to_group", { id: l.id, group: null }).then(rerender) });
-  for (const g of groups) {
-    items.push({ label: g.name, checked: l.group === g.id, onClick: () => call("move_to_group", { id: l.id, group: g.id }).then(rerender) });
-  }
-  items.push({ label: "New group…", onClick: () => promptName("New group", "", async (name) => {
-    const id = await call("create_group", { name: name || "New group" });
-    await call("move_to_group", { id: l.id, group: id });
-    rerender();
-  }) });
-  openMenu(anchor, items);
+    "-",
+    { label: "Timing…", onClick: () => showPage("sequence") },
+    { label: "Device settings…", onClick: () => openDeviceSettings(l.id) },
+  ]);
 }
 
 /// Small marks after a device's name for settings that aren't visible in its color box.
@@ -406,6 +363,17 @@ function commonEffect(lights) {
   return synced.every((l) => key(l) === first) ? synced[0] : null;
 }
 
+const TIMING_NAMES = { together: "Together", delays: "Delays", flow: "Flow through", turns: "Take turns" };
+
+/// How the devices' effects are timed, as the Timing page shows it.
+function timingOf(o) {
+  const lights = o.lights.filter((l) => !l.hidden);
+  if (lights.some((l) => l.span && l.span.len < 1000)) return "flow";
+  if (lights.some((l) => l.turn && l.turn.len < 1000)) return "turns";
+  if (lights.some((l) => l.delay_ms)) return "delays";
+  return "together";
+}
+
 function renderEverything(o) {
   const shared = commonEffect(o.lights);
   const synced = o.lights.filter((l) => l.sync).length;
@@ -421,20 +389,15 @@ function renderEverything(o) {
       el("div", { class: "everything-title" }, "All Devices"),
       el("div", { class: "row-sub" }, `${synced} of ${o.lights.length} devices in sync · ${shared ? effectSummary(shared) : "Mixed lighting"}`),
     ]),
+    el("button", { class: "btn", title: "How effects play across the devices: together, one after another, flowing through them or taking turns", onclick: (e) => { e.stopPropagation(); showPage("sequence"); } }, [icon("clock"), " Timing: ", TIMING_NAMES[timingOf(o)]]),
     el("button", { class: "btn primary", onclick: (e) => { e.stopPropagation(); openDrawer({ type: "all" }); } }, "Change effect")
   );
   card.onclick = () => openDrawer({ type: "all" });
 }
 
-let showHidden = false;
-
 function renderLights(o) {
-  const hiddenCount = o.lights.filter((l) => l.hidden).length;
-  const toggle = $("#show-hidden");
-  toggle.hidden = !hiddenCount;
-  toggle.textContent = showHidden ? "Hide hidden devices" : `Show hidden (${hiddenCount})`;
-  if (!hiddenCount) showHidden = false;
-  o = { ...o, lights: showHidden ? o.lights : o.lights.filter((l) => !l.hidden) };
+  renderDevices(o);
+  o = { ...o, lights: o.lights.filter((l) => !l.hidden) };
   const orgb = o.openrgb;
   $("#orgb-status").replaceChildren(
     orgb.connected ? `OpenRGB connected` : "OpenRGB not connected · ",
@@ -444,7 +407,7 @@ function renderLights(o) {
   const noRam = orgb.connected && !o.lights.some((l) => l.source === "openrgb" && l.kind === "ram");
   $("#ram-hint").hidden = !noRam || o.manage_openrgb;
 
-  const key = JSON.stringify([o.lights, o.groups, orgb.connected, [...collapsed], showHidden]);
+  const key = JSON.stringify([o.lights, o.groups, orgb.connected, [...collapsed]]);
   if (key === structureKey || document.querySelector("#lights .dragging") || document.querySelector(".menu")) return;
   structureKey = key;
   renderEverything(o);
@@ -465,11 +428,6 @@ function renderLights(o) {
   }
   if (drawer.open) renderDrawerTitle();
 }
-
-$("#show-hidden").addEventListener("click", () => {
-  showHidden = !showHidden;
-  rerender();
-});
 
 $("#group-new").addEventListener("click", () =>
   promptName("New group", "", async (name) => {
@@ -734,27 +692,6 @@ function renderLanes() {
   );
 }
 
-/// ASUS boards' first header drives the Polymo panel: choose which picture shows the lighting.
-function renderPolymo() {
-  const box = $("#d-polymo");
-  const t = drawer.target;
-  const l = t && t.type === "dev" ? targetLights()[0] : null;
-  box.hidden = !(l && l.polymo_header);
-  if (box.hidden) return box.replaceChildren();
-  box.replaceChildren(
-    el("span", { class: "fx-label", title: "The Polymo panel is driven by this header's first 19 LEDs" }, "Polymo"),
-    segmented(
-      [["", "Plain header"], ["logo", "ROG logo"], ["diamonds", "Diamonds"], ["both", "Both"]],
-      l.polymo || "",
-      async (v) => {
-        await call("set_polymo", { id: l.id, polymo: v || null }, v ? "Polymo picture set" : "Back to a plain header");
-        await refresh();
-        if (drawer.open) renderDrawer();
-      }
-    )
-  );
-}
-
 /// How many Strimer lanes the panel's device has, when it is a single Strimer.
 function laneCount() {
   const t = drawer.target;
@@ -894,7 +831,6 @@ function renderDrawer() {
   );
 
   renderLanes();
-  renderPolymo();
 
   const c = drawerControls();
   drawer.colors = drawer.colors.slice(0, Math.max(1, c.colors));

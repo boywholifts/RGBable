@@ -48,13 +48,17 @@ function el(tag, attrs = {}, children = []) {
 
 // ---------------------------------------------------------------- navigation
 
-document.querySelectorAll(".nav").forEach((b) =>
-  b.addEventListener("click", () => {
-    document.querySelectorAll(".nav").forEach((n) => n.classList.toggle("active", n === b));
-    document.querySelectorAll(".page").forEach((p) => p.classList.toggle("active", p.id === "page-" + b.dataset.page));
-    document.dispatchEvent(new CustomEvent("page-changed", { detail: b.dataset.page }));
-  })
-);
+/// Pages reached from another page rather than the sidebar, and the sidebar entry they belong to.
+const PAGE_PARENT = { sequence: "lighting" };
+
+function showPage(page) {
+  const lit = PAGE_PARENT[page] || page;
+  document.querySelectorAll(".nav").forEach((n) => n.classList.toggle("active", n.dataset.page === lit));
+  document.querySelectorAll(".page").forEach((p) => p.classList.toggle("active", p.id === "page-" + page));
+  document.dispatchEvent(new CustomEvent("page-changed", { detail: page }));
+}
+
+document.querySelectorAll(".nav").forEach((b) => b.addEventListener("click", () => showPage(b.dataset.page)));
 
 
 /// Closes on a click that both starts and ends on the backdrop itself, so selecting text in a

@@ -126,7 +126,6 @@ $("#wz-back").addEventListener("click", () => {
   showWizardStep();
 });
 $("#wz-close").addEventListener("click", closeWizard);
-$("#setup-again").addEventListener("click", openWizard);
 $("#restart-app").addEventListener("click", async () => {
   const button = $("#restart-app");
   button.disabled = true;

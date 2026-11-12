@@ -1,6 +1,6 @@
-// Devices page: every device in the order its effect starts, top first, with its timing,
-// direction, whether moving effects run across its fans, and the same ⋯ menu as the
-// Lighting page. Timing is one of:
+// Timing page (from the All Devices card): every device in the order its effect starts, top
+// first, with its timing, speed, direction and whether moving effects run across its fans.
+// Timing is one of:
 //   together  every device starts at the same moment
 //   delays    each device runs its own loop, started a set time after the others
 //   flow      the devices form one long strip, so a meteor or wave travels from one into the next
@@ -171,21 +171,6 @@ function drawSequence() {
       changed();
     });
 
-    const power = el("button", { class: "icon-btn switchable power-btn" + (item.off ? "" : " on"), title: item.off ? "Off: click to turn on" : "Turn off" }, icon("power"));
-    power.addEventListener("click", async (e) => {
-      e.stopPropagation();
-      await call("set_off", { id: item.id, off: !item.off }, item.off ? `${item.name} on` : `${item.name} off`);
-      item.off = !item.off;
-      item.light = { ...item.light, off: item.off };
-      drawSequence();
-    });
-
-    const more = el("button", { class: "icon-btn more-btn", title: "Rename, LED count, group and more (or right-click)" }, "⋯");
-    more.addEventListener("click", (e) => {
-      e.stopPropagation();
-      deviceMenu(item.light, more);
-    });
-
     const track = el("div", { class: "seq-track" });
     const part = parts.get(item.id);
     if (part) {
@@ -216,8 +201,6 @@ function drawSequence() {
       speed,
       across,
       reverse,
-      power,
-      more,
     ]);
     row.addEventListener("dragstart", (e) => {
       if (e.target.closest(".seq-track")) return e.preventDefault();
@@ -332,3 +315,5 @@ $("#seq-save").addEventListener("click", async () => {
   await saveSequence();
   if (last) renderSequence(last, true);
 });
+
+$("#seq-back").addEventListener("click", () => showPage("lighting"));

@@ -15,13 +15,14 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 - Fan screens can store a power-on picture.
 - Strimer lanes: each lane of a Strimer can run its own effect, like L-Connect's Separate mode. The effect panel shows the Strimer's lanes: click one or several, then apply once to all of them. The panel stays open for the next lanes; Whole puts one effect back on the entire Strimer.
 - Addressable headers that OpenRGB lists with no LEDs, and that you never gave a size, now get 20 LEDs, so whatever is on them (such as an ASUS Polymo panel) lights up without setting it by hand.
-- ASUS Polymo panel: on an ASUS board's first addressable header (which drives the panel), the effect panel can pick the ROG logo, the diamonds, or both; effects then run across the picture's sections and the other picture stays dark.
+- ASUS Polymo panel: on an ASUS board's first addressable header (which drives the panel), the Devices page can pick the ROG logo, the diamonds, or both; effects then run across the picture's sections and the other picture stays dark.
 - Resync: a device that was given its own lighting gets a resync button (and a menu item) that puts it back on its group's lighting, or All Devices' when it isn't in a group. A group can go back to All Devices' lighting the same way.
 - At shutdown the startup profile only flashes on long enough to be stored, then the lights go dark until the PC is off.
 - Wireless fans and Strimers now store their lighting, as L-Connect does, so after a full shutdown they come back with RGBable's lighting (or the startup lighting) instead of an old L-Connect effect.
 
 ### Changed
 
+- Reorganized so each setting has one home. Lighting is for what's showing (with a Timing button on the All Devices card for Together, Delays, Flow through and Take turns); the new Devices page holds each device's own settings (name, group, LED count, color temperature, In All Devices, Polymo picture, shown on Lighting); Settings groups startup and power-on lighting under When the PC starts. The device ⋯ menu is shorter and links to both.
 - Drizzle no longer runs through a flow: in Flow through, a Strimer with Drizzle keeps its own (Lian Li) drizzle while effects like Meteor flow across the other devices.
 - Wireless devices whose effect had to be shrunk on a crowded radio (when every device changes at once, as when the lighting follows a new HydroShift video) get the full effect back after about 30 seconds instead of 5 minutes.
 - The Lighting profile menu no longer has a Lights off item; the button next to it does that.

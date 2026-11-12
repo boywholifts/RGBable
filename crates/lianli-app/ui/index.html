@@ -17,7 +17,7 @@
     </div>
     <nav>
       <button class="nav active" data-page="lighting"><span class="ico"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/></svg></span>Lighting</button>
-      <button class="nav" data-page="sequence"><span class="ico"><svg viewBox="0 0 24 24"><path d="M4 6h10M4 12h13M4 18h16"/><circle cx="17" cy="6" r="1.5"/><circle cx="20" cy="12" r="1.5"/></svg></span>Devices</button>
+      <button class="nav" data-page="devices"><span class="ico"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><path d="M9 1v3M15 1v3M9 20v3M15 20v3M1 9h3M1 15h3M20 9h3M20 15h3"/></svg></span>Devices</button>
       <button class="nav" data-page="effects"><span class="ico"><svg viewBox="0 0 24 24"><path d="M12 3l1.8 4.7L18.5 9l-4.7 1.8L12 15.5l-1.8-4.7L5.5 9l4.7-1.3z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg></span>Effects</button>
       <button class="nav" data-page="oled"><span class="ico"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span>HydroShift screen</button>
       <button class="nav" data-page="fanscreens" hidden><span class="ico"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4"/></svg></span>Fan screens</button>
@@ -65,7 +65,6 @@
         <span class="muted small" id="orgb-status"></span>
         <span class="hint small" id="ram-hint" hidden>No RAM found. To control RGB RAM, open <a href="#" id="ram-hint-link">Settings → OpenRGB</a>.</span>
         <span class="grow"></span>
-        <button class="btn mini ghost" id="show-hidden" hidden>Show hidden</button>
         <button class="btn mini" id="group-new">New group</button>
       </div>
       <div id="lights"><div class="empty">Waiting for devices…</div></div>
@@ -75,14 +74,11 @@
     <section class="page" id="page-sequence">
       <header class="page-head">
         <div>
-          <h1>Devices</h1>
-          <p class="muted">Every device in one list: choose how their effects are timed against each other, drag rows to set the order, flip directions and turn devices off. ⋯ has rename, LED count and groups.</p>
-        </div>
-        <div class="head-actions">
-          <button class="btn all-off" title="Turn every light off, or back on"></button>
+          <button class="btn mini ghost back-link" id="seq-back">← Lighting</button>
+          <h1>Timing</h1>
+          <p class="muted">How effects play across your devices: all together, one after another, flowing through them as one strip, or taking turns. Drag rows to set the order.</p>
         </div>
       </header>
-      <div class="card all-off-note" hidden>All lighting is off. Each device keeps its lighting for when it's back on. <button class="btn mini primary all-on">Turn on</button></div>
       <div class="card seq-bar">
         <div class="seg" id="seq-mode" title="How the devices are timed against each other">
           <button data-mode="together">Together</button>
@@ -109,6 +105,18 @@
       <div class="seq-list" id="seq-list"><div class="empty">Loading…</div></div>
     </section>
 
+    <section class="page" id="page-devices">
+      <header class="page-head">
+        <div>
+          <h1>Devices</h1>
+          <p class="muted">Each device's own settings: its name, group, LED count and color temperature, and whether All Devices changes it. Effects are set on the Lighting page.</p>
+        </div>
+        <div class="row">
+          <button class="btn" id="setup-again">Set up devices…</button>
+        </div>
+      </header>
+      <div id="device-list"><div class="empty">Waiting for devices…</div></div>
+    </section>
     <section class="page" id="page-effects">
       <header class="page-head">
         <div>
@@ -285,27 +293,29 @@
         <p class="muted small warn-note" id="autostart-blocked" hidden>RGBable's logon task is disabled, so it won't start with Windows. Enable "RGBable at logon" in Task Scheduler.</p>
       </div>
       <div class="card">
-        <div class="toggle-row">
+        <div class="card-title">When the PC starts</div>
+        <p class="muted small">What your lights do from power-on until RGBable takes over after you sign in.</p>
+        <div class="toggle-row sub-setting">
           <div>
-            <div class="card-title">Startup lighting</div>
-            <div class="muted small">What the PC shows when it powers on, until you sign in: nothing, or a profile. While Windows shuts down or restarts, the profile flashes on briefly so the Lian Li devices can store it, then everything goes dark (Windows waits a few seconds for this). Your own lighting comes back once you've signed in.</div>
+            <div>Before you sign in</div>
+            <div class="muted small">Nothing, or a profile. While Windows shuts down or restarts, the profile flashes on briefly so the Lian Li devices can store it, then everything goes dark (Windows waits a few seconds for this). Your own lighting comes back once you've signed in.</div>
           </div>
           <select id="startup-profile"></select>
         </div>
         <label class="check startup-locked"><input type="checkbox" id="startup-locked" /> Also show it while the PC is locked</label>
-      </div>
-      <div class="card">
-        <div class="card-title">Power-on lighting</div>
-        <p class="muted small">For after a full power-off, when devices start from their own memory. Your Lian Li fans and Strimers keep their last effect by themselves; most other devices can't keep anything. This stores a plain or breathing version of the colors (matching your startup lighting, if you've picked any) in the motherboard, ARGB headers, RAM and GPU too, so they match from power-on until RGBable starts; or Off, to keep them dark until then. Devices write it to their own memory, so save it when you've settled on a look rather than after every change.</p>
-        <div class="row">
-          <div class="seg" id="power-on-mode">
-            <button data-mode="plain" class="on">Plain</button>
-            <button data-mode="breathing">Breathing</button>
-            <button data-mode="off">Off</button>
+        <div class="sub-setting">
+          <div>Other devices at power-on</div>
+          <p class="muted small">Your Lian Li fans and Strimers keep their effect by themselves; the motherboard, ARGB headers, RAM and GPU can only store a plain or breathing color (matching the startup lighting, if you've picked one), or Off to stay dark until RGBable starts. They write it to their own memory, so save it once you've settled on a look.</p>
+          <div class="row">
+            <div class="seg" id="power-on-mode">
+              <button data-mode="plain" class="on">Plain</button>
+              <button data-mode="breathing">Breathing</button>
+              <button data-mode="off">Off</button>
+            </div>
+            <button class="btn primary" id="power-on-save">Save to devices</button>
           </div>
-          <button class="btn primary" id="power-on-save">Save to devices</button>
+          <p class="muted small" id="power-on-result"></p>
         </div>
-        <p class="muted small" id="power-on-result"></p>
       </div>
       <div class="card">
         <div class="card-title">OpenRGB</div>
@@ -336,12 +346,7 @@
         <div class="card-title">L-Connect</div>
         <p class="muted small">Only one program can talk to the Lian Li devices. Turn off L-Connect's "start with Windows" and exit it; RGBable waits until it has closed.</p>
       </div>
-      <div class="card">
-        <div class="card-title">Device setup</div>
-        <p class="muted small">Walk through every light again: blink it, name it, put it in a group and choose whether All Devices changes it.</p>
-        <div class="row"><button class="btn" id="setup-again">Run setup again</button></div>
-      </div>
-      <div class="card">
+            <div class="card">
         <div class="card-title">Updates</div>
         <p class="muted small">RGBable checks GitHub for new versions when it starts and every few hours. Dev builds are untested and come out with every change.</p>
         <div class="row">
@@ -424,7 +429,6 @@
       <div class="tiles" id="d-tiles"></div>
       <div class="ring-row" id="d-ring" hidden></div>
       <div class="lanes" id="d-lanes" hidden></div>
-      <div class="ring-row" id="d-polymo" hidden></div>
       <div class="settings" id="d-settings"></div>
       <div class="muted small" id="d-note"></div>
     </div>
@@ -487,6 +491,7 @@
   <script src="fan-screens.js"></script>
   <script src="readouts.js"></script>
   <script src="sequence.js"></script>
+  <script src="devices.js"></script>
   <script src="fans.js"></script>
   <script src="light-profiles.js"></script>
   <script src="app.js"></script>
