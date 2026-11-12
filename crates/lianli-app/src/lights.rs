@@ -271,12 +271,12 @@ fn resync_target(config: &Config, id: &str, in_sync: bool) -> Option<(String, Ef
         .groups
         .iter()
         .find(|g| g.members.iter().any(|m| m == id));
+    let reversed = config.devices.get(id).is_some_and(|d| d.reversed);
     if let Some(g) = group {
         if let Some(effect) = g.effect.clone().or_else(|| g.color.map(static_effect)) {
-            return Some((g.name.clone(), effect));
+            return Some((g.name.clone(), effect.reversed_if(reversed)));
         }
     }
-    let reversed = config.devices.get(id).is_some_and(|d| d.reversed);
     in_sync
         .then(|| config.all_effect.clone())
         .flatten()
@@ -1136,9 +1136,12 @@ pub fn set_group_effect(
         bail!("no such group")
     };
     go_dark(engine, openrgb, &members);
+    let config = engine.config();
     let mut first_error = None;
     for id in members {
-        if let Err(e) = set_effect(engine, openrgb, &id, effect.clone()) {
+        // each device keeps the direction it was set to
+        let reversed = config.devices.get(&id).is_some_and(|d| d.reversed);
+        if let Err(e) = set_effect(engine, openrgb, &id, effect.clone().reversed_if(reversed)) {
             tracing::warn!("{id}: {e:#}");
             first_error.get_or_insert(e);
         }
