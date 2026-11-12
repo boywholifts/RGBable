@@ -568,6 +568,7 @@ pub fn resize_zone(
 
 /// After (re)connecting: restore zone sizes the user set, then everyone's saved lighting.
 pub fn after_openrgb_connect(engine: &Engine, openrgb: &OpenRgb) {
+    size_empty_headers(engine, openrgb);
     remember_zone_sizes(engine, openrgb);
     let config = engine.config();
     for device in openrgb.view().devices {
@@ -586,6 +587,27 @@ pub fn after_openrgb_connect(engine: &Engine, openrgb: &OpenRgb) {
         }
     }
     sync_openrgb_effects(engine, openrgb);
+}
+
+/// Addressable headers start with no LEDs in OpenRGB, which leaves them dark (and an ASUS
+/// board's Polymo panel with them): any the user never gave a size get 20.
+fn size_empty_headers(engine: &Engine, openrgb: &OpenRgb) {
+    const DEFAULT_LEDS: usize = 20;
+    let config = engine.config();
+    for device in openrgb.view().devices {
+        let saved = config.devices.get(&openrgb_id(&device));
+        for (zone, z) in device.zones.iter().enumerate() {
+            let sized = saved.is_some_and(|s| s.zone_sizes.contains_key(&zone));
+            if !z.resizable() || z.leds > 0 || sized || z.max == 0 {
+                continue;
+            }
+            let size = DEFAULT_LEDS.clamp(z.min.max(1), z.max);
+            match openrgb.resize_zone(device.index, zone, size) {
+                Ok(()) => info!("{}: {} set to {size} LEDs", device.name, z.name),
+                Err(e) => warn!("{}: sizing {}: {e:#}", device.name, z.name),
+            }
+        }
+    }
 }
 
 /// Keeps the LED count of every addressable header OpenRGB knows the size of (set in

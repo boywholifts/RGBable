@@ -82,4 +82,4 @@ Wireless fans on a coolant curve wait up to 15 seconds for the first coolant rea
 
 ## ASUS ROG Polymo panel
 
-The Polymo panel isn't a separate device: it is the first 19 LEDs of the board's first addressable header (OpenRGB's "Addressable 1" zone). LEDs 1-11 light the ROG logo and HERO lettering, LEDs 12-19 the diamond pattern. It only follows live (Direct) colors, so OpenRGB's built-in modes such as Static don't change it. In RGBable, open that header's effect panel and pick a Polymo picture; make sure the header's LED count is at least 19.
+The Polymo panel isn't a separate device: it is the first 19 LEDs of the board's first addressable header (OpenRGB's "Addressable 1" zone). LEDs 1-11 light the ROG logo and HERO lettering, LEDs 12-19 the diamond pattern. It only follows live (Direct) colors, so OpenRGB's built-in modes such as Static don't change it. In RGBable, open that header's effect panel and pick a Polymo picture; RGBable gives headers that have no LEDs set 20 by default, which covers it; if you set the header yourself, keep it at 19 or more.
