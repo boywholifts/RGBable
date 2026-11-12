@@ -8,6 +8,7 @@ let devicesFocus = null;
 const devSel = new Set();
 let devAnchor = null;
 let devPanel = null;
+let devGroupPick = undefined; // a group id, or null for "Not in a group", when a group is shown
 
 const KIND_NAMES = { header: "ARGB header", ram: "RAM", gpu: "GPU", keyboard: "Keyboard", mouse: "Mouse", headset: "Headset", motherboard: "Motherboard" };
 const kindName = (l) => KIND_NAMES[l.kind] || l.kind.charAt(0).toUpperCase() + l.kind.slice(1);
@@ -16,10 +17,10 @@ const devLight = (id) => (last ? last.lights.find((l) => l.id === id) : null);
 
 function openDeviceSettings(id) {
   devicesFocus = id;
-  devicesKey = "";
+  devPanel = id;
+  devSel.clear();
   showPage("devices");
-  if (last) renderDevices(last);
-  openDevPanel(id);
+  devRerender();
 }
 
 /// Tags for the settings where a device isn't on the default.
@@ -40,8 +41,47 @@ function renderDevices(o) {
     devicesKey = key;
     drawDeviceList(o);
   }
-  renderSelectionBar();
-  if (devPanel && !document.querySelector("#dev-panel input:focus, #dev-panel select:focus")) drawDevPanel();
+  if (!document.querySelector("#dev-detail input:focus, #dev-detail select:focus")) drawDetail();
+}
+
+function devRerender() {
+  devicesKey = "";
+  if (last) renderDevices(last);
+}
+
+/// The right-hand side: one device's settings, what to do with several, a group, or a summary.
+function drawDetail() {
+  if (devSel.size > 1) return drawSelection();
+  if (devPanel && devLight(devPanel)) return drawDevPanel();
+  devPanel = null;
+  if (devGroupPick !== undefined) return drawGroup();
+  drawSummary();
+}
+
+function detailHead(over, title, sub) {
+  return el("div", { class: "dev-detail-head" }, [
+    el("div", { class: "muted small" }, over),
+    el("div", { class: "drawer-title" }, title),
+    sub ? el("div", { class: "muted small" }, sub) : null,
+  ].filter(Boolean));
+}
+
+function drawSummary() {
+  const lights = last ? last.lights : [];
+  const out = lights.filter((l) => !l.sync);
+  const hidden = lights.filter((l) => l.hidden);
+  const list = (title, items) =>
+    items.length
+      ? el("div", { class: "dev-setting column" }, [el("div", {}, title), el("div", { class: "muted small" }, items.map((l) => l.name).join(", "))])
+      : null;
+  $("#dev-detail").replaceChildren(
+    detailHead("Devices", `${lights.length} device${lights.length === 1 ? "" : "s"}`, "Click a device for its settings, a group's name for the whole group. Ctrl- or Shift-click to change several at once."),
+    el("div", { class: "drawer-body" }, [
+      list("Not in All Devices", out),
+      list("Hidden from the Lighting page", hidden),
+      !out.length && !hidden.length ? el("p", { class: "muted small" }, "Every device is in All Devices and shown on the Lighting page.") : null,
+    ].filter(Boolean)),
+  );
 }
 
 function drawDeviceList(o) {
@@ -53,13 +93,19 @@ function drawDeviceList(o) {
     [null, o.lights.filter((l) => !l.group || !o.groups.some((g) => g.id === l.group))],
   ];
   root.replaceChildren(...sections.map(([g, lights]) => {
-    const more = el("button", { class: "icon-btn more-btn", title: "Change the whole group" }, "⋯");
-    more.addEventListener("click", (e) => {
-      e.stopPropagation();
-      devGroupMenu(g, lights, more);
+    const id = g ? g.id : null;
+    const head = el("button", { class: "dev-section-head" + (devGroupPick === id && !devPanel && devSel.size < 2 ? " on" : ""), title: "Settings for the whole group" }, [
+      el("h2", {}, g ? g.name : "Not in a group"),
+      el("span", { class: "muted small" }, `${lights.length}`),
+    ]);
+    head.addEventListener("click", () => {
+      devGroupPick = id;
+      devPanel = null;
+      devSel.clear();
+      devRerender();
     });
     const section = el("div", { class: "dev-section" }, [
-      el("div", { class: "dev-section-head" }, [el("h2", {}, g ? g.name : "Not in a group"), lights.length ? more : null].filter(Boolean)),
+      head,
       el("div", { class: "dev-list" }, lights.length ? lights.map(deviceSettingsRow) : [el("div", { class: "dev-empty muted small" }, "Drag devices here")]),
     ]);
     dropZone(section, g ? g.id : null);
@@ -74,12 +120,18 @@ function drawDeviceList(o) {
 }
 
 function deviceSettingsRow(l) {
-  const row = el("div", { class: "card dev-row" + (l.hidden ? " is-hidden" : "") + (devSel.has(l.id) ? " selected" : "") + (devPanel === l.id ? " open" : ""), "data-id": l.id, draggable: "true", title: "Click for its settings · Ctrl or Shift-click to select several · drag into another group" }, [
-    el("span", { class: "seq-handle" }, "⋮⋮"),
-    el("div", { class: "dev-name" }, [el("div", { class: "row-name" }, l.name), el("div", { class: "row-sub" }, l.detail || kindName(l))]),
-    el("div", { class: "dev-tags" }, deviceTags(l)),
+  const look = l.off ? "#111" : l.effect && l.effect.kind !== "static" ? "linear-gradient(135deg,#ff0040,#ffb000,#40ff40,#00c8ff,#8040ff)" : rgbToHex(l.color || [40, 40, 40]);
+  const on = devSel.size > 1 ? devSel.has(l.id) : devPanel === l.id;
+  const row = el("div", { class: "dev-row" + (l.hidden ? " is-hidden" : "") + (on ? " selected" : ""), "data-id": l.id, draggable: "true", title: "Click for its settings · Ctrl or Shift-click to select several · drag into another group" }, [
+    el("span", { class: "dev-swatch", style: `background:${look}` }),
+    el("div", { class: "dev-name" }, [
+      el("div", { class: "row-name" }, l.name),
+      el("div", { class: "row-sub" }, l.detail || kindName(l)),
+      ...(deviceTags(l).length ? [el("div", { class: "dev-tags" }, deviceTags(l))] : []),
+    ]),
   ]);
   row.addEventListener("click", (e) => {
+    if (devPanel && !devSel.size) devSel.add(devPanel);
     if (e.ctrlKey || e.metaKey) {
       devSel.has(l.id) ? devSel.delete(l.id) : devSel.add(l.id);
       devAnchor = l.id;
@@ -90,10 +142,12 @@ function deviceSettingsRow(l) {
     } else {
       devSel.clear();
       devAnchor = l.id;
-      return openDevPanel(l.id);
+      devPanel = l.id;
+      return devRerender();
     }
-    devicesKey = "";
-    renderDevices(last);
+    devPanel = devSel.size === 1 ? [...devSel][0] : null;
+    if (devSel.size === 1) devSel.clear();
+    devRerender();
   });
   row.addEventListener("dragstart", (e) => {
     e.dataTransfer.setData("text/plain", l.id);
@@ -111,34 +165,57 @@ const devCall = (ids, cmd, args, done) =>
     rerender();
   });
 
-function renderSelectionBar() {
-  const bar = $("#dev-selbar");
-  const ids = [...devSel];
-  bar.hidden = !ids.length;
-  if (!ids.length) return;
+function bulkActions(ids, name) {
   const lights = ids.map(devLight).filter(Boolean);
   const allIn = lights.every((l) => l.sync);
   const allShown = lights.every((l) => !l.hidden);
-  bar.replaceChildren(
-    el("span", { class: "dev-selcount" }, `${ids.length} selected`),
-    el("button", { class: "btn mini", onclick: () => devCall(ids, "set_sync", { sync: !allIn }, allIn ? "Taken out of All Devices" : "Back in All Devices") }, allIn ? "Take out of All Devices" : "Put in All Devices"),
-    el("button", { class: "btn mini", onclick: () => devCall(ids, "set_hidden", { hidden: allShown }, allShown ? "Hidden from Lighting" : "Shown on Lighting") }, allShown ? "Hide from Lighting" : "Show on Lighting"),
-    el("button", { class: "btn mini", onclick: () => bulkWarmthDialog(ids, `${ids.length} devices`) }, "Color temperature…"),
-    el("button", { class: "btn mini", onclick: () => ids.forEach((id) => call("identify", { id }).catch(() => {})) }, "Identify"),
-    el("span", { class: "grow" }),
-    el("button", { class: "btn mini ghost", onclick: () => { devSel.clear(); devicesKey = ""; renderDevices(last); } }, "Clear"),
+  return [
+    settingRow("In All Devices", allIn ? "All of them are" : "Not all of them are", el("button", { class: "btn mini", onclick: () => devCall(ids, "set_sync", { sync: !allIn }, allIn ? `${name}: out of All Devices` : `${name}: in All Devices`) }, allIn ? "Take all out" : "Put all in")),
+    settingRow("On the Lighting page", allShown ? "All of them are shown" : "Some are hidden", el("button", { class: "btn mini", onclick: () => devCall(ids, "set_hidden", { hidden: allShown }, allShown ? `${name}: hidden from Lighting` : `${name}: shown on Lighting`) }, allShown ? "Hide all" : "Show all")),
+    settingRow("Color temperature", "One white balance for all of them", el("button", { class: "btn mini", onclick: () => bulkWarmthDialog(ids, name) }, "Set…")),
+  ];
+}
+
+function drawSelection() {
+  const ids = [...devSel];
+  $("#dev-detail").replaceChildren(
+    detailHead("Selected", `${ids.length} devices`, ids.map((id) => (devLight(id) || {}).name).filter(Boolean).join(", ")),
+    el("div", { class: "drawer-body" }, bulkActions(ids, `${ids.length} devices`)),
+    el("div", { class: "drawer-foot" }, [
+      el("button", { class: "btn", onclick: () => ids.forEach((id) => call("identify", { id }).catch(() => {})) }, "Identify"),
+      el("span", { class: "grow" }),
+      el("button", { class: "btn ghost", onclick: () => { devSel.clear(); devRerender(); } }, "Clear selection"),
+    ]),
   );
 }
 
-function devGroupMenu(g, lights, anchor) {
+function drawGroup() {
+  const g = devGroupPick && last ? last.groups.find((x) => x.id === devGroupPick) : null;
+  if (devGroupPick && !g) {
+    devGroupPick = undefined;
+    return drawSummary();
+  }
+  const lights = (last ? last.lights : []).filter((l) => (g ? l.group === g.id : !l.group || !last.groups.some((x) => x.id === l.group)));
   const ids = lights.map((l) => l.id);
-  const name = g ? g.name : "these devices";
-  openMenu(anchor, [
-    { label: "Select all", onClick: () => { ids.forEach((id) => devSel.add(id)); devicesKey = ""; renderDevices(last); } },
-    { label: "Take all out of All Devices", onClick: () => devCall(ids, "set_sync", { sync: false }, `${name}: out of All Devices`) },
-    { label: "Put all in All Devices", onClick: () => devCall(ids, "set_sync", { sync: true }, `${name}: in All Devices`) },
-    { label: "Color temperature for all…", onClick: () => bulkWarmthDialog(ids, name) },
-  ]);
+  const name = g ? g.name : "Devices not in a group";
+  const body = [];
+  if (g) {
+    const input = el("input", { class: "text", value: g.name, maxlength: "40" });
+    input.addEventListener("change", () => input.value.trim() && call("rename_group", { group: g.id, name: input.value.trim() }, "Group renamed").then(rerender));
+    input.addEventListener("keydown", (e) => e.key === "Enter" && input.blur());
+    body.push(settingRow("Name", null, input));
+  }
+  if (ids.length) body.push(...bulkActions(ids, name));
+  else body.push(el("p", { class: "muted small" }, "No devices yet: drag some into this group."));
+  $("#dev-detail").replaceChildren(
+    detailHead(g ? "Group" : "", name, `${ids.length} device${ids.length === 1 ? "" : "s"}`),
+    el("div", { class: "drawer-body" }, body),
+    el("div", { class: "drawer-foot" }, [
+      ids.length ? el("button", { class: "btn", onclick: () => ids.forEach((id) => call("identify", { id }).catch(() => {})) }, "Identify all") : null,
+      el("span", { class: "grow" }),
+      g ? el("button", { class: "btn danger", onclick: () => call("delete_group", { group: g.id }, `Deleted ${g.name}; its devices are ungrouped`).then(() => { devGroupPick = undefined; rerender(); }) }, "Delete group") : null,
+    ].filter(Boolean)),
+  );
 }
 
 /// One white balance for several devices, or back to the global one.
@@ -170,29 +247,6 @@ function bulkWarmthDialog(ids, name) {
 
 // ---------------------------------------------------------------- one device's panel
 
-function openDevPanel(id) {
-  devPanel = id;
-  const panel = $("#dev-panel");
-  panel.hidden = false;
-  $("#dev-panel-bg").hidden = false;
-  requestAnimationFrame(() => panel.classList.add("open"));
-  drawDevPanel();
-  devicesKey = "";
-  if (last) renderDevices(last);
-}
-
-function closeDevPanel() {
-  if (!devPanel) return;
-  devPanel = null;
-  $("#dev-panel").classList.remove("open");
-  $("#dev-panel-bg").hidden = true;
-  setTimeout(() => {
-    if (!devPanel) $("#dev-panel").hidden = true;
-  }, 200);
-  devicesKey = "";
-  if (last) renderDevices(last);
-}
-
 function settingRow(title, note, control) {
   return el("div", { class: "dev-setting" }, [
     el("div", {}, [el("div", {}, title), note ? el("div", { class: "muted small" }, note) : null].filter(Boolean)),
@@ -202,9 +256,6 @@ function settingRow(title, note, control) {
 
 function drawDevPanel() {
   const l = devLight(devPanel);
-  if (!l) return closeDevPanel();
-  $("#dp-title").textContent = l.name;
-  $("#dp-sub").textContent = l.detail || kindName(l);
 
   const name = el("input", { class: "text", value: l.name, maxlength: "40" });
   const saveName = () => {
@@ -270,19 +321,24 @@ function drawDevPanel() {
       polymo,
     ]));
   }
-  $("#dp-body").replaceChildren(...body);
-  $("#dp-identify").onclick = () => call("identify", { id: l.id }, `Blinking ${l.name}`);
-  $("#dp-effect").onclick = () => {
-    closeDevPanel();
-    showPage("lighting");
-    openDrawer({ type: "dev", id: l.id });
-  };
+  $("#dev-detail").replaceChildren(
+    detailHead("Device", l.name, l.detail || kindName(l)),
+    el("div", { class: "drawer-body" }, body),
+    el("div", { class: "drawer-foot" }, [
+      el("button", { class: "btn", onclick: () => call("identify", { id: l.id }, `Blinking ${l.name}`) }, "Identify"),
+      el("span", { class: "grow" }),
+      el("button", { class: "btn primary", onclick: () => { showPage("lighting"); openDrawer({ type: "dev", id: l.id }); } }, "Change its effect…"),
+    ]),
+  );
 }
 
-$("#dp-close").addEventListener("click", closeDevPanel);
-closeOnBackdrop($("#dev-panel-bg"), closeDevPanel);
-document.addEventListener("keydown", (e) => e.key === "Escape" && devPanel && closeDevPanel());
-document.addEventListener("page-changed", (e) => e.detail !== "devices" && closeDevPanel());
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape" || !document.querySelector("#page-devices.active") || document.querySelector(".dialog, .menu")) return;
+  devSel.clear();
+  devPanel = null;
+  devGroupPick = undefined;
+  devRerender();
+});
 
 $("#setup-again").addEventListener("click", () => openWizard());
 
