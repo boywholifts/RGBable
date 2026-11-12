@@ -72,6 +72,7 @@ struct Overview {
     lighting_profile: Option<String>,
     startup_profile: Option<String>,
     sequence_order: Vec<String>,
+    chain_speed: Option<u8>,
     startup_profile_when_locked: bool,
     startup_dark: bool,
     all_off: bool,
@@ -128,6 +129,7 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
         lighting_profile: config.lighting_profile.clone(),
         startup_profile: config.startup_profile.clone(),
         sequence_order: config.sequence_order.clone(),
+        chain_speed: config.chain_speed,
         startup_profile_when_locked: config.startup_profile_when_locked,
         startup_dark: config.startup_dark,
         all_off: config.all_off,
@@ -161,8 +163,9 @@ fn chain(e: anyhow::Error) -> String {
 fn set_sequence(
     state: State<'_, AppState>,
     entries: Vec<lights::SequenceEntry>,
+    chain_speed: Option<u8>,
 ) -> Result<(), String> {
-    lights::set_sequence(&state.engine, &state.openrgb, &entries).map_err(chain)
+    lights::set_sequence(&state.engine, &state.openrgb, &entries, chain_speed).map_err(chain)
 }
 
 #[tauri::command(async)]

@@ -46,6 +46,9 @@ pub struct Config {
     /// The order of the devices on the Timing page, which chains and spacing follow.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sequence_order: Vec<String>,
+    /// The speed every device in a Flow through chain runs at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_speed: Option<u8>,
     #[serde(default)]
     pub oled_ring: Option<[u8; 3]>,
     #[serde(default)]
@@ -1542,12 +1545,13 @@ impl Engine {
                 }
 
                 let prepare = |level: u8| {
-                    let (delay, span, turn) = self
-                        .config()
+                    let config = self.config();
+                    let (delay, span, turn) = config
                         .devices
                         .get(&ctl.id)
                         .map_or((0, None, None), |d| (d.delay_ms, d.span, d.turn));
-                    prepare_lighting(wireless, ctl, &mac, level, delay, span, turn)
+                    let chain = (span, turn, config.chain_speed);
+                    prepare_lighting(wireless, ctl, &mac, level, delay, chain)
                 };
                 let (upload, sends) = match resend {
                     // prepared again rather than re-sent as is: the loop's starting point
@@ -2199,8 +2203,11 @@ fn prepare_lighting(
     mac: &[u8; 6],
     shrink: u8,
     delay_ms: u32,
-    span: Option<crate::effects::Span>,
-    turn: Option<crate::effects::Span>,
+    (span, turn, chain_speed): (
+        Option<crate::effects::Span>,
+        Option<crate::effects::Span>,
+        Option<u8>,
+    ),
 ) -> Result<WirelessRgbUpload> {
     let mut lighting = ctl.shown_lighting();
     for effect in [&mut lighting.inner, &mut lighting.outer]
@@ -2209,6 +2216,7 @@ fn prepare_lighting(
     {
         effect.span = span;
         effect.turn = turn;
+        *effect = effect.clone().at_chain_speed(chain_speed);
     }
     let base = ctl.shown_colors();
     if lighting.is_static() || ctl.identifying.load(Ordering::Acquire) {

@@ -389,6 +389,15 @@ impl Effect {
             .map(Span::len)
     }
 
+    /// In a chain the whole chain runs at its one speed; the device keeps its own for when
+    /// it isn't in one.
+    pub fn at_chain_speed(self, chain_speed: Option<u8>) -> Self {
+        match chain_speed {
+            Some(speed) if self.chain_share().is_some() => Self { speed, ..self },
+            _ => self,
+        }
+    }
+
     /// Length of one loop in milliseconds.
     pub fn period_ms(&self) -> u32 {
         // every device in a chain loops in exactly the same time whatever its effect, so they

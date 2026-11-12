@@ -659,5 +659,6 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 button, select, input, textarea { font-family: inherit; }
 #page-sequence:not([data-mode="flow"]) .flow-only { display: none; }
 #page-sequence[data-mode="flow"] .seq-speed { visibility: hidden; }
-.seq-row.unchained .row-text, .seq-row.unchained .seq-order { opacity: .55; }
+.seq-row.unchained { background: transparent; border-style: dashed; }
+.seq-row.unchained > :not(.flow-only) { opacity: .45; }
 #page-sequence[data-mode="flow"] .seq-row.unchained .seq-speed { visibility: visible; }

@@ -59,7 +59,7 @@ function renderSequence(o, force) {
   seq.mode = seq.items.some((i) => i.flow || i.turns) ? "flow" : "delays";
   // in a chain, a moving device without a place in it was left out; otherwise all join
   if (seq.mode === "delays") for (const i of seq.items) i.chained = true;
-  seq.speed = chainSpeed();
+  seq.speed = o.chain_speed || chainSpeed();
   seq.dirty = false;
   const pick = $("#seq-group");
   pick.replaceChildren(
@@ -182,7 +182,7 @@ function drawSequence() {
     const chain = el("button", {
       class: "icon-btn switchable flow-only" + (item.animated && item.chained ? " on" : ""),
       title: item.chained ? "In the chain: click to leave it out, so it plays its own effect" : "Left out of the chain: click to put it back in",
-    }, icon("chain"));
+    }, icon(item.animated && !item.chained ? "unchain" : "chain"));
     chain.disabled = !item.animated;
     chain.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -340,14 +340,9 @@ async function saveSequence() {
       turn: seq.mode === "flow" ? part : null,
     };
   });
-  // a chain runs at one speed, or the devices drift apart
-  if (seq.mode === "flow") {
-    for (const i of seq.items.filter((i) => i.animated && i.chained && i.speed !== seq.speed)) {
-      await call("set_speed", { id: i.id, speed: seq.speed });
-      i.speed = seq.speed;
-    }
-  }
-  await call("set_sequence", { entries }, "Saved");
+  // a chain runs at its one speed, or the devices drift apart; each device keeps its own
+  // speed for when it's out of the chain
+  await call("set_sequence", { entries, chainSpeed: seq.mode === "flow" ? seq.speed : null }, "Saved");
   seq.dirty = false;
   await refresh();
 }

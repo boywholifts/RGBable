@@ -483,10 +483,13 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
                     .unwrap_or(crate::render::GLOBAL_WARMTH),
                 zones,
                 keys,
-                effect: saved.and_then(|s| s.effect.clone()).map(|e| Effect {
-                    span: saved.and_then(|s| s.span).or(board_span),
-                    turn: saved.and_then(|s| s.turn).or(board_turn),
-                    ..e
+                effect: saved.and_then(|s| s.effect.clone()).map(|e| {
+                    Effect {
+                        span: saved.and_then(|s| s.span).or(board_span),
+                        turn: saved.and_then(|s| s.turn).or(board_turn),
+                        ..e
+                    }
+                    .at_chain_speed(config.chain_speed)
                 }),
                 color: if dark {
                     [0, 0, 0]
@@ -846,8 +849,16 @@ pub fn set_hidden(engine: &Engine, id: &str, hidden: bool) {
 }
 
 /// Saves a whole sequence at once and resends only the devices that changed.
-pub fn set_sequence(engine: &Engine, openrgb: &OpenRgb, entries: &[SequenceEntry]) -> Result<()> {
+pub fn set_sequence(
+    engine: &Engine,
+    openrgb: &OpenRgb,
+    entries: &[SequenceEntry],
+    chain_speed: Option<u8>,
+) -> Result<()> {
     let changed: Vec<String> = engine.update_config(|c| {
+        if let Some(speed) = chain_speed {
+            c.chain_speed = Some(speed.clamp(1, 5));
+        }
         let ids: Vec<String> = entries.iter().map(|e| e.id.clone()).collect();
         reorder(&mut c.sequence_order, &ids);
         entries
