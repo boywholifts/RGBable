@@ -237,9 +237,7 @@ pub fn lights(engine: &Engine, openrgb: &OpenRgb) -> Vec<LightView> {
                 span: None,
                 turn: None,
                 resync: None,
-                polymo_header: index == 0
-                    && device.name.to_ascii_uppercase().contains("ASUS")
-                    && zone.leds >= 19,
+                polymo_header: is_polymo_header(&device, index),
                 polymo: own.and_then(|s| s.polymo),
                 zones: vec![zone_view(index, zone)],
                 sync: own.is_none_or(|s| s.in_sync()),
@@ -403,6 +401,14 @@ fn split_id(id: &str) -> (&str, Option<usize>) {
         },
         None => (id, None),
     }
+}
+
+/// An ASUS ROG board's first addressable header, which drives its Polymo panel when it has
+/// one (the board's own lights come first in OpenRGB's zone list).
+fn is_polymo_header(device: &OrgbDevice, index: usize) -> bool {
+    let maker = format!("{} {}", device.vendor, device.name).to_ascii_uppercase();
+    (maker.contains("ASUS") || maker.contains("ROG"))
+        && device.zones.iter().position(Zone::resizable) == Some(index)
 }
 
 /// An addressable header with LEDs on it is shown and lit as its own device.
