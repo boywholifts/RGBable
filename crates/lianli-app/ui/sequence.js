@@ -1,12 +1,12 @@
 // Timing page (from the All Devices card): every device in the order its effect starts, top
 // first, with its timing, speed, direction and whether moving effects run across its fans.
 // Timing is one of:
-//   together  every device starts at the same moment
-//   delays    each device runs its own loop, started a set time after the others
+//   delays    start times: each device runs its own loop, started a set time after the
+//             top one; all at 0 is every device together
 //   flow      the devices form one long strip, so a meteor or wave travels from one into the next
 //   turns     one device at a time: each plays its effect in its own slot and is dark otherwise
 
-const seq = { group: "all", items: [], dirty: false, step: 300, auto: true, mode: "together", key: "" };
+const seq = { group: "all", items: [], dirty: false, step: 300, auto: false, mode: "delays", key: "" };
 
 const isAnimated = (l) => [l.effect, l.outer_effect].some((e) => e && e.kind !== "static");
 const multiZone = (l) => /fans$/.test(l.kind) || l.kind === "Strimer" || (l.zones && l.zones.length > 1);
@@ -47,7 +47,7 @@ function renderSequence(o, force) {
   if (!force && (seq.dirty || key === seq.key || document.querySelector(".seq-row.dragging, .seq-marker.dragging"))) return;
   seq.key = key;
   seq.items = seqLights(o);
-  seq.mode = seq.items.some((i) => i.flow) ? "flow" : seq.items.some((i) => i.turns) ? "turns" : seq.items.some((i) => i.delay) ? "delays" : "together";
+  seq.mode = seq.items.some((i) => i.flow) ? "flow" : seq.items.some((i) => i.turns) ? "turns" : "delays";
   seq.dirty = false;
   const pick = $("#seq-group");
   pick.replaceChildren(
@@ -73,7 +73,7 @@ function changed() {
 function slots() {
   const moving = seq.items.filter((i) => i.animated);
   const result = new Map();
-  if (seq.mode === "delays" || seq.mode === "together") return result;
+  if (seq.mode === "delays") return result;
   moving.forEach((item, n) => {
     const start = Math.round((n * 1000) / moving.length);
     const end = Math.round(((n + 1) * 1000) / moving.length);
@@ -119,8 +119,7 @@ function drawSequence() {
   $("#page-sequence").dataset.mode = seq.mode;
   document.querySelectorAll("#seq-mode button").forEach((b) => b.classList.toggle("on", b.dataset.mode === seq.mode));
   $("#seq-mode-hint").textContent = {
-    together: "Every device starts its effect at the same moment. Pick another timing to stagger, chain or alternate them.",
-    delays: "Each device loops on its own, starting this long after the top one. Drag the dots or type a delay; delays longer than an effect's loop wrap around.",
+    delays: "Each device loops on its own, starting this long after the top one. All at 0 is every device together; drag a dot or type a delay to start one later. Delays longer than an effect's loop wrap around.",
     flow: "The devices act as one long strip in this order: a meteor or wave runs through the first device, then into the next. Effects that light everything at once (breathing, strobe) look the same as before.",
     turns: "One device at a time, in this order: each plays its effect once in its turn and stays dark while the others play.",
   }[seq.mode];
@@ -263,7 +262,8 @@ $("#seq-mode").addEventListener("click", (e) => {
   const mode = e.target.dataset.mode;
   if (!mode || mode === seq.mode) return;
   seq.mode = mode;
-  spaceEvenly();
+  // back to start times begins with every device together
+  if (mode === "delays") for (const item of seq.items) item.delay = 0;
   changed();
 });
 $("#seq-step").addEventListener("change", (e) => {

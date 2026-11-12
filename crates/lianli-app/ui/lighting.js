@@ -363,7 +363,7 @@ function commonEffect(lights) {
   return synced.every((l) => key(l) === first) ? synced[0] : null;
 }
 
-const TIMING_NAMES = { together: "Together", delays: "Delays", flow: "Flow through", turns: "Take turns" };
+const TIMING_NAMES = { together: "Together", delays: "Start times", flow: "Flow through", turns: "Take turns" };
 
 /// How the devices' effects are timed, as the Timing page shows it.
 function timingOf(o) {

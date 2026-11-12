@@ -76,13 +76,12 @@
         <div>
           <button class="btn mini ghost back-link" id="seq-back">← Lighting</button>
           <h1>Timing</h1>
-          <p class="muted">How effects play across your devices: all together, one after another, flowing through them as one strip, or taking turns. Drag rows to set the order.</p>
+          <p class="muted">How effects play across your devices: together or at their own start times, flowing through them as one strip, or taking turns. Drag rows to set the order.</p>
         </div>
       </header>
       <div class="card seq-bar">
         <div class="seg" id="seq-mode" title="How the devices are timed against each other">
-          <button data-mode="together">Together</button>
-          <button data-mode="delays">Delays</button>
+          <button data-mode="delays">Start times</button>
           <button data-mode="flow">Flow through</button>
           <button data-mode="turns">Take turns</button>
         </div>
@@ -92,7 +91,7 @@
         <label class="field timing-only delays-only">Spacing
           <input type="number" class="text num" id="seq-step" min="0" max="5000" step="50" value="300" /> ms
         </label>
-        <label class="check delays-only"><input type="checkbox" id="seq-auto" checked /> Space evenly as I reorder</label>
+        <label class="check delays-only"><input type="checkbox" id="seq-auto" /> Space evenly as I reorder</label>
         <span class="grow"></span>
         <button class="btn mini delays-only" id="seq-even">Space evenly</button>
         <button class="btn mini timing-only" id="seq-reverse">Reverse order</button>

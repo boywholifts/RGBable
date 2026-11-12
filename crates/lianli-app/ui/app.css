@@ -463,10 +463,6 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .color-chip { display: inline-block; width: 16px; height: 16px; border-radius: 5px; margin: 0 3px; vertical-align: -3px; border: 1px solid rgba(255,255,255,.2); }
 .seq-bar { position: sticky; top: 0; z-index: 5; background: #17131f; box-shadow: 0 12px 16px -6px var(--bg); }
 #page-sequence:not([data-mode="delays"]) .delays-only { display: none; }
-#page-sequence[data-mode="together"] .timing-only,
-#page-sequence[data-mode="together"] .seq-track,
-#page-sequence[data-mode="together"] .seq-delay { display: none; }
-#page-sequence[data-mode="together"] .seq-row .row-text { flex: 1; width: auto; }
 #page-sequence:not([data-mode="delays"]) .seq-delay { visibility: hidden; }
 .row-name.with-badges { display: flex; align-items: center; min-width: 0; }
 .row-name.with-badges .name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
