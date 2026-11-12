@@ -32,7 +32,7 @@ const CATEGORIES = [
   { id: "motion", label: "Moving", kinds: ["wave", "meteor", "scanner", "runway", "fill", "ripple", "police"] },
   { id: "ambient", label: "Ambient", kinds: ["twinkle", "starry_night", "fire", "aurora", "drizzle"] },
   { id: "keyboard", label: "Keyboard", kinds: ["key_wave", "key_ripple", "key_rain", "key_highlight"] },
-  { id: "mine", label: "Mine" },
+  { id: "mine", label: "Custom" },
 ];
 
 /// L-Connect effects that look the same as one of RGBable's: the list shows those once, and
