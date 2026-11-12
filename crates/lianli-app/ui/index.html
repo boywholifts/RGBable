@@ -109,7 +109,7 @@
       <header class="page-head">
         <div>
           <h1>Devices</h1>
-          <p class="muted">Each device's own settings: its name, LED count and color temperature, and whether All Devices changes it. Drag a device into another group. Effects are set on the Lighting page.</p>
+          <p class="muted">Click a device for its settings, Ctrl- or Shift-click to change several at once, and drag one into another group. Tags show what's not on the default. Effects are set on the Lighting page.</p>
         </div>
         <div class="row">
           <button class="btn" id="dev-group-new">New group</button>
@@ -117,6 +117,7 @@
         </div>
       </header>
       <div id="device-list"><div class="empty">Waiting for devices…</div></div>
+      <div class="card dev-selbar" id="dev-selbar" hidden></div>
     </section>
     <section class="page" id="page-effects">
       <header class="page-head">
@@ -412,6 +413,23 @@
       </div>
     </div>
   </div>
+  <div class="drawer-bg" id="dev-panel-bg" hidden></div>
+  <aside class="drawer" id="dev-panel" hidden>
+    <div class="drawer-head">
+      <div>
+        <div class="muted small">Device settings</div>
+        <div class="drawer-title" id="dp-title"></div>
+        <div class="muted small" id="dp-sub"></div>
+      </div>
+      <button class="icon-btn" id="dp-close" title="Close">✕</button>
+    </div>
+    <div class="drawer-body" id="dp-body"></div>
+    <div class="drawer-foot">
+      <button class="btn" id="dp-identify">Identify</button>
+      <span class="grow"></span>
+      <button class="btn primary" id="dp-effect">Change its effect…</button>
+    </div>
+  </aside>
   <div class="drawer-bg" id="drawer-bg" hidden></div>
   <aside class="drawer" id="drawer" hidden>
     <div class="drawer-head">

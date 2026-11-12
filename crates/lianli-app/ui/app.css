@@ -602,8 +602,6 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .dev-name { background: none; border: none; color: inherit; text-align: left; cursor: pointer; padding: 0; width: 240px; flex: none; min-width: 0; font: inherit; }
 .dev-name:hover .row-name { text-decoration: underline; }
 .dev-name .row-name, .dev-name .row-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.dev-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; flex: 1; justify-content: flex-end; }
-.dev-field { display: flex; align-items: center; gap: 8px; }
 .sub-setting { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .page-head .row .btn { white-space: nowrap; }
 .dev-section { border: 1px dashed transparent; border-radius: 14px; padding: 6px; margin: 0 -6px 12px; }
@@ -612,3 +610,15 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .dev-row.dragging { opacity: .4; }
 .dev-empty { padding: 14px; border-radius: 12px; border: 1px dashed var(--line); text-align: center; }
 .page-head > .row { flex: none; flex-wrap: nowrap; }
+.dev-section-head { display: flex; align-items: center; justify-content: space-between; }
+.dev-row { cursor: pointer; user-select: none; }
+.dev-row:hover { border-color: var(--card-hi); }
+.dev-row.selected { border-color: var(--accent); background: rgba(128, 0, 255, .1); }
+.dev-row.open { border-color: var(--accent-2); }
+.dev-tags { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; justify-content: flex-end; }
+.dev-selbar { position: sticky; bottom: 12px; display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-color: var(--accent); box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+.dev-selbar[hidden] { display: none; }
+.dev-selcount { font-weight: 600; margin-right: 6px; }
+.dev-setting { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding-bottom: 12px; border-bottom: 1px solid var(--line); }
+.dev-setting.column { flex-direction: column; align-items: stretch; gap: 8px; }
+.dev-setting .text { max-width: 220px; }
