@@ -37,6 +37,7 @@ function seqLights(o) {
       slot: partial(l.span) ? l.span.start : partial(l.turn) ? l.turn.start : null,
       flow: partial(l.span),
       turns: partial(l.turn),
+      chained: partial(l.span) || partial(l.turn),
       multi: multiZone(l),
       off: !!l.off,
       light: l,
@@ -56,6 +57,8 @@ function renderSequence(o, force) {
   seq.key = key;
   seq.items = seqLights(o);
   seq.mode = seq.items.some((i) => i.flow || i.turns) ? "flow" : "delays";
+  // in a chain, a moving device without a place in it was left out; otherwise all join
+  if (seq.mode === "delays") for (const i of seq.items) i.chained = true;
   seq.speed = chainSpeed();
   seq.dirty = false;
   const pick = $("#seq-group");
@@ -80,7 +83,7 @@ function changed() {
 /// The speed most moving devices run at, which a chain starts from.
 function chainSpeed() {
   const counts = [0, 0, 0, 0, 0, 0];
-  for (const i of seq.items) if (i.animated) counts[i.speed]++;
+  for (const i of seq.items) if (i.animated && i.chained) counts[i.speed]++;
   const top = counts.indexOf(Math.max(...counts));
   return top > 0 ? top : 3;
 }
@@ -88,7 +91,7 @@ function chainSpeed() {
 /// Equal slots in list order for the moving devices in a chain: each device's stretch of
 /// the strip, and its turn when its effect can't travel.
 function slots() {
-  const moving = seq.items.filter((i) => i.animated);
+  const moving = seq.items.filter((i) => i.animated && i.chained);
   const result = new Map();
   if (seq.mode === "delays") return result;
   moving.forEach((item, n) => {
@@ -137,7 +140,7 @@ function drawSequence() {
   document.querySelectorAll("#seq-mode button").forEach((b) => b.classList.toggle("on", b.dataset.mode === seq.mode));
   $("#seq-mode-hint").textContent = {
     delays: "Each device loops on its own, starting this long after the top one. All at 0 is every device together; drag a dot or type a delay to start one later. Delays longer than an effect's loop wrap around.",
-    flow: "The devices form one chain in this order: a meteor or wave runs through each fan of the first device, then on into the next. Effects that can't travel (breathing, a plain color) take their turn instead. The whole chain runs at one speed so it stays in step.",
+    flow: "The devices form one chain in this order: a meteor or wave runs through each fan of the first device, then on into the next. Effects that can't travel (breathing, a plain color) take their turn instead. The whole chain runs at one speed so it stays in step. Use a device's chain button to leave it out: it then plays its own effect.",
   }[seq.mode];
   $("#seq-chain-speed").value = String(seq.speed);
   $("#seq-save").disabled = !seq.dirty;
@@ -175,7 +178,17 @@ function drawSequence() {
       item.speed = value;
     });
 
-    const flowing = seq.mode === "flow";
+    const flowing = seq.mode === "flow" && item.chained && item.animated;
+    const chain = el("button", {
+      class: "icon-btn switchable flow-only" + (item.animated && item.chained ? " on" : ""),
+      title: item.chained ? "In the chain: click to leave it out, so it plays its own effect" : "Left out of the chain: click to put it back in",
+    }, icon("chain"));
+    chain.disabled = !item.animated;
+    chain.addEventListener("click", (e) => {
+      e.stopPropagation();
+      item.chained = !item.chained;
+      changed();
+    });
     const across = el("button", {
       class: "icon-btn switchable" + (item.across || flowing ? " on" : ""),
       title: flowing ? "Flowing through the devices" : item.across ? "Runs across all its fans: click to run on each fan" : "Run moving effects across all its fans instead of on each one",
@@ -205,16 +218,18 @@ function drawSequence() {
       track.append(marker);
     }
 
-    const row = el("div", { class: "seq-row" + (item.animated ? "" : " still") + (item.off ? " is-off" : ""), draggable: "true" }, [
+    const unchained = seq.mode === "flow" && item.animated && !item.chained;
+    const row = el("div", { class: "seq-row" + (item.animated ? "" : " still") + (item.off ? " is-off" : "") + (unchained ? " unchained" : ""), draggable: "true" }, [
       el("span", { class: "seq-handle", title: "Drag to change the order" }, "⋮⋮"),
       el("span", { class: "seq-order" }, String(index + 1)),
       el("div", { class: "row-text" }, [
         el("div", { class: "row-name" }, item.name),
-        el("div", { class: "row-sub" }, item.off ? "Off" : item.animated ? item.sub : "Plain color, nothing to move"),
+        el("div", { class: "row-sub" }, item.off ? "Off" : unchained ? "Left out of the chain: plays its own effect" : item.animated ? item.sub : "Plain color, nothing to move"),
       ]),
       seq.mode === "flow" ? el("div", { class: "seq-spacer" }) : track,
       el("label", { class: "seq-delay", title: "Start delay" }, [input, el("span", { class: "muted small" }, "ms")]),
       speed,
+      chain,
       across,
       reverse,
     ]);
@@ -279,6 +294,7 @@ $("#seq-mode").addEventListener("click", (e) => {
   const mode = e.target.dataset.mode;
   if (!mode || mode === seq.mode) return;
   seq.mode = mode;
+  if (mode === "flow") for (const item of seq.items) item.chained = true;
   // back to start times begins with every device together
   if (mode === "delays") for (const item of seq.items) item.delay = 0;
   changed();
@@ -320,13 +336,13 @@ async function saveSequence() {
     return {
       id: i.id,
       delay_ms: seq.mode === "delays" ? i.delay : 0,
-      span: seq.mode === "flow" ? part : i.across ? { start: 0, len: 1000 } : null,
+      span: seq.mode === "flow" && part ? part : i.across ? { start: 0, len: 1000 } : null,
       turn: seq.mode === "flow" ? part : null,
     };
   });
   // a chain runs at one speed, or the devices drift apart
   if (seq.mode === "flow") {
-    for (const i of seq.items.filter((i) => i.animated && i.speed !== seq.speed)) {
+    for (const i of seq.items.filter((i) => i.animated && i.chained && i.speed !== seq.speed)) {
       await call("set_speed", { id: i.id, speed: seq.speed });
       i.speed = seq.speed;
     }
