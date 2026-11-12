@@ -8,6 +8,7 @@ let devicesFocus = null;
 const devSel = new Set();
 let devAnchor = null;
 let devPanel = null;
+let devShowHidden = false;
 let devGroupPick = undefined; // a group id, or null for "Not in a group", when a group is shown
 
 const KIND_NAMES = { header: "ARGB header", ram: "RAM", gpu: "GPU", keyboard: "Keyboard", mouse: "Mouse", headset: "Headset", motherboard: "Motherboard" };
@@ -26,6 +27,7 @@ function openDeviceSettings(id) {
 /// Tags for the settings where a device isn't on the default.
 function deviceTags(l) {
   const tags = [];
+  if (l.hidden) return tags;
   if (!l.sync) tags.push(["Not in All Devices", "off"]);
   if (l.hidden) tags.push(["Hidden from Lighting", ""]);
   if (l.warmth != null) tags.push([warmthLabel(l.warmth), ""]);
@@ -36,7 +38,7 @@ function deviceTags(l) {
 
 function renderDevices(o) {
   for (const id of [...devSel]) if (!o.lights.some((l) => l.id === id)) devSel.delete(id);
-  const key = JSON.stringify([o.lights, o.groups, o.warmth, devicesFocus, [...devSel]]);
+  const key = JSON.stringify([o.lights, o.groups, o.warmth, devicesFocus, [...devSel], devShowHidden, devPanel, devGroupPick]);
   if (key !== devicesKey && !document.querySelector("#device-list .dragging")) {
     devicesKey = key;
     drawDeviceList(o);
@@ -87,11 +89,22 @@ function drawSummary() {
 function drawDeviceList(o) {
   const root = $("#device-list");
   if (!o.lights.length) return root.replaceChildren(el("div", { class: "empty" }, "Waiting for devices…"));
+  const hidden = o.lights.filter((l) => l.hidden);
+  const toggle = $("#dev-show-hidden");
+  toggle.hidden = !hidden.length;
+  toggle.textContent = devShowHidden ? "Hide hidden devices" : `Show hidden (${hidden.length})`;
+  const shown = o.lights.filter((l) => !l.hidden);
   // every group is listed, empty ones too, so devices can be dragged into it
   const sections = [
-    ...o.groups.map((g) => [g, o.lights.filter((l) => l.group === g.id)]),
-    [null, o.lights.filter((l) => !l.group || !o.groups.some((g) => g.id === l.group))],
-  ];
+    ...o.groups.map((g) => [g, shown.filter((l) => l.group === g.id)]),
+    [null, shown.filter((l) => !l.group || !o.groups.some((g) => g.id === l.group))],
+  ].filter(([g, lights]) => g || lights.length || o.groups.length);
+  const hiddenSection = devShowHidden && hidden.length
+    ? [el("div", { class: "dev-section hidden-section" }, [
+        el("div", { class: "dev-section-head static" }, [el("h2", {}, "Hidden"), el("span", { class: "muted small" }, `${hidden.length}`)]),
+        el("div", { class: "dev-list" }, hidden.map(deviceSettingsRow)),
+      ])]
+    : [];
   root.replaceChildren(...sections.map(([g, lights]) => {
     const id = g ? g.id : null;
     const head = el("button", { class: "dev-section-head" + (devGroupPick === id && !devPanel && devSel.size < 2 ? " on" : ""), title: "Settings for the whole group" }, [
@@ -110,7 +123,7 @@ function drawDeviceList(o) {
     ]);
     dropZone(section, g ? g.id : null);
     return section;
-  }));
+  }), ...hiddenSection);
   const focused = devicesFocus && root.querySelector(`[data-id="${CSS.escape(devicesFocus)}"]`);
   if (focused) {
     focused.scrollIntoView({ block: "center" });
@@ -126,7 +139,7 @@ function deviceSettingsRow(l) {
     el("span", { class: "dev-swatch", style: `background:${look}` }),
     el("div", { class: "dev-name" }, [
       el("div", { class: "row-name" }, l.name),
-      el("div", { class: "row-sub" }, l.detail || kindName(l)),
+      el("div", { class: "row-sub" }, l.hidden ? "Hidden from the Lighting page" : l.detail || kindName(l)),
       ...(deviceTags(l).length ? [el("div", { class: "dev-tags" }, deviceTags(l))] : []),
     ]),
   ]);
@@ -348,3 +361,8 @@ $("#dev-group-new").addEventListener("click", () =>
     rerender();
   })
 );
+
+$("#dev-show-hidden").addEventListener("click", () => {
+  devShowHidden = !devShowHidden;
+  devRerender();
+});

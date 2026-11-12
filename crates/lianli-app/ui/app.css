@@ -640,3 +640,16 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .dev-row .dev-tags { justify-content: flex-start; margin-top: 4px; }
 .dev-row .tag { margin-right: 0; }
 .btn.danger { color: #ff6b81; }
+
+/* Devices page uses the whole window: groups flow into as many columns as fit, the
+   settings stay on the right, and on a narrow window they move above the list */
+#page-devices { max-width: none; }
+.dev-layout { grid-template-columns: minmax(0, 1fr) 400px; }
+#device-list { columns: 330px; column-gap: 16px; }
+.dev-section { break-inside: avoid; }
+.dev-section-head.static { cursor: default; }
+.hidden-section .dev-row { opacity: .5; }
+@media (max-width: 1000px) {
+  .dev-layout { grid-template-columns: 1fr; }
+  .dev-detail { position: static; order: -1; max-height: none; }
+}
