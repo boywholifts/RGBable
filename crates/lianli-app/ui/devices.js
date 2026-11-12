@@ -54,7 +54,10 @@ function drawDeviceList(o) {
   ];
   root.replaceChildren(...sections.map(([g, lights]) => {
     const more = el("button", { class: "icon-btn more-btn", title: "Change the whole group" }, "⋯");
-    more.addEventListener("click", (e) => devGroupMenu(g, lights, more));
+    more.addEventListener("click", (e) => {
+      e.stopPropagation();
+      devGroupMenu(g, lights, more);
+    });
     const section = el("div", { class: "dev-section" }, [
       el("div", { class: "dev-section-head" }, [el("h2", {}, g ? g.name : "Not in a group"), lights.length ? more : null].filter(Boolean)),
       el("div", { class: "dev-list" }, lights.length ? lights.map(deviceSettingsRow) : [el("div", { class: "dev-empty muted small" }, "Drag devices here")]),
