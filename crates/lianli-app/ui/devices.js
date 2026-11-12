@@ -13,7 +13,7 @@ let devGroupPick = undefined; // a group id, or null for "Not in a group", when 
 
 const KIND_NAMES = { header: "ARGB header", ram: "RAM", gpu: "GPU", keyboard: "Keyboard", mouse: "Mouse", headset: "Headset", motherboard: "Motherboard" };
 const kindName = (l) => KIND_NAMES[l.kind] || l.kind.charAt(0).toUpperCase() + l.kind.slice(1);
-const POLYMO_NAMES = { logo: "ROG logo", diamonds: "diamonds", both: "logo and diamonds" };
+const POLYMO_NAMES = { logo: "ROG logo", diamonds: "HERO logo", both: "both logos" };
 const devLight = (id) => (last ? last.lights.find((l) => l.id === id) : null);
 
 function openDeviceSettings(id) {
@@ -354,7 +354,7 @@ function drawDevPanel() {
     ]));
   }
   if (l.polymo_header) {
-    const polymo = segmented([["", "Plain"], ["logo", "ROG logo"], ["diamonds", "Diamonds"], ["both", "Both"]], l.polymo || "", (v) =>
+    const polymo = segmented([["", "Plain"], ["logo", "ROG logo"], ["diamonds", "HERO logo"], ["both", "Both"]], l.polymo || "", (v) =>
       call("set_polymo", { id: l.id, polymo: v || null }, "Polymo updated").then(rerender)
     );
     body.push(el("div", { class: "dev-setting column" }, [

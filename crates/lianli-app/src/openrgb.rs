@@ -205,8 +205,8 @@ pub struct LedPart {
 }
 
 /// The pictures of an ASUS ROG Polymo panel. It sits on the board's first addressable
-/// header: LEDs 1-11 light the ROG logo and HERO lettering in five sections, LEDs 12-19 the
-/// diamond pattern in four; a picture whose LEDs are black is off.
+/// header: LEDs 1-11 light the ROG logo in five sections, LEDs 12-19 the HERO logo in four
+/// (`Diamonds`, kept as the saved name); a picture whose LEDs are black is off.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Polymo {
