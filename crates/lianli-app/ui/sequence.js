@@ -3,10 +3,12 @@
 // Timing is one of:
 //   delays    start times: each device runs its own loop, started a set time after the
 //             top one; all at 0 is every device together
-//   flow      the devices form one long strip, so a meteor or wave travels from one into the next
-//   turns     one device at a time: each plays its effect in its own slot and is dark otherwise
+//   flow      the devices form one chain: a meteor or wave travels through each fan and on into
+//             the next device, and effects that can't travel (breathing, a color) take their
+//             turn instead. The whole chain runs at one speed so it stays in step.
+// The order is saved, so it stays put even when every delay is 0.
 
-const seq = { group: "all", items: [], dirty: false, step: 300, auto: false, mode: "delays", key: "" };
+const seq = { group: "all", items: [], dirty: false, step: 300, auto: false, mode: "delays", speed: 3, key: "" };
 
 const isAnimated = (l) => [l.effect, l.outer_effect].some((e) => e && e.kind !== "static");
 const multiZone = (l) => /fans$/.test(l.kind) || l.kind === "Strimer" || (l.zones && l.zones.length > 1);
@@ -16,6 +18,11 @@ const SPEEDS = [[1, "Slowest"], [2, "Slow"], [3, "Normal"], [4, "Fast"], [5, "Fa
 
 function seqLights(o) {
   const lights = o.lights.filter((l) => !l.hidden && (seq.group === "all" || l.group === seq.group));
+  const order = o.sequence_order || [];
+  const place = (id) => {
+    const n = order.indexOf(id);
+    return n < 0 ? Infinity : n;
+  };
   return lights
     .map((l) => ({
       id: l.id,
@@ -35,6 +42,7 @@ function seqLights(o) {
       light: l,
     }))
     .sort((a, b) =>
+      (place(a.id) === Infinity && place(b.id) === Infinity ? 0 : place(a.id) - place(b.id)) ||
       b.animated - a.animated ||
       (a.slot ?? 0) - (b.slot ?? 0) ||
       a.delay - b.delay ||
@@ -43,11 +51,12 @@ function seqLights(o) {
 }
 
 function renderSequence(o, force) {
-  const key = JSON.stringify([o.lights.map((l) => [l.id, l.name, l.delay_ms, l.span, l.turn, l.effect, l.outer_effect, l.group, l.hidden, l.off]), o.groups, seq.group]);
+  const key = JSON.stringify([o.lights.map((l) => [l.id, l.name, l.delay_ms, l.span, l.turn, l.effect, l.outer_effect, l.group, l.hidden, l.off]), o.groups, seq.group, o.sequence_order]);
   if (!force && (seq.dirty || key === seq.key || document.querySelector(".seq-row.dragging, .seq-marker.dragging"))) return;
   seq.key = key;
   seq.items = seqLights(o);
-  seq.mode = seq.items.some((i) => i.flow) ? "flow" : seq.items.some((i) => i.turns) ? "turns" : "delays";
+  seq.mode = seq.items.some((i) => i.flow || i.turns) ? "flow" : "delays";
+  seq.speed = chainSpeed();
   seq.dirty = false;
   const pick = $("#seq-group");
   pick.replaceChildren(
@@ -68,8 +77,16 @@ function changed() {
   drawSequence();
 }
 
-/// Equal slots in list order for the moving devices: places on the strip for "flow",
-/// shares of the loop for "turns".
+/// The speed most moving devices run at, which a chain starts from.
+function chainSpeed() {
+  const counts = [0, 0, 0, 0, 0, 0];
+  for (const i of seq.items) if (i.animated) counts[i.speed]++;
+  const top = counts.indexOf(Math.max(...counts));
+  return top > 0 ? top : 3;
+}
+
+/// Equal slots in list order for the moving devices in a chain: each device's stretch of
+/// the strip, and its turn when its effect can't travel.
 function slots() {
   const moving = seq.items.filter((i) => i.animated);
   const result = new Map();
@@ -120,9 +137,9 @@ function drawSequence() {
   document.querySelectorAll("#seq-mode button").forEach((b) => b.classList.toggle("on", b.dataset.mode === seq.mode));
   $("#seq-mode-hint").textContent = {
     delays: "Each device loops on its own, starting this long after the top one. All at 0 is every device together; drag a dot or type a delay to start one later. Delays longer than an effect's loop wrap around.",
-    flow: "The devices act as one long strip in this order: a meteor or wave runs through the first device, then into the next. Effects that light everything at once (breathing, strobe) look the same as before.",
-    turns: "One device at a time, in this order: each plays its effect once in its turn and stays dark while the others play.",
+    flow: "The devices form one chain in this order: a meteor or wave runs through each fan of the first device, then on into the next. Effects that can't travel (breathing, a plain color) take their turn instead. The whole chain runs at one speed so it stays in step.",
   }[seq.mode];
+  $("#seq-chain-speed").value = String(seq.speed);
   $("#seq-save").disabled = !seq.dirty;
   $("#seq-discard").hidden = !seq.dirty;
   if (!seq.items.length) {
@@ -147,7 +164,7 @@ function drawSequence() {
       drawSequence();
     });
 
-    const speed = el("select", { class: "seq-speed", title: seq.mode === "flow" || seq.mode === "turns" ? "Effect speed. Devices at different speeds won't line up in a flow or turns." : "Effect speed" },
+    const speed = el("select", { class: "seq-speed", title: "Effect speed" },
       SPEEDS.map(([value, label]) => el("option", { value: String(value) }, label)));
     speed.value = String(item.speed);
     speed.disabled = !item.animated;
@@ -304,9 +321,16 @@ async function saveSequence() {
       id: i.id,
       delay_ms: seq.mode === "delays" ? i.delay : 0,
       span: seq.mode === "flow" ? part : i.across ? { start: 0, len: 1000 } : null,
-      turn: seq.mode === "turns" ? part : null,
+      turn: seq.mode === "flow" ? part : null,
     };
   });
+  // a chain runs at one speed, or the devices drift apart
+  if (seq.mode === "flow") {
+    for (const i of seq.items.filter((i) => i.animated && i.speed !== seq.speed)) {
+      await call("set_speed", { id: i.id, speed: seq.speed });
+      i.speed = seq.speed;
+    }
+  }
   await call("set_sequence", { entries }, "Saved");
   seq.dirty = false;
   await refresh();
@@ -317,3 +341,9 @@ $("#seq-save").addEventListener("click", async () => {
 });
 
 $("#seq-back").addEventListener("click", () => showPage("lighting"));
+
+$("#seq-chain-speed").replaceChildren(...SPEEDS.map(([value, label]) => el("option", { value: String(value) }, label)));
+$("#seq-chain-speed").addEventListener("change", (e) => {
+  seq.speed = Number(e.target.value);
+  changed();
+});

@@ -657,3 +657,5 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
 .dev-name-field { flex-wrap: nowrap; gap: 6px; }
 .dev-name-field .text { max-width: none; flex: 1; }
 button, select, input, textarea { font-family: inherit; }
+#page-sequence:not([data-mode="flow"]) .flow-only { display: none; }
+#page-sequence[data-mode="flow"] .seq-speed { visibility: hidden; }

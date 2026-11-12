@@ -43,6 +43,9 @@ pub struct Config {
     /// What All Devices was last set to, for putting a device or group back in step.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub all_effect: Option<Effect>,
+    /// The order of the devices on the Timing page, which chains and spacing follow.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sequence_order: Vec<String>,
     #[serde(default)]
     pub oled_ring: Option<[u8; 3]>,
     #[serde(default)]
@@ -1648,6 +1651,10 @@ impl Engine {
                     Err(e) => warn!("storing the wireless lighting: {e:#}"),
                 }
             }
+
+            // keeps the PC's effects (OpenRGB) in step with the wireless loops, which play on
+            // the dongle's clock, even when nothing has been uploaded for a while
+            master_clock(wireless);
 
             if !sent_any {
                 thread::sleep(Duration::from_millis(30));

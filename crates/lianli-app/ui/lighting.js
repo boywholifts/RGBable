@@ -363,13 +363,13 @@ function commonEffect(lights) {
   return synced.every((l) => key(l) === first) ? synced[0] : null;
 }
 
-const TIMING_NAMES = { together: "Together", delays: "Start times", flow: "Flow through", turns: "Take turns" };
+const TIMING_NAMES = { together: "Together", delays: "Start times", flow: "Flow through" };
 
 /// How the devices' effects are timed, as the Timing page shows it.
 function timingOf(o) {
   const lights = o.lights.filter((l) => !l.hidden);
   if (lights.some((l) => l.span && l.span.len < 1000)) return "flow";
-  if (lights.some((l) => l.turn && l.turn.len < 1000)) return "turns";
+  if (lights.some((l) => l.turn && l.turn.len < 1000)) return "flow";
   if (lights.some((l) => l.delay_ms)) return "delays";
   return "together";
 }
@@ -389,7 +389,7 @@ function renderEverything(o) {
       el("div", { class: "everything-title" }, "All Devices"),
       el("div", { class: "row-sub" }, `${synced} of ${o.lights.length} devices in sync · ${shared ? effectSummary(shared) : "Mixed lighting"}`),
     ]),
-    el("button", { class: "btn", title: "How effects play across the devices: together, one after another, flowing through them or taking turns", onclick: (e) => { e.stopPropagation(); showPage("sequence"); } }, [icon("clock"), " Timing: ", TIMING_NAMES[timingOf(o)]]),
+    el("button", { class: "btn", title: "How effects play across the devices: together, at their own start times, or flowing through them as one chain", onclick: (e) => { e.stopPropagation(); showPage("sequence"); } }, [icon("clock"), " Timing: ", TIMING_NAMES[timingOf(o)]]),
     el("button", { class: "btn primary", onclick: (e) => { e.stopPropagation(); openDrawer({ type: "all" }); } }, "Change effect")
   );
   card.onclick = () => openDrawer({ type: "all" });

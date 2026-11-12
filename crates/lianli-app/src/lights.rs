@@ -848,6 +848,8 @@ pub fn set_hidden(engine: &Engine, id: &str, hidden: bool) {
 /// Saves a whole sequence at once and resends only the devices that changed.
 pub fn set_sequence(engine: &Engine, openrgb: &OpenRgb, entries: &[SequenceEntry]) -> Result<()> {
     let changed: Vec<String> = engine.update_config(|c| {
+        let ids: Vec<String> = entries.iter().map(|e| e.id.clone()).collect();
+        reorder(&mut c.sequence_order, &ids);
         entries
             .iter()
             .filter_map(|e| {
@@ -871,6 +873,25 @@ pub fn set_sequence(engine: &Engine, openrgb: &OpenRgb, entries: &[SequenceEntry
     crate::render::restart_clock(500 + 500 * wireless);
     engine.relight_all();
     relight_all(engine, openrgb, &changed)
+}
+
+/// Puts `ids` in this order within `order`, in the places they already had, so saving one
+/// group's order leaves the other devices where they were; new ones go at the end.
+fn reorder(order: &mut Vec<String>, ids: &[String]) {
+    for id in ids {
+        if !order.contains(id) {
+            order.push(id.clone());
+        }
+    }
+    let places: Vec<usize> = order
+        .iter()
+        .enumerate()
+        .filter(|(_, id)| ids.contains(id))
+        .map(|(n, _)| n)
+        .collect();
+    for (place, id) in places.into_iter().zip(ids) {
+        order[place] = id.clone();
+    }
 }
 
 /// Runs moving effects across all of a device's fans (or LEDs) instead of on each fan.
@@ -1278,6 +1299,13 @@ pub fn apply_setup(config: &mut Config, entries: &[SetupEntry], defaults: &[(Str
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn saving_a_groups_order_keeps_the_others_in_place() {
+        let mut order: Vec<String> = ["a", "b", "c", "d"].map(String::from).to_vec();
+        reorder(&mut order, &["d".to_string(), "b".to_string(), "e".to_string()]);
+        assert_eq!(order, ["a", "d", "c", "b", "e"]);
+    }
 
     #[test]
     fn a_device_goes_back_to_its_group_then_to_all_devices() {

@@ -357,7 +357,7 @@ impl Effect {
     /// Effects that move one LED at a time look smooth only when each frame is one step;
     /// in-between frames blur the drops and make the loop too big for wireless devices.
     pub fn steps(&self, zones: &[usize]) -> Option<usize> {
-        if self.turn.is_some() {
+        if self.taking_turns().is_some() {
             return None;
         }
         match self.generic().kind {
@@ -375,14 +375,28 @@ impl Effect {
         }
     }
 
+    /// Its slot when it takes turns in a chain: effects that can't run through the chain as
+    /// one strip (breathing, a plain color) play in their own slot instead.
+    pub fn taking_turns(&self) -> Option<Span> {
+        self.turn.filter(|_| self.travel_span().is_none())
+    }
+
+    /// Its share of a chain (flowing through it or taking its turn), if it's in one.
+    fn chain_share(&self) -> Option<f32> {
+        self.travel_span()
+            .filter(|s| s.len < 1000)
+            .or(self.taking_turns())
+            .map(Span::len)
+    }
+
     /// Length of one loop in milliseconds.
     pub fn period_ms(&self) -> u32 {
-        if let Some(turn) = self.turn {
-            let own = Effect {
-                turn: None,
-                ..self.clone()
-            };
-            return (own.period_ms() as f32 / stretch(turn.len())) as u32;
+        // every device in a chain loops in exactly the same time whatever its effect, so they
+        // stay in step; the time depends only on the speed and the number of devices
+        if let Some(share) = self.chain_share() {
+            const CHAIN_MS: f32 = 3000.0;
+            let factor = [2.0, 1.4, 1.0, 0.7, 0.5][usize::from(self.speed.clamp(1, 5) - 1)];
+            return (CHAIN_MS * factor / stretch(share)).round() as u32;
         }
         if self.kind == EffectKind::Lianli {
             return self.generic().period_ms();
@@ -429,7 +443,7 @@ impl Effect {
     /// The LEDs at `phase` (0..1 through the loop). `zones` are the LED counts of each
     /// fan or cable section; position-based effects run around each zone separately.
     pub fn frame(&self, zones: &[usize], phase: f32) -> Vec<[u8; 3]> {
-        if let Some(turn) = self.turn {
+        if let Some(turn) = self.taking_turns() {
             let phase = phase.rem_euclid(1.0);
             let offset = phase - turn.start();
             if !(0.0..turn.len()).contains(&offset) {
@@ -954,10 +968,6 @@ mod tests {
             ..across.clone()
         };
         assert_eq!(first.period_ms(), second.period_ms());
-        assert_eq!(
-            first.period_ms(),
-            (across.period_ms() as f32 / stretch(0.5)) as u32
-        );
         assert!(lit(&first.frame(&[20], 0.3)) && !lit(&second.frame(&[20], 0.3)));
         assert!(!lit(&first.frame(&[20], 0.8)) && lit(&second.frame(&[20], 0.8)));
         let first_reversed = Effect {
@@ -968,6 +978,26 @@ mod tests {
             lit(&first_reversed.frame(&[20], 0.3)) && !lit(&first_reversed.frame(&[20], 0.8)),
             "a reversed device keeps its place in the chain"
         );
+    }
+
+    #[test]
+    fn a_chain_loops_in_one_time_whatever_each_device_runs() {
+        let slot = Span { start: 0, len: 250 };
+        let meteor = Effect {
+            span: Some(slot),
+            turn: Some(slot),
+            ..effect(EffectKind::Meteor, &[[255, 0, 0]])
+        };
+        let breathing = Effect {
+            span: Some(slot),
+            turn: Some(slot),
+            ..effect(EffectKind::Breathing, &[[0, 255, 0], [0, 0, 255]])
+        };
+        assert_eq!(meteor.period_ms(), breathing.period_ms());
+        // the meteor flows through the chain; breathing can't, so it takes its turn
+        assert!(meteor.taking_turns().is_none());
+        assert_eq!(breathing.taking_turns(), Some(slot));
+        assert_eq!(breathing.frame(&[1], 0.6), vec![[0, 0, 0]]);
     }
 
     #[test]
@@ -984,10 +1014,6 @@ mod tests {
             }),
             ..breathing.clone()
         };
-        assert_eq!(
-            first.period_ms(),
-            (breathing.period_ms() as f32 / stretch(0.5)) as u32
-        );
         assert_eq!(first.frame(&[1], 0.25), breathing.frame(&[1], 0.5));
         assert_eq!(second.frame(&[1], 0.25), vec![[0, 0, 0]]);
         assert_eq!(second.frame(&[1], 0.75), breathing.frame(&[1], 0.5));
