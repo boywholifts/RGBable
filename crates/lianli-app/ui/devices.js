@@ -70,7 +70,7 @@ function detailHead(over, title, sub) {
 
 function drawSummary() {
   const lights = last ? last.lights : [];
-  const out = lights.filter((l) => !l.sync);
+  const out = lights.filter((l) => !l.sync && !l.hidden);
   const hidden = lights.filter((l) => l.hidden);
   const list = (title, items) =>
     items.length
@@ -271,12 +271,18 @@ function drawDevPanel() {
   const l = devLight(devPanel);
 
   const name = el("input", { class: "text", value: l.name, maxlength: "40" });
+  // an empty name goes back to the device's own
   const saveName = () => {
     const value = name.value.trim();
-    if (value && value !== l.name) call("rename", { id: l.id, name: value }, "Renamed").then(rerender);
+    if (value !== l.name) call("rename", { id: l.id, name: value }, value ? "Renamed" : `Back to ${l.default_name}`).then(rerender);
   };
   name.addEventListener("change", saveName);
   name.addEventListener("keydown", (e) => e.key === "Enter" && name.blur());
+  const renamed = l.default_name && l.name !== l.default_name;
+  const nameField = el("div", { class: "row dev-name-field" }, [
+    name,
+    renamed ? el("button", { class: "btn mini ghost", title: `Back to "${l.default_name}"`, onclick: () => call("rename", { id: l.id, name: "" }, `Back to ${l.default_name}`).then(rerender) }, "Reset") : null,
+  ].filter(Boolean));
 
   const toggle = (checked, onChange) => {
     const t = el("input", { type: "checkbox", class: "toggle" });
@@ -305,7 +311,10 @@ function drawDevPanel() {
   drawWarmth();
 
   const body = [
-    settingRow("Name", null, name),
+    el("div", { class: "dev-setting column" }, [
+      el("div", {}, [el("div", {}, "Name"), renamed ? el("div", { class: "muted small" }, `Its own name: ${l.default_name}`) : null].filter(Boolean)),
+      nameField,
+    ]),
     settingRow("In All Devices", "When off, changing All Devices leaves it alone", toggle(l.sync, (on) => call("set_sync", { id: l.id, sync: on }).then(rerender))),
     settingRow("On the Lighting page", "Hidden devices keep their lighting but aren't listed there", toggle(!l.hidden, (on) => call("set_hidden", { id: l.id, hidden: !on }).then(rerender))),
     el("div", { class: "dev-setting column" }, [

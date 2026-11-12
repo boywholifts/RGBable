@@ -649,3 +649,5 @@ input.search { width: 220px; padding: 6px 10px; font-size: 13px; }
   .dev-layout { grid-template-columns: 1fr; }
   .dev-detail { position: static; order: -1; max-height: none; }
 }
+.dev-name-field { flex-wrap: nowrap; gap: 6px; }
+.dev-name-field .text { max-width: none; flex: 1; }
