@@ -466,12 +466,14 @@ function renderDrawerTitle() {
 
 function categoryOf(effect) {
   if (!effect) return "basic";
-  if (effect.kind === "lianli") return "lianli";
+  if (effect.kind === "lianli") return lianliGroup(effect.mode);
   if (isCustom(effect)) return "mine";
   return (CATEGORIES.find((c) => c.kinds && c.kinds.includes(effect.kind)) || CATEGORIES[0]).id;
 }
 
 function loadIntoDrawer(effect, color) {
+  // a Lian Li effect that has an RGBable twin shows as the twin
+  if (effect && effect.kind === "lianli" && MERGED_MODES[effect.mode]) effect = { ...effect, kind: MERGED_MODES[effect.mode], mode: null };
   drawer.kind = effect ? effect.kind : "static";
   drawer.mode = effect && effect.mode ? effect.mode : null;
   drawer.custom = isCustom(effect) ? effect : null;
@@ -571,17 +573,7 @@ function renderTiles() {
   const tiles = $("#d-tiles");
   const category = drawer.category;
   let items = [];
-  if (category === "lianli") {
-    items = LIANLI.map((m) =>
-      tile(modeName(m.mode), drawer.kind === "lianli" && drawer.mode === m.mode, () => {
-        drawer.kind = "lianli";
-        drawer.mode = m.mode;
-        drawer.custom = null;
-        renderDrawer();
-      }, lianliUnavailable(m))
-    );
-    if (!items.length) items = [el("div", { class: "muted small" }, "Lian Li effects aren't available.")];
-  } else if (category === "mine") {
+  if (category === "mine") {
     items = MINE.map((e) =>
       tile(e.name, isCustom(drawer.custom) && drawer.custom.name === e.name && drawer.kind === e.kind, () => {
         drawer.kind = e.kind;
@@ -607,6 +599,15 @@ function renderTiles() {
         renderDrawer();
       })
     );
+    const own = LIANLI.filter((m) => !MERGED_MODES[m.mode] && lianliGroup(m.mode) === category);
+    items.push(...own.map((m) =>
+      tile(modeName(m.mode), drawer.kind === "lianli" && drawer.mode === m.mode, () => {
+        drawer.kind = "lianli";
+        drawer.mode = m.mode;
+        drawer.custom = null;
+        renderDrawer();
+      }, lianliUnavailable(m), "Lian Li")
+    ));
   }
   tiles.replaceChildren(...items);
 }
@@ -809,8 +810,10 @@ function oledColorsRow(max) {
 
 function renderDrawer() {
   if (!hasSides()) drawer.side = "both";
+  const keyboard = targetLights().some((l) => l.kind === "keyboard");
+  const tabs = keyboard ? [CATEGORIES.find((c) => c.id === "keyboard"), ...CATEGORIES.filter((c) => c.id !== "keyboard")] : CATEGORIES;
   $("#d-tabs").replaceChildren(
-    ...CATEGORIES.map((c) =>
+    ...tabs.map((c) =>
       el("button", { class: drawer.category === c.id ? "on" : "", onclick: () => { drawer.category = c.id; renderDrawer(); } }, c.label)
     )
   );
@@ -874,7 +877,7 @@ function renderDrawer() {
   if (c.hint) notes.push(c.hint);
   if (drawer.laneMode) notes.push("Only the selected lanes change, and the panel stays open for the next ones. Whole puts one effect back on the entire Strimer.");
   if (drawer.side !== "both") notes.push(`Only the ${drawer.side} ring of SL Flex fans changes; other devices get the whole effect.`);
-  if (drawer.target && drawer.target.type === "all") notes.push("Devices with Sync off are left alone.");
+  if (drawer.target && drawer.target.type === "all") notes.push("Devices with In All Devices turned off (on the Devices page) are left alone.");
   $("#d-note").textContent = notes.join(" ");
   const picked = drawer.picked.length;
   $("#d-apply").textContent = !drawer.laneMode ? "Apply" : picked === 1 ? `Apply to lane ${laneName(drawer.picked[0])}` : `Apply to ${picked} lanes`;

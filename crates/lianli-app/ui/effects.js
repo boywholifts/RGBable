@@ -27,13 +27,25 @@ const KINDS = [
 ];
 
 const CATEGORIES = [
-  { id: "basic", label: "Basic", kinds: ["static", "breathing", "color_cycle", "rainbow", "heartbeat", "strobe"] },
-  { id: "motion", label: "Motion", kinds: ["wave", "rainbow_wave", "meteor", "drizzle", "scanner", "runway", "fill", "ripple", "police"] },
-  { id: "ambient", label: "Ambient", kinds: ["twinkle", "starry_night", "fire", "aurora"] },
+  { id: "basic", label: "Solid", kinds: ["static", "breathing", "heartbeat", "strobe", "color_cycle"] },
+  { id: "rainbow", label: "Rainbow", kinds: ["rainbow", "rainbow_wave"] },
+  { id: "motion", label: "Moving", kinds: ["wave", "meteor", "scanner", "runway", "fill", "ripple", "police"] },
+  { id: "ambient", label: "Ambient", kinds: ["twinkle", "starry_night", "fire", "aurora", "drizzle"] },
   { id: "keyboard", label: "Keyboard", kinds: ["key_wave", "key_ripple", "key_rain", "key_highlight"] },
-  { id: "lianli", label: "Lian Li" },
   { id: "mine", label: "Mine" },
 ];
+
+/// L-Connect effects that look the same as one of RGBable's: the list shows those once, and
+/// devices that have the Lian Li version play it automatically.
+const MERGED_MODES = { Static: "static", Rainbow: "rainbow", Breathing: "breathing", ColorCycle: "color_cycle", Meteor: "meteor", Runway: "runway", Ripple: "ripple", Twinkle: "twinkle", Drizzling: "drizzle" };
+
+/// Where the remaining, Lian Li-only effects are listed (anything else goes under Moving).
+const LIANLI_GROUP = {
+  ElectricCurrent: "basic", Voice: "basic", Lottery: "basic",
+  RainbowMorph: "rainbow", Endless: "rainbow", Kaleidoscope: "rainbow", CoverCycle: "rainbow", ColorsMorph: "rainbow",
+  MeteorShower: "ambient", ColorfulStarryNight: "ambient", StaticStarryNight: "ambient", Fluctuation: "ambient", Neon: "ambient",
+};
+const lianliGroup = (mode) => LIANLI_GROUP[mode] || "motion";
 
 const kindInfo = (id) => KINDS.find((k) => k.id === id) || KINDS[0];
 let LIANLI = [];

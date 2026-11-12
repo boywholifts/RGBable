@@ -593,18 +593,43 @@ fn opposite(direction: RgbDirection) -> RgbDirection {
     }
 }
 
-/// Devices with L-Connect's own Drizzling (the Strimers) play it instead of the RGBable copy.
-fn native_drizzle(lighting: &Lighting, profile: RgbRenderProfile) -> Lighting {
-    let has_it = lianli_media::rgb::parameters::for_scope(profile, RgbScope::All)
+/// The L-Connect effect that looks the same as an RGBable one. The effect list shows each of
+/// these once; a device that has the Lian Li version plays that, which is drawn by L-Connect's
+/// own renderer and makes a smaller upload.
+fn lianli_twin(kind: EffectKind) -> Option<lianli_shared::rgb::RgbMode> {
+    use lianli_shared::rgb::RgbMode;
+    Some(match kind {
+        EffectKind::Static => RgbMode::Static,
+        EffectKind::Rainbow => RgbMode::Rainbow,
+        EffectKind::Breathing => RgbMode::Breathing,
+        EffectKind::ColorCycle => RgbMode::ColorCycle,
+        EffectKind::Meteor => RgbMode::Meteor,
+        EffectKind::Runway => RgbMode::Runway,
+        EffectKind::Ripple => RgbMode::Ripple,
+        EffectKind::Twinkle => RgbMode::Twinkle,
+        EffectKind::Drizzle => RgbMode::Drizzling,
+        _ => return None,
+    })
+}
+
+/// Swaps effects for their Lian Li twins where this device has them, except in a flow or turns,
+/// which only RGBable's versions can do.
+fn native_versions(lighting: &Lighting, profile: RgbRenderProfile) -> Lighting {
+    let modes: Vec<_> = lianli_media::rgb::parameters::for_scope(profile, RgbScope::All)
         .iter()
-        .any(|p| p.mode == lianli_shared::rgb::RgbMode::Drizzling);
+        .map(|p| p.mode)
+        .collect();
     let swap = |e: &Option<Effect>| {
-        e.clone().map(|e| match e.kind {
-            EffectKind::Drizzle if has_it && e.travel_span().is_none() && e.turn.is_none() => Effect {
-                kind: EffectKind::Lianli,
-                mode: Some(lianli_shared::rgb::RgbMode::Drizzling),
-                ..e
-            },
+        e.clone().map(|e| match lianli_twin(e.kind) {
+            Some(mode)
+                if modes.contains(&mode) && e.travel_span().is_none() && e.turn.is_none() =>
+            {
+                Effect {
+                    kind: EffectKind::Lianli,
+                    mode: Some(mode),
+                    ..e
+                }
+            }
             _ => e,
         })
     };
@@ -624,9 +649,9 @@ pub fn wireless_frames(
     slowest_ms: u32,
     first_ms: u32,
 ) -> Result<Frames> {
-    let drizzle = profile.map(|p| native_drizzle(lighting, p));
+    let twins = profile.map(|p| native_versions(lighting, p));
     if let Some(native) =
-        profile.and_then(|p| lianli_frames(drizzle.as_ref().unwrap_or(lighting), base, p))
+        profile.and_then(|p| lianli_frames(twins.as_ref().unwrap_or(lighting), base, p))
     {
         let mut step = 1;
         loop {
@@ -930,6 +955,23 @@ mod tests {
     }
 
     #[test]
+    fn merged_effects_play_their_lian_li_twin_except_in_a_flow() {
+        let meteor = Effect {
+            kind: EffectKind::Meteor,
+            colors: vec![[255, 0, 0]],
+            ..Effect::default()
+        };
+        let native = native_versions(&Lighting::whole(meteor.clone()), sl_v4(3));
+        assert_eq!(native.inner.as_ref().unwrap().kind, EffectKind::Lianli);
+        let flowing = Effect {
+            span: Some(crate::effects::Span { start: 0, len: 500 }),
+            ..meteor
+        };
+        let kept = native_versions(&Lighting::whole(flowing), sl_v4(3));
+        assert_eq!(kept.inner.unwrap().kind, EffectKind::Meteor);
+    }
+
+    #[test]
     fn drizzle_in_a_flow_stays_strimer_drizzle() {
         let profile = RgbRenderProfile {
             family: RgbRenderFamily::Strimer,
@@ -943,7 +985,7 @@ mod tests {
             span: Some(crate::effects::Span { start: 500, len: 250 }),
             ..Effect::default()
         };
-        let swapped = native_drizzle(&Lighting::whole(drizzle), profile);
+        let swapped = native_versions(&Lighting::whole(drizzle), profile);
         assert_eq!(swapped.inner.unwrap().kind, EffectKind::Lianli);
     }
 
@@ -1027,19 +1069,19 @@ mod tests {
             colors: vec![[255, 0, 0], [0, 0, 255]],
             ..Effect::default()
         });
-        let native = native_drizzle(&drizzle, strimer);
+        let native = native_versions(&drizzle, strimer);
         assert_eq!(native.inner.as_ref().unwrap().kind, EffectKind::Lianli);
         assert_eq!(
             native.inner.unwrap().mode,
             Some(lianli_shared::rgb::RgbMode::Drizzling)
         );
-        assert_eq!(native_drizzle(&drizzle, sl_v4(3)), drizzle);
+        assert_eq!(native_versions(&drizzle, sl_v4(3)), drizzle);
         let render = |reverse: bool| {
             let lighting = Lighting::whole(Effect {
                 reverse,
                 ..drizzle.inner.clone().unwrap()
             });
-            lianli_frames(&native_drizzle(&lighting, strimer), &[[0; 3]; 116], strimer)
+            lianli_frames(&native_versions(&lighting, strimer), &[[0; 3]; 116], strimer)
                 .unwrap()
                 .frames
         };

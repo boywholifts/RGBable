@@ -22,6 +22,7 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 
 ### Changed
 
+- One effect list, grouped by look: Solid, Rainbow, Moving, Ambient, Keyboard and Mine. Lian Li effects that looked the same as RGBable's (Static, Rainbow, Breathing, Color cycle, Meteor, Runway, Ripple, Twinkle, Drizzle) are listed once, and devices with the Lian Li version play it automatically (except in Flow through or Take turns); Lian Li-only effects sit in the same groups with a Lian Li label. The Keyboard tab comes first when a keyboard is chosen.
 - Reorganized so each setting has one home. Lighting is for what's showing (with a Timing button on the All Devices card for Together, Delays, Flow through and Take turns); the new Devices page holds each device's own settings (name, group, LED count, color temperature, In All Devices, Polymo picture, shown on Lighting); Settings groups startup and power-on lighting under When the PC starts. The device ⋯ menu is shorter and links to both.
 - Drizzle no longer runs through a flow: in Flow through, a Strimer with Drizzle keeps its own (Lian Li) drizzle while effects like Meteor flow across the other devices.
 - Wireless devices whose effect had to be shrunk on a crowded radio (when every device changes at once, as when the lighting follows a new HydroShift video) get the full effect back after about 30 seconds instead of 5 minutes.
