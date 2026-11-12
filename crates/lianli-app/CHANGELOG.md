@@ -22,7 +22,7 @@ Versions follow [Semantic Versioning](https://semver.org). Dev builds (`x.y.z-de
 
 ### Changed
 
-- Brightness changes show on the lights live as you drag the slider in the effect panel, without the lights going dark in between.
+- Brightness changes show on the lights live as you drag the slider in the effect panel, without the lights going dark in between, and a plain color reopens at the brightness it was set to instead of as a darker color at 100%.
 - RGBable now warns when ASUS's Lighting Service (installed with Armoury Crate) is running: it drives the board's lights, Polymo panel included, even with Armoury Crate closed, and fights RGBable.
 - Timing: the order on the Timing page is saved, so it no longer snaps back when every delay is 0. Take turns is now part of Flow through: moving effects flow through each fan and on into the next device, and effects that can't travel (breathing, a plain color) take their turn instead. A chain runs at its own speed (each device keeps its own speed for when it's out of the chain or back on Start times) and every device in it loops in exactly the same time, and the PC's effects are kept in step with the wireless loops' clock, so devices no longer drift into each other. In Flow through, a device's chain button leaves it out of the chain: it keeps playing its own effect (at its own speed) while the rest flow on.
 - The app now uses Manrope, the same font as OLEDable.

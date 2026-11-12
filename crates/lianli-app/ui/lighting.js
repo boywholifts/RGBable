@@ -484,6 +484,16 @@ function loadIntoDrawer(effect, color) {
   drawer.reverse = !!(effect && effect.reverse);
   drawer.direction = effect && effect.direction ? effect.direction : null;
   drawer.category = categoryOf(effect);
+  // a plain color is saved with its brightness mixed in (white at 20% is stored as dark
+  // grey): split it back into the color and the brightness it was set at
+  if (drawer.kind === "static" && !drawer.custom && drawer.colors.length === 1 && drawer.brightness === 100) {
+    const rgb = hexToRgb(drawer.colors[0]);
+    const top = Math.max(...rgb);
+    if (top > 0 && top < 250) {
+      drawer.brightness = Math.max(5, Math.min(100, Math.round(((top / 255) * 100) / 5) * 5));
+      drawer.colors = [rgbToHex(rgb.map((c) => Math.round((c * 255) / top)))];
+    }
+  }
 }
 
 function openDrawer(target) {
