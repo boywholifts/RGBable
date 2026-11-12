@@ -52,7 +52,26 @@ function devRerender() {
 }
 
 /// The right-hand side: one device's settings, what to do with several, a group, or a summary.
+let detailKey = "";
+
+/// Redraws the right-hand side only when what it shows changed, keeping where it's scrolled to.
 function drawDetail() {
+  const shown = devSel.size > 1 ? [...devSel].map(devLight) : devPanel ? devLight(devPanel) : devGroupPick;
+  const key = JSON.stringify([shown, devSel.size, devPanel, devGroupPick, last && last.groups, last && last.warmth, devSel.size > 1 || devPanel ? null : last && last.lights.map((l) => [l.name, l.sync, l.hidden])]);
+  if (key === detailKey) return;
+  detailKey = key;
+  const body = $("#dev-detail .drawer-body");
+  const scroll = body ? body.scrollTop : 0;
+  const same = body && body.dataset.for === String(devSel.size > 1 ? "sel" : devPanel || devGroupPick);
+  drawDetailNow();
+  const next = $("#dev-detail .drawer-body");
+  if (next) {
+    next.dataset.for = String(devSel.size > 1 ? "sel" : devPanel || devGroupPick);
+    if (same) next.scrollTop = scroll;
+  }
+}
+
+function drawDetailNow() {
   if (devSel.size > 1) return drawSelection();
   if (devPanel && devLight(devPanel)) return drawDevPanel();
   devPanel = null;

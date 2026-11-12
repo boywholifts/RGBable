@@ -361,6 +361,9 @@ pub fn competing_rgb_apps() -> Vec<&'static str> {
         ("SignalRgb.exe", "SignalRGB"),
         ("Glorious Core.exe", "Glorious Core"),
         ("ArmouryCrate.exe", "Armoury Crate"),
+        // Armoury Crate's background service, which drives the board's lights (and its
+        // Polymo panel) even with the app closed
+        ("LightingService.exe", "ASUS Lighting Service (Armoury Crate)"),
         ("MSI Center.exe", "MSI Center"),
         ("iCUE.exe", "iCUE"),
     ]
