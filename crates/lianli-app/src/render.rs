@@ -675,6 +675,76 @@ fn stretch_to(fan_ms: f64, own_ms: f64) -> f64 {
     target / own_ms
 }
 
+/// Lian Li's Duel, which L-Connect only has for fans, for `lanes` side-by-side strips of
+/// `lane_len` LEDs. It follows the fans' own drawing for a row of three: the two colors run
+/// in from the ends and meet in the middle, then run back out from it, first on one bank
+/// of LEDs (the fans' top arcs; the first half of the lanes) and then the other, frame for
+/// frame with the fans so the two stay in step. A single strip plays both banks.
+fn duel_frames(effect: &Effect, lanes: usize, lane_len: usize) -> Option<(Vec<Vec<[u8; 3]>>, f64)> {
+    const TRACK: usize = 40;
+    const HALF: usize = TRACK / 2;
+    const WIDTH: usize = 6;
+    const SPAN: usize = HALF + WIDTH - 1;
+    if lanes == 0 || lane_len == 0 {
+        return None;
+    }
+    let fan_ms = fan_loop_ms(effect)?;
+    let level = f32::from(effect.brightness.min(100)) / 100.0;
+    let pick = |i: usize, default: [u8; 3]| {
+        effect
+            .colors
+            .get(i)
+            .copied()
+            .unwrap_or(default)
+            .map(|v| (f32::from(v) * level).round() as u8)
+    };
+    let colors = [pick(0, [255, 0, 0]), pick(1, [0, 255, 0])];
+    let mut frames = Vec::with_capacity(4 * SPAN);
+    for bank in 0..2 {
+        for pass in 0..2 {
+            for step in 0..SPAN {
+                let mut track = [None; TRACK];
+                for position in 0..HALF {
+                    if position < step && position + WIDTH > step {
+                        let (first, second) = if pass == 0 {
+                            (position, TRACK - position - 1)
+                        } else {
+                            (HALF - position - 1, HALF + position)
+                        };
+                        track[first] = Some(colors[0]);
+                        track[second] = Some(colors[1]);
+                    }
+                }
+                let line: Vec<[u8; 3]> = (0..lane_len)
+                    .map(|i| {
+                        // the fans leave off the track's last LED
+                        let from = (i * (TRACK - 1) / lane_len).min(TRACK - 2);
+                        let to = ((i + 1) * (TRACK - 1) / lane_len).clamp(from + 1, TRACK - 1);
+                        track[from..to]
+                            .iter()
+                            .flatten()
+                            .next()
+                            .copied()
+                            .unwrap_or([0; 3])
+                    })
+                    .collect();
+                let mut frame = Vec::with_capacity(lanes * lane_len);
+                for lane in 0..lanes {
+                    let shown = lanes == 1 || (lane < lanes.div_ceil(2)) == (bank == 0);
+                    if shown {
+                        frame.extend_from_slice(&line);
+                    } else {
+                        frame.extend(std::iter::repeat_n([0; 3], lane_len));
+                    }
+                }
+                frames.push(frame);
+            }
+        }
+    }
+    let interval_ms = fan_ms / frames.len() as f64;
+    Some((frames, interval_ms))
+}
+
 /// A Lian Li effect drawn for a plain strip, as frames a set time apart.
 pub struct StripFrames {
     pub frames: Vec<Vec<[u8; 3]>>,
@@ -716,8 +786,9 @@ fn lianli_strip(effect: &Effect, leds: usize, ring: bool) -> Option<std::sync::A
     static DRAWN: OnceLock<Mutex<HashMap<String, Option<Arc<StripFrames>>>>> = OnceLock::new();
 
     let mode = effect.mode.filter(|_| effect.kind == EffectKind::Lianli)?;
+    let duel = mode == lianli_shared::rgb::RgbMode::Duel;
     if leds == 0
-        || !universal::MODES.contains(&mode)
+        || !(duel || universal::MODES.contains(&mode))
         || effect.travel_span().is_some()
         || effect.turn.is_some()
     {
@@ -731,6 +802,17 @@ fn lianli_strip(effect: &Effect, leds: usize, ring: bool) -> Option<std::sync::A
     let drawn = DRAWN.get_or_init(Default::default);
     if let Some(found) = drawn.lock().ok()?.get(&key) {
         return found.clone();
+    }
+    if duel {
+        let made = duel_frames(effect, 1, leds).map(|(frames, interval_ms)| {
+            Arc::new(StripFrames {
+                frames,
+                interval_ms,
+            })
+        });
+        let mut cache = drawn.lock().ok()?;
+        cache.insert(key, made.clone());
+        return made;
     }
     let colors = if effect.colors.is_empty() {
         vec![[255, 255, 255]]
@@ -890,6 +972,29 @@ fn lock_to_fans(frames: &mut Frames, lighting: &Lighting, profile: RgbRenderProf
     }
 }
 
+/// Duel on a Strimer, which L-Connect doesn't have there (see [`duel_frames`]).
+fn strimer_duel(lighting: &Lighting, profile: RgbRenderProfile) -> Option<Frames> {
+    let lanes = lane_count(Some(profile));
+    let effect = lighting.primary()?;
+    if lanes == 0
+        || lighting.lanes.iter().flatten().any(|e| e != effect)
+        || effect.kind != EffectKind::Lianli
+        || effect.mode != Some(lianli_shared::rgb::RgbMode::Duel)
+        || effect.travel_span().is_some()
+        || effect.turn.is_some()
+    {
+        return None;
+    }
+    let (frames, interval_ms) = duel_frames(effect, lanes, usize::from(profile.led_count) / lanes)?;
+    Some(Frames {
+        frames,
+        timing: RgbPlaybackTiming {
+            interval_hundredths: (interval_ms * 160.0).round() as u32,
+            ..Default::default()
+        },
+    })
+}
+
 pub fn wireless_frames(
     lighting: &Lighting,
     base: &[[u8; 3]],
@@ -900,9 +1005,11 @@ pub fn wireless_frames(
     first_ms: u32,
 ) -> Result<Frames> {
     let twins = profile.map(|p| native_versions(lighting, p));
-    if let Some((mut native, p)) = profile
-        .and_then(|p| lianli_frames(twins.as_ref().unwrap_or(lighting), base, p).map(|f| (f, p)))
-    {
+    if let Some((mut native, p)) = profile.and_then(|p| {
+        lianli_frames(twins.as_ref().unwrap_or(lighting), base, p)
+            .or_else(|| strimer_duel(lighting, p))
+            .map(|f| (f, p))
+    }) {
         lock_to_fans(&mut native, twins.as_ref().unwrap_or(lighting), p);
         let mut step = 1;
         loop {
@@ -1203,6 +1310,38 @@ mod tests {
         );
         let (effect, outer) = lighting.to_saved();
         assert_eq!(Lighting::from_saved(effect, outer, Vec::new()), lighting);
+    }
+
+    #[test]
+    fn duel_plays_on_strips_and_strimers_in_step_with_the_fans() {
+        let duel = Effect {
+            kind: EffectKind::Lianli,
+            mode: Some(lianli_shared::rgb::RgbMode::Duel),
+            colors: vec![[255, 0, 0], [0, 0, 255]],
+            ..Default::default()
+        };
+        let fan = fan_loop_ms(&duel).expect("fans have Duel");
+        let strip = strip_frames(&duel, 30).expect("strip frames");
+        assert!((strip.loop_ms() - fan).abs() < 1e-6);
+        // red comes in from the start, blue from the end
+        let early = &strip.frames[3];
+        assert_eq!(early[0], [255, 0, 0]);
+        assert_eq!(early[29], [0, 0, 255]);
+        let mut lighting = Lighting::default();
+        lighting.apply(duel, true, 4);
+        let profile = RgbRenderProfile {
+            family: RgbRenderFamily::Strimer,
+            fan_count: 0,
+            led_count: 116,
+            right_attach: false,
+        };
+        let frames = strimer_duel(&lighting, profile).expect("strimer frames");
+        assert_eq!(frames.frames.len(), 100);
+        assert_eq!(frames.frames[3][0], [255, 0, 0]);
+        // the first bank lights the first two lanes only
+        assert!(frames.frames[3][58..].iter().all(|c| *c == [0; 3]));
+        let loop_ms = 100.0 * f64::from(frames.timing.interval_hundredths) / 160.0;
+        assert!((loop_ms - fan).abs() < 1.0);
     }
 
     #[test]
