@@ -215,6 +215,17 @@ pub struct DeviceConfig {
 }
 
 impl DeviceConfig {
+    /// The delay the device actually starts with: none while it's in a chain, which keeps
+    /// its start-times delay for when it leaves.
+    pub fn start_delay(&self) -> u32 {
+        let chained = |s: &Option<crate::effects::Span>| s.is_some_and(|s| s.len < 1000);
+        if chained(&self.span) || chained(&self.turn) {
+            0
+        } else {
+            self.delay_ms
+        }
+    }
+
     pub fn lighting(&self) -> Lighting {
         Lighting::from_saved(
             self.effect.clone(),
@@ -1552,7 +1563,7 @@ impl Engine {
                     let (delay, span, turn) = config
                         .devices
                         .get(&ctl.id)
-                        .map_or((0, None, None), |d| (d.delay_ms, d.span, d.turn));
+                        .map_or((0, None, None), |d| (d.start_delay(), d.span, d.turn));
                     let chain = (span, turn, config.chain_speed);
                     prepare_lighting(wireless, ctl, &mac, level, delay, chain)
                 };
@@ -1701,7 +1712,9 @@ impl Engine {
                 .lock()
                 .devices
                 .get(&ctl.id)
-                .map_or((0, None, None), |d| (i64::from(d.delay_ms), d.span, d.turn));
+                .map_or((0, None, None), |d| {
+                    (i64::from(d.start_delay()), d.span, d.turn)
+                });
             let effect = Effect {
                 span,
                 turn,

@@ -436,7 +436,10 @@ fn has_lighting(config: &Config, id: &str) -> bool {
 /// lighting once it has one, and the motherboard's until then.
 fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
     let device_id = openrgb_id(device);
-    let board_delay = config.devices.get(&device_id).map_or(0, |d| d.delay_ms);
+    let board_delay = config
+        .devices
+        .get(&device_id)
+        .map_or(0, |d| d.start_delay());
     let board_span = config.devices.get(&device_id).and_then(|d| d.span);
     let board_turn = config.devices.get(&device_id).and_then(|d| d.turn);
     let mut runs: Vec<(String, Vec<usize>)> = Vec::new();
@@ -500,7 +503,7 @@ fn device_parts(config: &Config, device: &OrgbDevice) -> Vec<LedPart> {
                         .unwrap_or([0, 0, 0])
                 },
                 delay_ms: saved
-                    .map(|s| s.delay_ms)
+                    .map(|s| s.start_delay())
                     .filter(|&d| d > 0)
                     .unwrap_or(board_delay),
                 polymo,

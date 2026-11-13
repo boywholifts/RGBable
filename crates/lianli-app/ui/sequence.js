@@ -71,8 +71,9 @@ function renderSequence(o, force) {
 }
 
 function spaceEvenly() {
+  if (seq.mode !== "delays") return;
   let n = 0;
-  for (const item of seq.items) item.delay = item.animated && seq.mode === "delays" ? n++ * seq.step : 0;
+  for (const item of seq.items) item.delay = item.animated ? n++ * seq.step : 0;
 }
 
 function changed() {
@@ -295,8 +296,6 @@ $("#seq-mode").addEventListener("click", (e) => {
   if (!mode || mode === seq.mode) return;
   seq.mode = mode;
   if (mode === "flow") for (const item of seq.items) item.chained = true;
-  // back to start times begins with every device together
-  if (mode === "delays") for (const item of seq.items) item.delay = 0;
   changed();
 });
 $("#seq-step").addEventListener("change", (e) => {
@@ -327,6 +326,26 @@ $("#seq-reset").addEventListener("click", () => {
   changed();
 });
 $("#seq-preview").addEventListener("click", previewSequence);
+$("#seq-defaults").addEventListener("click", () => {
+  openDialog("Reset timing", el("p", { class: "muted small" }, "Put every device shown here back to no delay, normal speed, normal direction and effects on each fan, with all of them in the chain? The order stays as it is."), [
+    el("button", { class: "btn", onclick: closeDialog }, "Cancel"),
+    el("button", { class: "btn primary", onclick: async () => {
+      closeDialog();
+      for (const item of seq.items) {
+        if (item.animated && item.speed !== 3) await call("set_speed", { id: item.id, speed: 3 });
+        if (item.animated && item.reversed) await call("set_reverse", { id: item.id, reverse: false });
+        item.speed = 3;
+        item.reversed = false;
+        item.delay = 0;
+        item.across = false;
+        item.chained = true;
+      }
+      seq.speed = 3;
+      await saveSequence();
+      if (last) renderSequence(last, true);
+    } }, "Reset"),
+  ]);
+});
 $("#seq-discard").addEventListener("click", () => last && renderSequence(last, true));
 
 async function saveSequence() {
@@ -335,7 +354,8 @@ async function saveSequence() {
     const part = parts.get(i.id) || null;
     return {
       id: i.id,
-      delay_ms: seq.mode === "delays" ? i.delay : 0,
+      // kept in a chain too, for when the device plays on its own again
+      delay_ms: i.delay,
       span: seq.mode === "flow" && part ? part : i.across ? { start: 0, len: 1000 } : null,
       turn: seq.mode === "flow" ? part : null,
     };
