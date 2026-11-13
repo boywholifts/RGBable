@@ -265,6 +265,20 @@ pub fn compose(parts: &[LedPart], elapsed_ms: i64) -> Vec<[u8; 3]> {
             crate::render::balance_with(&mut frame[start..], part.warmth);
             continue;
         }
+        // Lian Li's own effects play L-Connect's frames for a strip of this length, so they
+        // look the same as on the Lian Li devices
+        let strip = part
+            .effect
+            .as_ref()
+            .filter(|_| part.keys.is_none())
+            .and_then(|e| crate::render::strip_frames(e, part.leds()));
+        if let Some(strip) = strip {
+            let behind = (elapsed_ms - i64::from(part.delay_ms)).rem_euclid(strip.loop_ms());
+            let at = (behind / i64::from(strip.interval_ms)) as usize % strip.frames.len();
+            frame.extend(strip.frames[at].iter().copied());
+            crate::render::balance_with(&mut frame[start..], part.warmth);
+            continue;
+        }
         match part.effect.as_ref().filter(|e| e.is_animated()) {
             Some(effect) => {
                 let period = u64::from(effect.period_ms().max(1));

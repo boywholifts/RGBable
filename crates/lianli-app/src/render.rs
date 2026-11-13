@@ -609,6 +609,96 @@ fn opposite(direction: RgbDirection) -> RgbDirection {
     }
 }
 
+/// A Lian Li effect drawn for a plain strip, as frames a set time apart.
+pub struct StripFrames {
+    pub frames: Vec<Vec<[u8; 3]>>,
+    pub interval_ms: u32,
+}
+
+impl StripFrames {
+    pub fn loop_ms(&self) -> i64 {
+        i64::from(self.interval_ms.max(1)) * self.frames.len().max(1) as i64
+    }
+}
+
+/// L-Connect's own frames for a Lian Li effect on a strip of `leds` LEDs (an OpenRGB device),
+/// drawn by its strip renderer and fitted to the length; None for anything else, or in a
+/// chain, which only RGBable's versions can do. Kept once drawn, since devices ask for a frame
+/// many times a second.
+pub fn strip_frames(effect: &Effect, leds: usize) -> Option<std::sync::Arc<StripFrames>> {
+    use lianli_media::rgb::universal;
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex, OnceLock};
+    static DRAWN: OnceLock<Mutex<HashMap<String, Option<Arc<StripFrames>>>>> = OnceLock::new();
+
+    let mode = effect.mode.filter(|_| effect.kind == EffectKind::Lianli)?;
+    if leds == 0
+        || !universal::MODES.contains(&mode)
+        || effect.travel_span().is_some()
+        || effect.turn.is_some()
+    {
+        return None;
+    }
+    let key = format!("{}|{leds}", serde_json::to_string(effect).ok()?);
+    let drawn = DRAWN.get_or_init(Default::default);
+    if let Some(found) = drawn.lock().ok()?.get(&key) {
+        return found.clone();
+    }
+    let colors = if effect.colors.is_empty() {
+        vec![[255, 255, 255]]
+    } else {
+        effect.colors.iter().take(6).copied().collect()
+    };
+    let rgb = RgbEffect {
+        mode,
+        colors,
+        speed: effect.speed.clamp(1, 5) - 1,
+        brightness: 4,
+        direction: if effect.reverse {
+            RgbDirection::CounterClockwise
+        } else {
+            RgbDirection::Clockwise
+        },
+        scope: RgbScope::All,
+        disabled: false,
+    };
+    // the renderer draws 60 to 255 LEDs; shorter devices take an even sample
+    let drawn_len = leds.clamp(60, 255);
+    let made = universal::render(&rgb, drawn_len).ok().map(|animation| {
+        let level = f32::from(effect.brightness.min(100)) / 100.0;
+        let frames = animation
+            .frames
+            .iter()
+            .map(|f| {
+                // each LED shows the brightest point of its stretch, so short flashes such as
+                // the bolts aren't skipped on a device with few LEDs
+                (0..leds)
+                    .map(|i| {
+                        let from = (i * drawn_len / leds).min(f.len() - 1);
+                        let to = ((i + 1) * drawn_len / leds).clamp(from + 1, f.len());
+                        let c = f[from..to]
+                            .iter()
+                            .copied()
+                            .max_by_key(|c| c.iter().map(|&v| u16::from(v)).sum::<u16>())
+                            .unwrap_or([0; 3]);
+                        c.map(|v| (f32::from(v) * level).round() as u8)
+                    })
+                    .collect()
+            })
+            .collect();
+        Arc::new(StripFrames {
+            frames,
+            interval_ms: (animation.interval_hundredths / 160).max(10),
+        })
+    });
+    let mut cache = drawn.lock().ok()?;
+    if cache.len() > 64 {
+        cache.clear();
+    }
+    cache.insert(key, made.clone());
+    made
+}
+
 /// The L-Connect effect that looks the same as an RGBable one. The effect list shows each of
 /// these once; a device that has the Lian Li version plays that, which is drawn by L-Connect's
 /// own renderer and makes a smaller upload.
@@ -968,6 +1058,25 @@ mod tests {
         );
         let (effect, outer) = lighting.to_saved();
         assert_eq!(Lighting::from_saved(effect, outer, Vec::new()), lighting);
+    }
+
+    #[test]
+    fn openrgb_devices_play_lian_lis_own_electric_current() {
+        let electric = Effect {
+            kind: EffectKind::Lianli,
+            mode: Some(lianli_shared::rgb::RgbMode::ElectricCurrent),
+            colors: vec![[255, 0, 0]],
+            ..Effect::default()
+        };
+        let strip = strip_frames(&electric, 12).expect("frames");
+        assert!(strip.frames.iter().all(|f| f.len() == 12));
+        // the bolts flash white over the chosen color
+        let all: std::collections::BTreeSet<[u8; 3]> =
+            strip.frames.iter().flatten().copied().collect();
+        assert!(all.iter().any(|c| c.iter().all(|&v| v > 250)), "{all:?}");
+        assert!(all.iter().any(|c| c[0] > 250 && c[1] == 0), "{all:?}");
+        // RGBable's own effects keep their own drawing
+        assert!(strip_frames(&Effect::default(), 12).is_none());
     }
 
     #[test]

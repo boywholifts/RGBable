@@ -513,6 +513,11 @@ function openDrawer(target) {
     drawer.laneMode = !!(l.lane_effects && l.lane_effects.length);
     drawer.picked = drawer.laneMode ? [1] : [];
     loadIntoDrawer(drawer.laneMode ? l.lane_effects[0] : l.effect || l.outer_effect, l.color);
+  } else if (last && last.all_effect) {
+    // what All Devices was last set to, even if some devices have since been changed
+    const all = last.all_effect;
+    loadIntoDrawer(all.kind === "static" ? null : all, all.kind === "static" && all.colors[0] ? all.colors[0] : null);
+    if (all.kind === "static") drawer.brightness = all.brightness ?? drawer.brightness;
   } else {
     const shared = commonEffect(last ? last.lights : []);
     loadIntoDrawer(shared && (shared.effect || shared.outer_effect), shared && shared.color);
