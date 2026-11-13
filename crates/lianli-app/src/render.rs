@@ -663,13 +663,17 @@ pub fn strip_frames(effect: &Effect, leds: usize) -> Option<std::sync::Arc<Strip
         disabled: false,
     };
     // the renderer draws 60 to 255 LEDs; shorter devices take an even sample
-    let drawn_len = leds.clamp(60, 255);
+    let ring_path = mode == lianli_shared::rgb::RgbMode::ElectricCurrent;
+    let drawn_len = if ring_path { 60 } else { leds.clamp(60, 255) };
     let made = universal::render(&rgb, drawn_len).ok().map(|animation| {
         let level = f32::from(effect.brightness.min(100)) / 100.0;
         let frames = animation
             .frames
             .iter()
             .map(|f| {
+                if ring_path {
+                    return from_both_ends(f, leds, level);
+                }
                 // each LED shows the brightest point of its stretch, so short flashes such as
                 // the bolts aren't skipped on a device with few LEDs
                 (0..leds)
@@ -697,6 +701,27 @@ pub fn strip_frames(effect: &Effect, leds: usize) -> Option<std::sync::Arc<Strip
     }
     cache.insert(key, made.clone());
     made
+}
+
+/// Electric current is drawn for a fan ring: a 31-step path runs both ways round from LED 47
+/// and meets on the far side. On a straight device the path runs in from both ends instead
+/// and meets in the middle.
+fn from_both_ends(ring: &[[u8; 3]], leds: usize, level: f32) -> Vec<[u8; 3]> {
+    const STEPS: usize = 31;
+    let step = |k: usize| ring[47 - k];
+    let half = leds.div_ceil(2).max(1);
+    (0..leds)
+        .map(|i| {
+            let from_end = i.min(leds - 1 - i);
+            let first = from_end * STEPS / half;
+            let last = ((from_end + 1) * STEPS / half).clamp(first + 1, STEPS);
+            let c = (first..last)
+                .map(step)
+                .max_by_key(|c| c.iter().map(|&v| u16::from(v)).sum::<u16>())
+                .unwrap_or([0; 3]);
+            c.map(|v| (f32::from(v) * level).round() as u8)
+        })
+        .collect()
 }
 
 /// The L-Connect effect that looks the same as an RGBable one. The effect list shows each of
