@@ -66,6 +66,7 @@ struct Overview {
     oled_match_status: String,
     warmth: i8,
     clean_transitions: bool,
+    lock_loops: bool,
     fan_profiles: Vec<String>,
     fan_profile: usize,
     lighting_profiles: Vec<LightingProfileView>,
@@ -114,6 +115,7 @@ fn overview(state: State<'_, AppState>) -> Result<Overview, String> {
         oled_match_status: lights::OLED_MATCH_STATUS.lock().clone(),
         warmth: config.warmth,
         clean_transitions: !config.instant_changes,
+        lock_loops: config.lock_loops,
         fan_profiles: config.fan_profiles.iter().map(|p| p.name.clone()).collect(),
         fan_profile: config.fan_profile,
         lighting_profiles: config
@@ -992,6 +994,14 @@ fn set_warmth(state: State<'_, AppState>, warmth: i8) {
 }
 
 #[tauri::command(async)]
+fn set_lock_loops(state: State<'_, AppState>, enabled: bool) {
+    state.engine.update_config(|c| c.lock_loops = enabled);
+    render::LOCK_LOOPS.store(enabled, std::sync::atomic::Ordering::Relaxed);
+    state.engine.relight_all();
+    lights::sync_openrgb_effects(&state.engine, &state.openrgb);
+}
+
+#[tauri::command(async)]
 fn set_fan_mode(state: State<'_, AppState>, id: String, mode: fans::FanMode) {
     state.engine.set_fan_mode(&id, mode);
 }
@@ -1079,6 +1089,10 @@ fn apply_lighting_profile(state: State<'_, AppState>, name: String) -> Result<()
         }
     }
     render::WARMTH.store(engine.config().warmth, std::sync::atomic::Ordering::Relaxed);
+    render::LOCK_LOOPS.store(
+        engine.config().lock_loops,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     // effects start over together, so flows begin at their first device
     render::restart_clock(1500);
     engine.reload_lighting();
@@ -1830,6 +1844,7 @@ fn main() {
             rename_fan_profile,
             delete_fan_profile,
             set_clean_transitions,
+            set_lock_loops,
             set_reverse,
             set_off,
             set_all_off,

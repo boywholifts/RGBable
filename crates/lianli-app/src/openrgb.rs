@@ -273,9 +273,12 @@ pub fn compose(parts: &[LedPart], elapsed_ms: i64) -> Vec<[u8; 3]> {
             .filter(|_| part.keys.is_none())
             .and_then(|e| crate::render::strip_frames(e, part.leds()));
         if let Some(strip) = strip {
-            let behind = (elapsed_ms - i64::from(part.delay_ms)).rem_euclid(strip.loop_ms());
-            let at = (behind / i64::from(strip.interval_ms)) as usize % strip.frames.len();
-            frame.extend(strip.frames[at].iter().copied());
+            frame.extend(
+                strip
+                    .frame_at(elapsed_ms - i64::from(part.delay_ms))
+                    .iter()
+                    .copied(),
+            );
             crate::render::balance_with(&mut frame[start..], part.warmth);
             continue;
         }

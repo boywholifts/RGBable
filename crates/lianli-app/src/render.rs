@@ -609,15 +609,79 @@ fn opposite(direction: RgbDirection) -> RgbDirection {
     }
 }
 
+/// Fits every Lian Li effect's loop to the Lian Li fans' loop of the same effect, so devices
+/// whose own versions of an effect run at different rates stay in step. Off by default.
+pub static LOCK_LOOPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// How long one loop of `effect` takes on Lian Li's fans (SL wireless), in ms.
+fn fan_loop_ms(effect: &Effect) -> Option<f64> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static LOOPS: OnceLock<Mutex<HashMap<String, Option<f64>>>> = OnceLock::new();
+    let key = serde_json::to_string(effect).ok()?;
+    let loops = LOOPS.get_or_init(Default::default);
+    if let Some(found) = loops.lock().ok()?.get(&key) {
+        return *found;
+    }
+    let profile = RgbRenderProfile {
+        family: RgbRenderFamily::SlV4,
+        fan_count: 3,
+        led_count: 156,
+        right_attach: false,
+    };
+    let mut lighting = Lighting::default();
+    lighting.apply(effect.clone(), true, 0);
+    let found = lianli_frames(&lighting, &[[0, 0, 0]; 156], profile)
+        .filter(|f| f.frames.len() > 1)
+        .map(|f| f.frames.len() as f64 * f64::from(f.timing.interval_hundredths) / 160.0);
+    let mut loops = loops.lock().ok()?;
+    if loops.len() > 64 {
+        loops.clear();
+    }
+    loops.insert(key, found);
+    found
+}
+
+/// How much to stretch a loop of `own_ms` so it fits the fans' loop of `effect`: a whole
+/// number of loops per fan loop, or one loop per whole number of fan loops, whichever needs
+/// the smaller change. 1.0 when locking is off or the fans don't have the effect.
+pub fn loop_stretch(effect: &Effect, own_ms: f64) -> f64 {
+    if !LOCK_LOOPS.load(Ordering::Relaxed) || own_ms <= 0.0 {
+        return 1.0;
+    }
+    let Some(fan_ms) = fan_loop_ms(effect) else {
+        return 1.0;
+    };
+    stretch_to(fan_ms, own_ms)
+}
+
+/// The stretch fitting a loop of `own_ms` to one of `fan_ms` (see [`loop_stretch`]).
+fn stretch_to(fan_ms: f64, own_ms: f64) -> f64 {
+    let change = |target: f64| (target / own_ms).ln().abs();
+    let target = (1..=8u32)
+        .flat_map(|k| [fan_ms / f64::from(k), fan_ms * f64::from(k)])
+        .min_by(|a, b| change(*a).total_cmp(&change(*b)))
+        .unwrap_or(own_ms);
+    target / own_ms
+}
+
 /// A Lian Li effect drawn for a plain strip, as frames a set time apart.
 pub struct StripFrames {
     pub frames: Vec<Vec<[u8; 3]>>,
-    pub interval_ms: u32,
+    /// Exact, so the loop doesn't slowly slide away from the Lian Li devices' loops.
+    pub interval_ms: f64,
 }
 
 impl StripFrames {
-    pub fn loop_ms(&self) -> i64 {
-        i64::from(self.interval_ms.max(1)) * self.frames.len().max(1) as i64
+    pub fn loop_ms(&self) -> f64 {
+        self.interval_ms.max(0.1) * self.frames.len().max(1) as f64
+    }
+
+    /// The frame showing `ms` into the effect.
+    pub fn frame_at(&self, ms: i64) -> &[[u8; 3]] {
+        let behind = (ms as f64).rem_euclid(self.loop_ms());
+        let at = (behind / self.interval_ms.max(0.1)) as usize % self.frames.len().max(1);
+        &self.frames[at]
     }
 }
 
@@ -639,7 +703,8 @@ pub fn strip_frames(effect: &Effect, leds: usize) -> Option<std::sync::Arc<Strip
     {
         return None;
     }
-    let key = format!("{}|{leds}", serde_json::to_string(effect).ok()?);
+    let locked = LOCK_LOOPS.load(Ordering::Relaxed);
+    let key = format!("{}|{leds}|{locked}", serde_json::to_string(effect).ok()?);
     let drawn = DRAWN.get_or_init(Default::default);
     if let Some(found) = drawn.lock().ok()?.get(&key) {
         return found.clone();
@@ -690,9 +755,12 @@ pub fn strip_frames(effect: &Effect, leds: usize) -> Option<std::sync::Arc<Strip
                     .collect()
             })
             .collect();
+        let interval_ms = f64::from(animation.interval_hundredths.max(1)) / 160.0;
+        let frames: Vec<Vec<[u8; 3]>> = frames;
+        let stretch = loop_stretch(effect, interval_ms * frames.len() as f64);
         Arc::new(StripFrames {
             frames,
-            interval_ms: (animation.interval_hundredths / 160).max(10),
+            interval_ms: interval_ms * stretch,
         })
     });
     let mut cache = drawn.lock().ok()?;
@@ -771,6 +839,33 @@ fn native_versions(lighting: &Lighting, profile: RgbRenderProfile) -> Lighting {
     }
 }
 
+/// Stretches a Lian Li loop to fit the fans' loop of its effect when loops are locked.
+fn lock_to_fans(frames: &mut Frames, lighting: &Lighting) {
+    let Some(effect) = [&lighting.inner, &lighting.outer]
+        .into_iter()
+        .chain(lighting.lanes.iter())
+        .flatten()
+        .find(|e| e.kind == EffectKind::Lianli)
+    else {
+        return;
+    };
+    if frames.frames.len() < 2 {
+        return;
+    }
+    let interval = f64::from(frames.timing.interval_hundredths.max(1));
+    let stretch = loop_stretch(effect, frames.frames.len() as f64 * interval / 160.0);
+    if (stretch - 1.0).abs() < 1e-6 {
+        return;
+    }
+    frames.timing.interval_hundredths = (interval * stretch).round().clamp(1.0, 6_553_599.0) as u32;
+    if frames.timing.secondary_frame_count > 0 {
+        frames.timing.secondary_interval_ticks =
+            (f64::from(frames.timing.secondary_interval_ticks) * stretch)
+                .round()
+                .clamp(1.0, f64::from(u16::MAX)) as u16;
+    }
+}
+
 pub fn wireless_frames(
     lighting: &Lighting,
     base: &[[u8; 3]],
@@ -781,9 +876,10 @@ pub fn wireless_frames(
     first_ms: u32,
 ) -> Result<Frames> {
     let twins = profile.map(|p| native_versions(lighting, p));
-    if let Some(native) =
+    if let Some(mut native) =
         profile.and_then(|p| lianli_frames(twins.as_ref().unwrap_or(lighting), base, p))
     {
+        lock_to_fans(&mut native, twins.as_ref().unwrap_or(lighting));
         let mut step = 1;
         loop {
             let candidate = Frames {
@@ -1083,6 +1179,24 @@ mod tests {
         );
         let (effect, outer) = lighting.to_saved();
         assert_eq!(Lighting::from_saved(effect, outer, Vec::new()), lighting);
+    }
+
+    #[test]
+    fn locked_loops_fit_whole_fan_loops() {
+        let electric = Effect {
+            kind: EffectKind::Lianli,
+            mode: Some(lianli_shared::rgb::RgbMode::ElectricCurrent),
+            ..Default::default()
+        };
+        let fan = fan_loop_ms(&electric).expect("fans have Electric current");
+        let strip = strip_frames(&electric, 12).expect("frames").loop_ms();
+        let fitted = strip * stretch_to(fan, strip);
+        let per_fan = fan / fitted;
+        assert!((per_fan - per_fan.round()).abs() < 1e-9 && per_fan >= 1.0);
+        // never more than the nearest whole fit away
+        assert!((fitted / strip - 1.0).abs() < 0.2);
+        assert!((stretch_to(10_400.0, 6_050.0) * 6_050.0 - 5_200.0).abs() < 1e-6);
+        assert!((stretch_to(6_050.0, 10_400.0) * 10_400.0 - 12_100.0).abs() < 1e-6);
     }
 
     #[test]

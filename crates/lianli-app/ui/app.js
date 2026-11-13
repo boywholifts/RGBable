@@ -308,6 +308,7 @@ async function refresh() {
     $("#autostart-blocked").hidden = !(o.autostart && o.autostart_blocked);
     $("#warmth").value = String(o.warmth || 0);
     $("#clean-transitions").checked = o.clean_transitions;
+    $("#lock-loops").checked = !!o.lock_loops;
     $("#warmth-value").textContent = warmthLabel(o.warmth || 0);
     $("#data-dir").textContent = o.data_dir;
     $("#update-channel").value = o.update_channel;
@@ -346,6 +347,7 @@ function setWarmth(value) {
 $("#warmth").addEventListener("input", (e) => setWarmth(Number(e.target.value)));
 $("#warmth-reset").addEventListener("click", () => setWarmth(0));
 $("#clean-transitions").addEventListener("change", (e) => invoke("set_clean_transitions", { enabled: e.target.checked }).catch((err) => toast(String(err), true)));
+$("#lock-loops").addEventListener("change", (e) => invoke("set_lock_loops", { enabled: e.target.checked }).catch((err) => toast(String(err), true)));
 
 // ------------------------------------------------------------- startup and power-on
 

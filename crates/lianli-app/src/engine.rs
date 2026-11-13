@@ -101,6 +101,9 @@ pub struct Config {
     /// White balance, -50 (cooler) to 50 (warmer).
     #[serde(default, skip_serializing_if = "is_zero_i8")]
     pub warmth: i8,
+    /// Fit every Lian Li effect's loop to the fans' loop of it (render::LOCK_LOOPS).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lock_loops: bool,
     /// Per-device fan modes from before profiles; moved into a profile on load.
     #[serde(default, skip_serializing)]
     fans: BTreeMap<String, FanMode>,
