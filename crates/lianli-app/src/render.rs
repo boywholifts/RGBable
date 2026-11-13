@@ -972,6 +972,54 @@ fn lock_to_fans(frames: &mut Frames, lighting: &Lighting, profile: RgbRenderProf
     }
 }
 
+/// Drizzle on SL fans, sideways across the whole row the way Lian Li's meteor runs: the
+/// inner ring of every fan is one track and the outer ring another, so drops run on through
+/// the fans, and the two rings drop at different times.
+fn fan_drizzle(lighting: &Lighting, profile: RgbRenderProfile) -> Option<Frames> {
+    const PER_FAN: usize = 13;
+    let effect = lighting.primary()?;
+    let fans = usize::from(profile.fan_count);
+    let same = |e: &Option<Effect>| e.as_ref().is_none_or(|e| e == effect);
+    if profile.family != RgbRenderFamily::SlV4
+        || !(1..=4).contains(&fans)
+        || usize::from(profile.led_count) != fans * 52
+        || !same(&lighting.inner)
+        || !same(&lighting.outer)
+        || effect.generic().kind != EffectKind::Drizzle
+        || effect.taking_turns().is_some()
+        || effect.span.is_some_and(|s| s.len < 1000)
+    {
+        return None;
+    }
+    let effect = effect.generic();
+    let len = fans * PER_FAN;
+    let count = (effect.colors.len().max(1) * 2 * len).max(2);
+    let frames = (0..count)
+        .map(|n| {
+            let phase = n as f32 / count as f32;
+            // the inner and outer rings drop at different times
+            let rings = [0, 1].map(|ring| effect.drizzle_track(len, ring, phase));
+            let mut frame = vec![[0; 3]; fans * 52];
+            for fan in 0..fans {
+                for (ring, offset) in [(0, 0), (1, SL_V4_POSITIONS)] {
+                    let slot = fan * SL_V4_SLOTS_PER_FAN + offset;
+                    frame[slot..slot + PER_FAN]
+                        .copy_from_slice(&rings[ring][fan * PER_FAN..(fan + 1) * PER_FAN]);
+                }
+            }
+            frame
+        })
+        .collect();
+    let interval_ms = f64::from(effect.period_ms().max(1)) / count as f64;
+    Some(Frames {
+        frames,
+        timing: RgbPlaybackTiming {
+            interval_hundredths: (interval_ms * 160.0).round().max(100.0) as u32,
+            ..Default::default()
+        },
+    })
+}
+
 /// Duel on a Strimer, which L-Connect doesn't have there (see [`duel_frames`]).
 fn strimer_duel(lighting: &Lighting, profile: RgbRenderProfile) -> Option<Frames> {
     let lanes = lane_count(Some(profile));
@@ -1008,6 +1056,7 @@ pub fn wireless_frames(
     if let Some((mut native, p)) = profile.and_then(|p| {
         lianli_frames(twins.as_ref().unwrap_or(lighting), base, p)
             .or_else(|| strimer_duel(lighting, p))
+            .or_else(|| fan_drizzle(lighting, p))
             .map(|f| (f, p))
     }) {
         lock_to_fans(&mut native, twins.as_ref().unwrap_or(lighting), p);
@@ -1577,11 +1626,8 @@ mod tests {
                 frames.timing,
                 frames.compressed_len().unwrap()
             );
-            assert_eq!(
-                frames.frames.len(),
-                colors * 2 * SL_V4_POSITIONS,
-                "{colors} colors"
-            );
+            // drops run across all three fans: 13 steps per fan along each arc
+            assert_eq!(frames.frames.len(), colors * 2 * 39, "{colors} colors");
         }
     }
 

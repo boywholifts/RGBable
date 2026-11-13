@@ -449,6 +449,24 @@ impl Effect {
         (base as f32 * factor / self.travel_span().map_or(1.0, |s| stretch(s.len()))) as u32
     }
 
+    /// Drizzle along one track of `len` LEDs at `phase`; tracks with different `zone`s drop
+    /// at different times.
+    pub fn drizzle_track(&self, len: usize, zone: usize, phase: f32) -> Vec<[u8; 3]> {
+        let colors = self.colors();
+        (0..len)
+            .map(|i| {
+                let mut p = i as f32 / len.max(1) as f32;
+                if self.reverse {
+                    p = 1.0 - p;
+                }
+                scale(
+                    drizzle(colors, phase.rem_euclid(1.0), p, len, zone),
+                    self.brightness,
+                )
+            })
+            .collect()
+    }
+
     /// The LEDs at `phase` (0..1 through the loop). `zones` are the LED counts of each
     /// fan or cable section; position-based effects run around each zone separately.
     pub fn frame(&self, zones: &[usize], phase: f32) -> Vec<[u8; 3]> {
