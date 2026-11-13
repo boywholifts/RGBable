@@ -646,12 +646,22 @@ fn fan_loop_ms(effect: &Effect) -> Option<f64> {
 /// number of loops per fan loop, or one loop per whole number of fan loops, whichever needs
 /// the smaller change. 1.0 when locking is off or the fans don't have the effect.
 pub fn loop_stretch(effect: &Effect, own_ms: f64) -> f64 {
+    loop_stretch_with(effect, own_ms, false)
+}
+
+/// [`loop_stretch`], or with `one_to_one` exactly one loop per fan loop: Lian Li's fan loops
+/// grow with the number of fans, so a lone fan otherwise plays several loops to the
+/// group's one and looks sped up.
+fn loop_stretch_with(effect: &Effect, own_ms: f64, one_to_one: bool) -> f64 {
     if !LOCK_LOOPS.load(Ordering::Relaxed) || own_ms <= 0.0 {
         return 1.0;
     }
     let Some(fan_ms) = fan_loop_ms(effect) else {
         return 1.0;
     };
+    if one_to_one {
+        return fan_ms / own_ms;
+    }
     stretch_to(fan_ms, own_ms)
 }
 
@@ -690,6 +700,16 @@ impl StripFrames {
 /// chain, which only RGBable's versions can do. Kept once drawn, since devices ask for a frame
 /// many times a second.
 pub fn strip_frames(effect: &Effect, leds: usize) -> Option<std::sync::Arc<StripFrames>> {
+    lianli_strip(effect, leds, false)
+}
+
+/// [`strip_frames`] for a ring of `leds` LEDs (the HydroShift II OLED ring), where effects
+/// drawn for a ring such as Electric current keep their ring path.
+pub fn ring_frames(effect: &Effect, leds: usize) -> Option<std::sync::Arc<StripFrames>> {
+    lianli_strip(effect, leds, true)
+}
+
+fn lianli_strip(effect: &Effect, leds: usize, ring: bool) -> Option<std::sync::Arc<StripFrames>> {
     use lianli_media::rgb::universal;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex, OnceLock};
@@ -704,7 +724,10 @@ pub fn strip_frames(effect: &Effect, leds: usize) -> Option<std::sync::Arc<Strip
         return None;
     }
     let locked = LOCK_LOOPS.load(Ordering::Relaxed);
-    let key = format!("{}|{leds}|{locked}", serde_json::to_string(effect).ok()?);
+    let key = format!(
+        "{}|{leds}|{locked}|{ring}",
+        serde_json::to_string(effect).ok()?
+    );
     let drawn = DRAWN.get_or_init(Default::default);
     if let Some(found) = drawn.lock().ok()?.get(&key) {
         return found.clone();
@@ -728,7 +751,7 @@ pub fn strip_frames(effect: &Effect, leds: usize) -> Option<std::sync::Arc<Strip
         disabled: false,
     };
     // the renderer draws 60 to 255 LEDs; shorter devices take an even sample
-    let ring_path = mode == lianli_shared::rgb::RgbMode::ElectricCurrent;
+    let ring_path = !ring && mode == lianli_shared::rgb::RgbMode::ElectricCurrent;
     let drawn_len = if ring_path { 60 } else { leds.clamp(60, 255) };
     let made = universal::render(&rgb, drawn_len).ok().map(|animation| {
         let level = f32::from(effect.brightness.min(100)) / 100.0;
@@ -840,7 +863,7 @@ fn native_versions(lighting: &Lighting, profile: RgbRenderProfile) -> Lighting {
 }
 
 /// Stretches a Lian Li loop to fit the fans' loop of its effect when loops are locked.
-fn lock_to_fans(frames: &mut Frames, lighting: &Lighting) {
+fn lock_to_fans(frames: &mut Frames, lighting: &Lighting, profile: RgbRenderProfile) {
     let Some(effect) = [&lighting.inner, &lighting.outer]
         .into_iter()
         .chain(lighting.lanes.iter())
@@ -853,7 +876,8 @@ fn lock_to_fans(frames: &mut Frames, lighting: &Lighting) {
         return;
     }
     let interval = f64::from(frames.timing.interval_hundredths.max(1));
-    let stretch = loop_stretch(effect, frames.frames.len() as f64 * interval / 160.0);
+    let fans = profile.fan_count > 0 && profile.family != RgbRenderFamily::Strimer;
+    let stretch = loop_stretch_with(effect, frames.frames.len() as f64 * interval / 160.0, fans);
     if (stretch - 1.0).abs() < 1e-6 {
         return;
     }
@@ -876,10 +900,10 @@ pub fn wireless_frames(
     first_ms: u32,
 ) -> Result<Frames> {
     let twins = profile.map(|p| native_versions(lighting, p));
-    if let Some(mut native) =
-        profile.and_then(|p| lianli_frames(twins.as_ref().unwrap_or(lighting), base, p))
+    if let Some((mut native, p)) = profile
+        .and_then(|p| lianli_frames(twins.as_ref().unwrap_or(lighting), base, p).map(|f| (f, p)))
     {
-        lock_to_fans(&mut native, twins.as_ref().unwrap_or(lighting));
+        lock_to_fans(&mut native, twins.as_ref().unwrap_or(lighting), p);
         let mut step = 1;
         loop {
             let candidate = Frames {

@@ -1688,7 +1688,8 @@ impl Engine {
     }
 
     fn drive_ring(&self, ctl: &Controller, ring: &Hs2OledLedController, last_frame: &mut Instant) {
-        let effect = ctl.shown_lighting().primary().map(Effect::generic);
+        let shown = ctl.shown_lighting().primary().cloned();
+        let effect = shown.as_ref().map(Effect::generic);
         if let Some(effect) = effect.filter(|_| !ctl.identifying.load(Ordering::Acquire)) {
             ctl.dirty.store(false, Ordering::Release);
             if last_frame.elapsed() < RING_FRAME {
@@ -1707,9 +1708,18 @@ impl Engine {
                 ..effect
             };
             let behind = render::clock_ms() - delay;
-            let period = u64::from(effect.period_ms().max(1));
-            let phase = behind.rem_euclid(period as i64) as f32 / period as f32;
-            let mut frame = effect.frame(&ctl.zones, phase);
+            // Lian Li's own effects play L-Connect's frames, as on the other devices
+            let native = shown
+                .map(|s| Effect { span, turn, ..s })
+                .and_then(|s| render::ring_frames(&s, RING_LEDS));
+            let mut frame = match native {
+                Some(strip) => strip.frame_at(behind).to_vec(),
+                None => {
+                    let period = u64::from(effect.period_ms().max(1));
+                    let phase = behind.rem_euclid(period as i64) as f32 / period as f32;
+                    effect.frame(&ctl.zones, phase)
+                }
+            };
             render::balance_with(&mut frame, ctl.warmth.load(Ordering::Relaxed));
             if let Err(e) = ring.send_rgb_frame(&frame) {
                 warn!("OLED ring: {e:#}");
