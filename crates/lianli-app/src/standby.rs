@@ -101,6 +101,10 @@ pub fn restore(engine: &Engine) -> bool {
 #[cfg_attr(not(windows), allow(dead_code))]
 fn relight(engine: &Engine, openrgb: &OpenRgb) {
     render::WARMTH.store(engine.config().warmth, std::sync::atomic::Ordering::Relaxed);
+    render::LOCK_LOOPS.store(
+        engine.config().lock_loops,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     render::restart_clock(500);
     engine.reload_lighting();
     lights::sync_openrgb_effects(engine, openrgb);

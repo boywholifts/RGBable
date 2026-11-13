@@ -1749,6 +1749,10 @@ fn main() {
     let engine = Engine::new(config_path);
     standby::restore(&engine);
     render::WARMTH.store(engine.config().warmth, std::sync::atomic::Ordering::Relaxed);
+    render::LOCK_LOOPS.store(
+        engine.config().lock_loops,
+        std::sync::atomic::Ordering::Relaxed,
+    );
     engine.start();
 
     {
