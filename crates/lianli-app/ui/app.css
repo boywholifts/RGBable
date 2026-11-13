@@ -318,6 +318,7 @@ textarea.code:focus { outline: 1px solid var(--accent); }
 .row-name { font-weight: 600; display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .row-sub { color: var(--muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tag.off { background: rgba(255, 176, 32, .14); color: #ffb020; }
+.badge.own { color: #ffb020; background: rgba(255, 176, 32, .14); }
 
 .lights-head { display: flex; align-items: center; gap: 12px; margin: 26px 0 10px; }
 .lights-head h2 { margin: 0; }
