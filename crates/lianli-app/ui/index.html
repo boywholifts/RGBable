@@ -204,6 +204,24 @@
         </div>
       </div>
 
+      <div class="card" id="oled-monitor-card">
+        <div class="readouts-head">
+          <div>
+            <h2>Use as a monitor</h2>
+            <p class="muted small" id="oled-monitor-hint">Extend your Windows desktop onto the screen, like L-Connect's secondary display mode: drag windows and the mouse onto it. Display only, with a few frames' lag.</p>
+          </div>
+          <div class="row">
+            <div class="seg" id="oled-monitor-way">
+              <button data-way="landscape" class="on">Landscape</button>
+              <button data-way="portrait">Portrait</button>
+            </div>
+            <label class="check" title="For a screen mounted the other way up"><input type="checkbox" id="oled-monitor-flip" /> Upside down</label>
+            <button class="btn primary" id="oled-monitor-go">Show the desktop</button>
+          </div>
+        </div>
+        <p class="muted small" id="oled-monitor-setup-note" hidden>The first time, RGBable installs the open-source Virtual Display Driver (one administrator prompt), so Windows sees the screen as a monitor. It's only switched on while the desktop is shown here. <a href="#" id="oled-monitor-remove" hidden>Remove the driver</a></p>
+      </div>
+
       <div class="card readouts-card">
         <div class="readouts-head">
           <div>

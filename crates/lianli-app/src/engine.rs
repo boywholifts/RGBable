@@ -268,6 +268,19 @@ pub struct OledConfig {
     pub fps: u32,
     #[serde(default = "default_fit")]
     pub fit: String,
+    /// Showing a Windows monitor (aio_monitor) instead of `file`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub monitor: Option<OledMonitor>,
+}
+
+/// The OLED as a monitor: landscape or portrait, and turned the other way up if it's
+/// mounted that way.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct OledMonitor {
+    #[serde(default)]
+    pub portrait: bool,
+    #[serde(default)]
+    pub flip: bool,
 }
 
 fn default_fps() -> u32 {
@@ -338,6 +351,7 @@ pub struct OledView {
     pub state: String,
     pub modules: BTreeMap<String, Vec<OledModule>>,
     pub layouts: BTreeMap<String, Vec<OledModule>>,
+    pub monitor: Option<OledMonitor>,
 }
 
 // ------------------------------------------------------------------ controllers
@@ -1363,7 +1377,10 @@ impl Engine {
         let config = self.config();
         let oled = config.oled.as_ref();
         OledView {
-            file: oled.map(|o| o.file.to_string_lossy().into_owned()),
+            file: oled
+                .filter(|o| o.monitor.is_none())
+                .map(|o| o.file.to_string_lossy().into_owned()),
+            monitor: oled.and_then(|o| o.monitor),
             fit: oled.map_or_else(default_fit, |o| o.fit.clone()),
             fps: oled.map_or(30, |o| o.fps),
             state: self.oled_state.read().clone(),
@@ -1380,7 +1397,12 @@ impl Engine {
         {
             let mut config = self.config.lock();
             config.oled = match file {
-                Some(file) => Some(OledConfig { file, fps, fit }),
+                Some(file) => Some(OledConfig {
+                    file,
+                    fps,
+                    fit,
+                    monitor: None,
+                }),
                 None => config.oled.take().map(|mut o| {
                     o.fit = fit;
                     o.fps = fps;
@@ -1398,6 +1420,25 @@ impl Engine {
         self.config.lock().oled = None;
         self.save_config();
         *self.oled_state.write() = "Off".into();
+    }
+
+    /// Puts the Windows desktop on the OLED: the virtual monitor comes on and is copied there.
+    pub fn show_desktop(self: &Arc<Self>, monitor: OledMonitor, fps: u32) {
+        {
+            let mut config = self.config.lock();
+            let fit = config
+                .oled
+                .as_ref()
+                .map_or_else(default_fit, |o| o.fit.clone());
+            config.oled = Some(OledConfig {
+                file: PathBuf::new(),
+                fps: fps.clamp(1, 60),
+                fit,
+                monitor: Some(monitor),
+            });
+        }
+        self.save_config();
+        self.restart_oled();
     }
 
     fn restart_oled(self: &Arc<Self>) {
@@ -1835,6 +1876,9 @@ impl Engine {
     }
 
     fn oled_loop(&self, oled: &OledConfig, stop: &AtomicBool) {
+        if let Some(monitor) = oled.monitor {
+            return self.oled_monitor_loop(oled, monitor, stop);
+        }
         let modules = self.config.lock().widgets_for(&oled.file.to_string_lossy());
         if !modules.is_empty() {
             return self.oled_live_loop(oled, &modules, stop);
@@ -1906,6 +1950,49 @@ impl Engine {
                 *self.oled_state.write() = "Reconnecting".into();
             }
             sleep_unless_stopped(Duration::from_secs(5), stop);
+        }
+    }
+
+    /// Copies the virtual monitor to the OLED until stopped, then switches the monitor off.
+    fn oled_monitor_loop(&self, oled: &OledConfig, monitor: OledMonitor, stop: &AtomicBool) {
+        use lianli_devices::winusb::lcd::WinUsbLcdDevice;
+        while !stop.load(Ordering::Acquire) {
+            *self.oled_state.write() = "Starting the monitor".into();
+            let result = (|| -> Result<()> {
+                crate::aio_monitor::set_orientation(monitor.portrait)?;
+                crate::aio_monitor::switch(true)?;
+                let (_, w, h) =
+                    crate::aio_monitor::display().context("the virtual monitor went away")?;
+                let output = crate::aio_monitor::capture_output((w, h))
+                    .context("couldn't find the virtual monitor to copy it")?;
+                let mut ffmpeg = desktop_ffmpeg(output, (w, h), monitor, oled.fps)?;
+                let mut video_out = ffmpeg.stdout.take().context("ffmpeg's output")?;
+                *self.oled_state.write() = "Showing the desktop".into();
+                let streamed = find_wired(0x1CBE, 0xA068)
+                    .and_then(|det| WinUsbLcdDevice::open(det.device, 0xA068))
+                    .and_then(|mut lcd| {
+                        lcd.stream_h264_reader(&mut video_out, stop, oled.fps as f32)
+                    });
+                let _ = ffmpeg.kill();
+                if let Ok(output) = ffmpeg.wait_with_output() {
+                    let errors = String::from_utf8_lossy(&output.stderr);
+                    if !errors.trim().is_empty() && !stop.load(Ordering::Acquire) {
+                        warn!("ffmpeg (desktop): {}", errors.trim());
+                    }
+                }
+                streamed
+            })();
+            if stop.load(Ordering::Acquire) {
+                break;
+            }
+            if let Err(e) = result {
+                warn!("OLED monitor stopped: {e:#}; retrying in 5 s");
+                *self.oled_state.write() = format!("Error: {e:#}");
+            }
+            sleep_unless_stopped(Duration::from_secs(5), stop);
+        }
+        if let Err(e) = crate::aio_monitor::switch(false) {
+            warn!("switching the AIO monitor off: {e:#}");
         }
     }
 
@@ -2019,6 +2106,60 @@ fn live_ffmpeg(oled: &OledConfig, modules: &[OledModule]) -> Result<std::process
         .stderr(std::process::Stdio::piped());
     no_window(&mut ffmpeg);
     info!("Playing {} on the OLED with widgets", oled.file.display());
+    ffmpeg
+        .spawn()
+        .context("running ffmpeg (install it with: winget install Gyan.FFmpeg)")
+}
+
+/// ffmpeg copying Desktop Duplication output `output` (`size`) to H.264 for the OLED, whose
+/// stream is the panel's own way up, 1080 × 2288.
+fn desktop_ffmpeg(
+    output: u32,
+    size: (u32, u32),
+    monitor: OledMonitor,
+    fps: u32,
+) -> Result<std::process::Child> {
+    let fps = fps.clamp(1, 60);
+    let landscape = size.0 > size.1;
+    let turn = match (landscape, monitor.flip) {
+        (true, false) => "transpose=1,",
+        (true, true) => "transpose=2,",
+        (false, false) => "",
+        (false, true) => "hflip,vflip,",
+    };
+    let mut ffmpeg = std::process::Command::new(crate::oled_library::ffmpeg());
+    ffmpeg
+        .args(["-loglevel", "error", "-f", "lavfi", "-i"])
+        .arg(format!(
+            "ddagrab=output_idx={output}:framerate={fps}:draw_mouse=1,hwdownload,format=bgra"
+        ))
+        .args([
+            "-vf",
+            &format!("{turn}scale=1080:2288,format=yuv420p"),
+            "-r",
+            &fps.to_string(),
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-x264opts",
+            "bframes=0",
+            "-threads",
+            "4",
+            "-pix_fmt",
+            "yuv420p",
+            "-color_range",
+            "pc",
+            "-an",
+            "-f",
+            "h264",
+            "-",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    no_window(&mut ffmpeg);
+    info!("Copying the AIO monitor to the OLED");
     ffmpeg
         .spawn()
         .context("running ffmpeg (install it with: winget install Gyan.FFmpeg)")

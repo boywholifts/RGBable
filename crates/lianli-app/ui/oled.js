@@ -4,7 +4,7 @@ const assetUrl = (path) => window.__TAURI__.core.convertFileSrc(path);
 const isImageFile = (path) => /\.(png|jpe?g|bmp|webp)$/i.test(path || "");
 const fileName = (path) => (path || "").split(/[\\/]/).pop().replace(/\.[^.]+$/, "");
 
-const oled = { current: null, selected: null, fit: "cover", fps: 30, library: null, query: "", shownKey: "" };
+const oled = { current: null, selected: null, fit: "cover", fps: 30, library: null, query: "", shownKey: "", monitor: null, monitorInstalled: false, way: "landscape" };
 
 function showOnScreen(path) {
   const screen = $("#oled-screen");
@@ -44,12 +44,70 @@ function showOnScreen(path) {
   syncPreviewPlayback();
 }
 
+function renderMonitorCard() {
+  document.querySelectorAll("#oled-monitor-way button").forEach((b) => b.classList.toggle("on", b.dataset.way === oled.way));
+  const go = $("#oled-monitor-go");
+  go.textContent = oled.monitor ? "Stop showing the desktop" : oled.monitorInstalled ? "Show the desktop" : "Set up and show the desktop";
+  go.classList.toggle("primary", !oled.monitor);
+  $("#oled-monitor-setup-note").hidden = false;
+  $("#oled-monitor-remove").hidden = !oled.monitorInstalled;
+}
+
+async function refreshMonitorStatus() {
+  try {
+    const status = await invoke("aio_monitor_status");
+    oled.monitorInstalled = status.installed;
+  } catch {}
+  renderMonitorCard();
+}
+
+async function showDesktop() {
+  const portrait = oled.way === "portrait";
+  if (!oled.monitorInstalled) {
+    toast("Installing the virtual display driver: approve the administrator prompt");
+    await call("setup_aio_monitor", { portrait }, "Virtual display driver installed");
+    oled.monitorInstalled = true;
+  }
+  await call("show_desktop_on_oled", { portrait, flip: $("#oled-monitor-flip").checked, fps: oled.fps }, "Showing the desktop on the OLED…");
+  refresh();
+}
+
+$("#oled-monitor-go").addEventListener("click", async () => {
+  if (oled.monitor) {
+    await call("stop_oled", {}, "Desktop no longer shown on the OLED");
+    refresh();
+  } else {
+    showDesktop();
+  }
+});
+$("#oled-monitor-way").addEventListener("click", (e) => {
+  const way = e.target.dataset.way;
+  if (!way || way === oled.way) return;
+  oled.way = way;
+  renderMonitorCard();
+  if (oled.monitor) showDesktop();
+});
+$("#oled-monitor-flip").addEventListener("change", () => oled.monitor && showDesktop());
+$("#oled-monitor-remove").addEventListener("click", async (e) => {
+  e.preventDefault();
+  toast("Removing the virtual display driver: approve the administrator prompt");
+  await call("remove_aio_monitor", {}, "Virtual display driver removed");
+  refreshMonitorStatus();
+  refresh();
+});
+refreshMonitorStatus();
+
 function renderOledStage() {
   const previewing = oled.selected && oled.selected !== oled.current;
   const path = previewing ? oled.selected : oled.current;
-  showOnScreen(path);
-  $("#oled-caption").textContent = previewing ? "Preview: not on the HydroShift yet" : oled.current ? "Now on the HydroShift" : "Nothing playing";
-  $("#oled-name").textContent = path ? fileName(path) : "Pick something from the library below";
+  if (oled.monitor && !previewing) {
+    oled.shownKey = "monitor";
+    $("#oled-screen").replaceChildren(el("div", { class: "oled-empty" }, "Your Windows desktop"));
+  } else {
+    showOnScreen(path);
+  }
+  $("#oled-caption").textContent = previewing ? "Preview: not on the HydroShift yet" : oled.monitor ? "Now on the HydroShift" : oled.current ? "Now on the HydroShift" : "Nothing playing";
+  $("#oled-name").textContent = oled.monitor && !previewing ? "Secondary monitor" : path ? fileName(path) : "Pick something from the library below";
   $("#oled-show").hidden = !previewing;
   $("#oled-frame").classList.toggle("previewing", !!previewing);
   document.querySelectorAll("#oled-fit button").forEach((b) => b.classList.toggle("on", b.dataset.fit === oled.fit));
@@ -115,7 +173,15 @@ $("#oled-stop").addEventListener("click", async () => {
 function renderOled(state, initial) {
   const pill = $("#oled-state");
   pill.textContent = state.state;
-  pill.classList.toggle("on", state.state === "Playing");
+  pill.classList.toggle("on", state.state === "Playing" || state.state === "Showing the desktop");
+  const wasMonitor = !!oled.monitor;
+  oled.monitor = state.monitor || null;
+  if (oled.monitor) {
+    oled.way = oled.monitor.portrait ? "portrait" : "landscape";
+    $("#oled-monitor-flip").checked = !!oled.monitor.flip;
+  }
+  if (wasMonitor !== !!oled.monitor) oled.shownKey = "";
+  renderMonitorCard();
   if (initial) {
     oled.fit = state.fit;
     oled.fps = state.fps;

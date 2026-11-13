@@ -2,6 +2,7 @@
 // No console window in release builds.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod aio_monitor;
 mod cpu_temp;
 mod effects;
 mod engine;
@@ -637,7 +638,12 @@ fn allow_oled_preview(app: AppHandle, file: String) {
 fn prepare_oled(app: AppHandle, file: String, fit: String, fps: u32) {
     let file = PathBuf::from(file);
     allow_preview(&app, &file);
-    engine::prepare_oled(engine::OledConfig { file, fit, fps });
+    engine::prepare_oled(engine::OledConfig {
+        file,
+        fit,
+        fps,
+        monitor: None,
+    });
 }
 
 /// Restarts RGBable, and the OpenRGB service when RGBable runs it, so newly plugged-in
@@ -972,6 +978,55 @@ fn oled_readings(state: State<'_, AppState>, cpu: bool) -> oled_modules::Reading
         .get_or_init(|| parking_lot::Mutex::new(oled_modules::Gpu::new()))
         .lock();
     state.engine.readings(Some(&mut gpu), cpu)
+}
+
+#[derive(serde::Serialize)]
+struct AioMonitorStatus {
+    installed: bool,
+    on: bool,
+}
+
+#[tauri::command(async)]
+fn aio_monitor_status() -> AioMonitorStatus {
+    AioMonitorStatus {
+        installed: aio_monitor::installed(),
+        on: aio_monitor::display().is_some(),
+    }
+}
+
+#[tauri::command(async)]
+fn setup_aio_monitor(portrait: bool) -> Result<(), String> {
+    aio_monitor::install(portrait).map_err(err)
+}
+
+#[tauri::command(async)]
+fn remove_aio_monitor(state: State<'_, AppState>) -> Result<(), String> {
+    if state
+        .engine
+        .config()
+        .oled
+        .is_some_and(|o| o.monitor.is_some())
+    {
+        state.engine.stop_oled();
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    aio_monitor::uninstall().map_err(err)
+}
+
+#[tauri::command(async)]
+fn show_desktop_on_oled(
+    state: State<'_, AppState>,
+    portrait: bool,
+    flip: bool,
+    fps: u32,
+) -> Result<(), String> {
+    if !aio_monitor::installed() {
+        return Err("Set up the AIO as a monitor first".into());
+    }
+    state
+        .engine
+        .show_desktop(engine::OledMonitor { portrait, flip }, fps);
+    Ok(())
 }
 
 #[tauri::command(async)]
@@ -1763,6 +1818,14 @@ fn main() {
     let openrgb = Arc::new(OpenRgb::new());
     openrgb.start_animator();
     connect_openrgb_in_background(engine.clone(), openrgb.clone(), true);
+    // a monitor left on by a crash: nothing copies it to the screen unless that's the mode
+    if !engine.config().oled.is_some_and(|o| o.monitor.is_some()) {
+        std::thread::spawn(|| {
+            if aio_monitor::display().is_some() {
+                let _ = aio_monitor::switch(false);
+            }
+        });
+    }
     watch_vial(engine.clone(), openrgb.clone());
     standby::watch(engine.clone(), openrgb.clone());
 
@@ -1867,6 +1930,10 @@ fn main() {
             match_oled_now,
             set_color_presets,
             stop_oled,
+            aio_monitor_status,
+            setup_aio_monitor,
+            remove_aio_monitor,
+            show_desktop_on_oled,
             set_autostart,
             check_update,
             set_update_channel,
@@ -1968,6 +2035,10 @@ fn main() {
         .run(tauri::generate_context!());
     if let Err(e) = result {
         error!("RGBable stopped: {e}");
+    }
+    // the AIO monitor only exists while RGBable copies it to the screen
+    if aio_monitor::display().is_some() {
+        let _ = aio_monitor::switch(false);
     }
 }
 

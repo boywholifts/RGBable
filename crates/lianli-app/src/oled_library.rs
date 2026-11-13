@@ -249,7 +249,7 @@ fn video_size(file: &Path) -> Option<(u32, u32)> {
     parse_video_size(&info)
 }
 
-fn parse_video_size(info: &str) -> Option<(u32, u32)> {
+pub(crate) fn parse_video_size(info: &str) -> Option<(u32, u32)> {
     let line = info
         .lines()
         .find(|l| l.contains("Stream") && l.contains("Video:"))?;

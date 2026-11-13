@@ -21,7 +21,7 @@ pub struct HostStatus {
     pub task_running: bool,
 }
 
-fn hidden(command: &mut Command) -> &mut Command {
+pub(crate) fn hidden(command: &mut Command) -> &mut Command {
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -30,13 +30,13 @@ fn hidden(command: &mut Command) -> &mut Command {
     command
 }
 
-fn run(program: &str, args: &[&str]) -> Result<Output> {
+pub(crate) fn run(program: &str, args: &[&str]) -> Result<Output> {
     hidden(Command::new(program).args(args))
         .output()
         .with_context(|| format!("running {program}"))
 }
 
-fn ps_quote(text: &str) -> String {
+pub(crate) fn ps_quote(text: &str) -> String {
     format!("'{}'", text.replace('\'', "''"))
 }
 
@@ -79,7 +79,7 @@ fn run_script(name: &str, script: &str) -> Result<()> {
 }
 
 /// Runs a PowerShell script elevated (one UAC prompt) and waits for it.
-fn run_elevated_script(name: &str, script: &str) -> Result<()> {
+pub(crate) fn run_elevated_script(name: &str, script: &str) -> Result<()> {
     let (path, error_file) = script_file(name, script)?;
     let launcher = format!(
         "$p = Start-Process powershell -Verb RunAs -Wait -PassThru -WindowStyle Hidden -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-File',{}; exit $p.ExitCode",
@@ -303,7 +303,7 @@ pub fn remove_task() -> Result<()> {
     )
 }
 
-fn current_user() -> String {
+pub(crate) fn current_user() -> String {
     match (std::env::var("USERDOMAIN"), std::env::var("USERNAME")) {
         (Ok(domain), Ok(user)) => format!("{domain}\\{user}"),
         (_, Ok(user)) => user,
