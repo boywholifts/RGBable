@@ -1883,6 +1883,12 @@ impl Engine {
     }
 
     fn oled_loop(&self, oled: &OledConfig, stop: &AtomicBool) {
+        // no HydroShift II OLED but an AIO with a square LCD: play on that
+        if find_wired(0x1CBE, 0xA068).is_err() {
+            if let Some(aio) = self.aios.read().first().cloned() {
+                return self.aio_screen_loop(&aio, oled, stop);
+            }
+        }
         if let Some(monitor) = oled.monitor {
             return self.oled_monitor_loop(oled, monitor, stop);
         }
@@ -1957,6 +1963,47 @@ impl Engine {
                 *self.oled_state.write() = "Reconnecting".into();
             }
             sleep_unless_stopped(Duration::from_secs(5), stop);
+        }
+    }
+
+    /// Plays the screen page's video, GIF or picture on an AIO's 480 × 480 LCD (Galahad II
+    /// LCD or Vision, HydroShift LCD). Widgets and the monitor mode are the OLED's only.
+    fn aio_screen_loop(&self, aio: &HydroShiftLcdController, oled: &OledConfig, stop: &AtomicBool) {
+        if oled.monitor.is_some() {
+            *self.oled_state.write() = "Error: only the HydroShift II OLED can be a monitor".into();
+            return;
+        }
+        *self.oled_state.write() = "Encoding".into();
+        let encoded = match encode_for_screen(oled, true) {
+            Ok(path) => path,
+            Err(e) => {
+                error!("AIO screen media: {e:#}");
+                *self.oled_state.write() = format!("Error: {e:#}");
+                return;
+            }
+        };
+        while !stop.load(Ordering::Acquire) {
+            if !aio.is_ready_for_control() {
+                *self.oled_state.write() = "Waiting for the AIO".into();
+                sleep_unless_stopped(Duration::from_secs(1), stop);
+                continue;
+            }
+            *self.oled_state.write() = "Playing".into();
+            let result = std::fs::File::open(&encoded)
+                .context("opening the encoded video")
+                .and_then(|file| {
+                    let mut reader = std::io::BufReader::new(file);
+                    aio.stream_h264_reader(&mut reader, stop, oled.fps.min(24) as f32)
+                });
+            if let Err(e) = result {
+                if stop.load(Ordering::Acquire) {
+                    break;
+                }
+                warn!("AIO screen stream stopped: {e:#}; retrying in 5 s");
+                *self.oled_state.write() = "Reconnecting".into();
+                sleep_unless_stopped(Duration::from_secs(5), stop);
+            }
+            // a finished pass starts again from the top: the video loops
         }
     }
 
@@ -2263,13 +2310,19 @@ pub fn prepare_oled(oled: OledConfig) {
 /// H.264 without B-frames, so files from OLEDable are encoded too, but only once:
 /// the result is kept in %LOCALAPPDATA%\RGBable\oled-cache.
 fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
+    encode_for_screen(oled, false)
+}
+
+/// [`encode_for_oled`], or with `square` for an AIO's 480 × 480 LCD (Galahad II LCD and
+/// Vision, HydroShift LCD), which plays up to 24 fps and isn't turned.
+fn encode_for_screen(oled: &OledConfig, square: bool) -> Result<PathBuf> {
     let _one_at_a_time = ENCODING.lock();
     anyhow::ensure!(
         oled.file.is_file(),
         "{} does not exist",
         oled.file.display()
     );
-    let fps = oled.fps.clamp(1, 60);
+    let fps = oled.fps.clamp(1, if square { 24 } else { 60 });
     let source = std::fs::metadata(&oled.file)?;
     let source_modified = source.modified()?;
     let cache_dir = oled_cache_dir();
@@ -2282,9 +2335,10 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
     let upright = crate::oled_library::upright(&oled.file);
     let turned = if upright.is_empty() { "" } else { "-u" };
     let output = cache_dir.join(format!(
-        "{stem}-{:x}-{}-{fps}{turned}.h264",
+        "{stem}-{:x}-{}-{fps}{turned}{}.h264",
         source.len(),
-        oled.fit
+        oled.fit,
+        if square { "-480" } else { "" }
     ));
     let partial = output.with_extension("partial");
     if let Ok(meta) = std::fs::metadata(&output) {
@@ -2292,10 +2346,12 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
             return Ok(output);
         }
     }
+    let (w, h) = if square { (480, 480) } else { (2288, 1080) };
     let fit = match oled.fit.as_str() {
-        "contain" => "scale=2288:1080:force_original_aspect_ratio=decrease:flags=lanczos,pad=2288:1080:(ow-iw)/2:(oh-ih)/2:color=black",
-        _ => "scale=2288:1080:force_original_aspect_ratio=increase:flags=lanczos,crop=2288:1080",
+        "contain" => format!("scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black"),
+        _ => format!("scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,crop={w}:{h}"),
     };
+    let turn = if square { "" } else { "transpose=1," };
     let lower = oled.file.to_string_lossy().to_lowercase();
     let still = [".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"]
         .iter()
@@ -2308,7 +2364,7 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
     ffmpeg
         .arg("-i")
         .arg(&oled.file)
-        .args(["-vf", &format!("{upright}{fit},transpose=1,fps={fps}")])
+        .args(["-vf", &format!("{upright}{fit},{turn}fps={fps}")])
         .args([
             "-r",
             &fps.to_string(),
@@ -2328,7 +2384,11 @@ fn encode_for_oled(oled: &OledConfig) -> Result<PathBuf> {
         .args(["-color_range", "pc", "-an", "-f", "h264"])
         .arg(&partial);
     no_window(&mut ffmpeg);
-    info!("Encoding {} for the OLED", oled.file.display());
+    info!(
+        "Encoding {} for the {}",
+        oled.file.display(),
+        if square { "AIO screen" } else { "OLED" }
+    );
     let result = ffmpeg
         .output()
         .context("running ffmpeg (install it with: winget install Gyan.FFmpeg)")?;

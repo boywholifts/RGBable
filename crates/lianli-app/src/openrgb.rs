@@ -164,6 +164,30 @@ impl Zone {
     }
 }
 
+/// Lian Li hardware RGBable drives itself, such as a Uni Hub, which OpenRGB also lists (one
+/// row per channel). Two programs writing to the same hub fight, so OpenRGB's copy is left
+/// out. OpenRGB gives USB devices' paths as their location, with the vendor and product IDs.
+fn driven_natively(location: &str) -> bool {
+    let location = location.to_ascii_lowercase();
+    let id = |key: &str| {
+        let at = location.find(key)? + key.len();
+        u16::from_str_radix(location.get(at..at + 4)?, 16).ok()
+    };
+    let (Some(vid), Some(pid)) = (id("vid_"), id("pid_")) else {
+        return false;
+    };
+    lianli_shared::device_id::lookup_device(vid, pid).is_some_and(|d| d.family.has_rgb())
+}
+
+#[test]
+fn openrgbs_copy_of_a_uni_hub_is_left_out() {
+    assert!(driven_natively(
+        r"HID: \\?\hid#vid_0cf2&pid_a102&mi_01#7&1b2c&0&0000"
+    ));
+    assert!(!driven_natively(r"HID: \\?\hid#vid_1b1c&pid_1b2d#x"));
+    assert!(!driven_natively("I2C: /dev/i2c-1, address 0x58"));
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct OrgbView {
     pub connected: bool,
@@ -366,6 +390,10 @@ impl OpenRgb {
             match Self::open(port) {
                 Ok((mut stream, version)) => match list_devices(&mut stream, version) {
                     Ok((ids, devices)) if !devices.is_empty() => {
+                        let devices: Vec<OrgbDevice> = devices
+                            .into_iter()
+                            .filter(|d| !driven_natively(&d.location))
+                            .collect();
                         info!(
                             "OpenRGB on port {port}: {} device(s), protocol {version}",
                             devices.len()

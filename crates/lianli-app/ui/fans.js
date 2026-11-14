@@ -122,7 +122,7 @@ function fanCard(d) {
   for (const [value, label] of choices) {
     seg.append(el("button", { "data-mode": value, onclick: () => choose(value) }, label));
   }
-  const all = el("button", { class: "btn mini ghost", title: "Give every wireless fan this setting", onclick: copyToAll }, "Use for all fans");
+  const all = el("button", { class: "btn mini ghost", title: "Give every fan this setting", onclick: copyToAll }, "Use for all fans");
 
   let coolant = null;
   let curve = null;
@@ -145,7 +145,9 @@ function fanCard(d) {
     seg.querySelectorAll("button").forEach((b) => b.classList.toggle("on", b.dataset.mode === mode.mode));
     curve = null;
     if (mode.mode === "motherboard") {
-      body.replaceChildren(el("p", { class: "muted small" }, "Follows the fan header the wireless dongle is plugged into, like L-Connect. Never drops below 20%."));
+      const wireless = /^[0-9a-f]{2}(:[0-9a-f]{2}){5}$/i.test(d.id);
+      const source = wireless ? "the fan header the wireless dongle is plugged into" : "the motherboard fan header it's plugged into";
+      body.replaceChildren(el("p", { class: "muted small" }, `Follows ${source}, like L-Connect. Never drops below 20%.`));
     } else if (mode.mode === "fixed") {
       const value = el("span", { class: "fan-value" }, `${mode.percent}%`);
       const range = el("input", { type: "range", min: String(FAN_FLOOR), max: "100", step: "5", value: String(Math.max(FAN_FLOOR, mode.percent)) });
