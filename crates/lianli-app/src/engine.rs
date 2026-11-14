@@ -2252,6 +2252,8 @@ pub fn lconnect_running() -> bool {
 }
 
 fn connect_wireless() -> WirelessController {
+    // a PC without a dongle would log the same miss every 10 s: said once, then quietly
+    let mut said = None::<String>;
     loop {
         let mut wireless = WirelessController::new();
         match wireless
@@ -2267,7 +2269,13 @@ fn connect_wireless() -> WirelessController {
                 return wireless;
             }
             Err(e) => {
-                warn!("{e:#}; retrying in 10 s");
+                let message = format!("{e:#}");
+                if said.as_ref() != Some(&message) {
+                    warn!("{message}; retrying every 10 s");
+                    said = Some(message);
+                } else {
+                    tracing::debug!("{message}; retrying in 10 s");
+                }
                 wireless.stop();
                 thread::sleep(Duration::from_secs(10));
             }

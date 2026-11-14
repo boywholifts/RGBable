@@ -441,8 +441,10 @@ impl Ene6k77Controller {
     fn send_output(&self, data: &[u8]) -> Result<()> {
         let mut dev = self.device.lock();
         let written = dev.write(data).context("ENE 6K77: send output report")?;
+        // Windows pads output reports to the length the device declares (353 bytes on the
+        // SL Infinity) and reports that, so more than was given is a full write
         anyhow::ensure!(
-            written == data.len(),
+            written >= data.len(),
             "ENE 6K77: incomplete color report ({written}/{})",
             data.len()
         );
