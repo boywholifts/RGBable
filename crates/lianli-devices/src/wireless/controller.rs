@@ -1021,6 +1021,15 @@ impl WirelessController {
         self.runtime_claim.take();
     }
 
+    /// How many times `mac`'s reported layout has changed; a change means the device may have
+    /// restarted and needs its lighting again.
+    pub fn identity_changes(&self, mac: &[u8; 6]) -> u32 {
+        self.device_health
+            .lock()
+            .get(mac)
+            .map_or(0, |health| health.identity_changes)
+    }
+
     pub fn rgb_upload_applied(&self, mac: &[u8; 6], effect_index: [u8; 4]) -> bool {
         // A matching firmware index can survive a daemon restart without a local upload.
         if self.desired_effects.lock().get(mac) != Some(&effect_index) {

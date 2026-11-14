@@ -418,6 +418,9 @@ pub(super) struct DeviceHealth {
     addr_cand: Option<((u8, u8), u32)>,
     identity_cand: Option<(DeviceIdentity, u32)>,
     identity_warned_at: Option<Instant>,
+    /// How many times the device's reported layout has changed. A fan controller that
+    /// briefly reports no fans has restarted and may be playing its stored effect.
+    pub identity_changes: u32,
 }
 
 impl DeviceHealth {
@@ -493,6 +496,7 @@ impl DeviceHealth {
             addr_cand: None,
             identity_cand: None,
             identity_warned_at: None,
+            identity_changes: 0,
         }
     }
 
@@ -529,6 +533,7 @@ impl DeviceHealth {
                 self.published.fan_type,
                 rec.fan_type
             );
+            self.identity_changes = self.identity_changes.wrapping_add(1);
             let p = &mut self.published;
             p.device_type = rec.device_type;
             p.fan_count = rec.fan_count;

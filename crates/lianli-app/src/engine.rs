@@ -1510,6 +1510,8 @@ impl Engine {
         // How far each device's effects had to be shrunk before it accepted them.
         let mut shrink: BTreeMap<[u8; 6], u8> = BTreeMap::new();
         let mut shrunk_at: BTreeMap<[u8; 6], Instant> = BTreeMap::new();
+        // each device's layout-change count when last seen (see identity_changes)
+        let mut identity_seen: BTreeMap<[u8; 6], u32> = BTreeMap::new();
         let mut full_retries: BTreeMap<[u8; 6], u32> = BTreeMap::new();
         let mut last_verify = Instant::now();
         let mut last_ring_frame = Instant::now();
@@ -1655,6 +1657,18 @@ impl Engine {
                     let Target::Wireless { mac } = &ctl.target else {
                         continue;
                     };
+                    // A fan controller that dropped its fans for a moment restarted and plays
+                    // the effect stored for power-on, which can match what was sent and so
+                    // pass as shown; it gets its lighting again, freshly drawn.
+                    let changes = wireless.identity_changes(mac);
+                    if identity_seen
+                        .insert(*mac, changes)
+                        .is_some_and(|seen| seen != changes)
+                    {
+                        info!("{} restarted, re-sending its lighting", ctl.id);
+                        ctl.dirty.store(true, Ordering::Release);
+                        continue;
+                    }
                     let Some(State::Settled { upload, strikes }) = states.get_mut(mac) else {
                         continue;
                     };
@@ -1680,18 +1694,11 @@ impl Engine {
                     }
                     *strikes += 1;
                     if *strikes >= STRIKES {
+                        // drawn again rather than the old upload re-sent, so it starts in step
+                        // with the clock instead of where it was when first drawn
                         info!("{} stopped showing its lighting, re-sending", ctl.id);
-                        let upload = upload.clone();
-                        states.insert(
-                            *mac,
-                            State::Pending {
-                                upload,
-                                sent: Instant::now()
-                                    .checked_sub(CONFIRM_WAIT)
-                                    .unwrap_or_else(Instant::now),
-                                sends: 1,
-                            },
-                        );
+                        *strikes = 0;
+                        ctl.dirty.store(true, Ordering::Release);
                     }
                 }
             }
