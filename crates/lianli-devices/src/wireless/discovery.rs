@@ -421,6 +421,8 @@ pub(super) struct DeviceHealth {
     /// How many times the device's reported layout has changed. A fan controller that
     /// briefly reports no fans has restarted and may be playing its stored effect.
     pub identity_changes: u32,
+    /// Inside a run of records with no fans, which counts once as a change.
+    no_fans_run: bool,
 }
 
 impl DeviceHealth {
@@ -497,6 +499,7 @@ impl DeviceHealth {
             identity_cand: None,
             identity_warned_at: None,
             identity_changes: 0,
+            no_fans_run: false,
         }
     }
 
@@ -508,8 +511,16 @@ impl DeviceHealth {
         let published = self.published.identity();
         if reported == published {
             self.identity_cand = None;
+            self.no_fans_run = false;
             self.published.fan_types = rec.fan_types;
             return;
+        }
+        // A fan controller reports no fans for a moment as it restarts, too briefly to be
+        // taken as its layout, and then plays the effect stored for power-on: each such
+        // moment counts, so its lighting is sent again.
+        if rec.fan_count == 0 && self.published.fan_count > 0 && !self.no_fans_run {
+            self.no_fans_run = true;
+            self.identity_changes = self.identity_changes.wrapping_add(1);
         }
         if self
             .identity_warned_at
