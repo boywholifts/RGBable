@@ -1783,13 +1783,13 @@ impl Engine {
             };
             render::balance_with(&mut frame, ctl.warmth.load(Ordering::Relaxed));
             if let Err(e) = ring.send_rgb_frame(&frame) {
-                warn!("OLED ring: {e:#}");
+                warn_ring(&e);
             }
         } else if ctl.dirty.swap(false, Ordering::AcqRel) {
             let mut colors = ctl.shown_colors();
             render::balance_with(&mut colors, ctl.warmth.load(Ordering::Relaxed));
             if let Err(e) = ring.send_rgb_frame(&colors) {
-                warn!("OLED ring: {e:#}");
+                warn_ring(&e);
             }
         }
     }
@@ -2249,6 +2249,17 @@ pub fn lconnect_running() -> bool {
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).contains("L-Connect"))
         .unwrap_or(false)
+}
+
+/// The ring is written 30 times a second, so a USB drop-out would log as often: once a
+/// minute is enough.
+fn warn_ring(e: &anyhow::Error) {
+    static LAST: Mutex<Option<Instant>> = parking_lot::const_mutex(None);
+    let mut last = LAST.lock();
+    if last.is_none_or(|at| at.elapsed() >= Duration::from_secs(60)) {
+        *last = Some(Instant::now());
+        warn!("OLED ring: {e:#} (repeats are logged once a minute)");
+    }
 }
 
 fn connect_wireless() -> WirelessController {
